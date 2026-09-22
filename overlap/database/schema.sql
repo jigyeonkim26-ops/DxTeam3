@@ -1,0 +1,2 @@
+-- 참고용 초기 스키마입니다.
+-- 실제 스키마 변경은 backend/src/main/resources/db/migration/에서 Flyway로 관리합니다.

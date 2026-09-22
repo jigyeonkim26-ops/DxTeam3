@@ -1,0 +1,34 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/build/
+frontend/.idea/
+
+# Java / Gradle
+backend/.gradle/
+backend/build/
+backend/out/
+backend/*.iml
+
+# Python
+ai-server/.venv/
+ai-server/venv/
+ai-server/__pycache__/
+ai-server/**/*.py[cod]
+ai-server/.pytest_cache/
+
+# IDE and OS
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
