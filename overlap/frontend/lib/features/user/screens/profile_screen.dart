@@ -5,6 +5,7 @@ import '../../../core/constants/app_spacing.dart';
 import '../services/mock_profile_repository.dart';
 import '../widgets/profile_menu_item.dart';
 import '../widgets/profile_summary_card.dart';
+import 'saved_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -39,7 +40,9 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
               IconButton(
-                onPressed: () => _show(context, '저장 기능은 다음 단계에서 연결됩니다.'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
+                ),
                 icon: const Icon(Icons.bookmark_border),
               ),
               IconButton(
