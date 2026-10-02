@@ -7,6 +7,7 @@ import '../../../shared/models/group.dart';
 import '../../../shared/models/place.dart';
 import '../../../shared/models/record.dart';
 import '../../../shared/models/user.dart';
+import '../../memory/screens/record_detail_screen.dart';
 import '../widgets/place_record_preview_card.dart';
 
 /// 특정 장소에 쌓인 기록을 보여주는 독립 화면입니다.
@@ -78,12 +79,6 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
     ),
   ];
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
-  }
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -152,7 +147,13 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
             for (final record in _records) ...[
               PlaceRecordPreviewCard(
                 record: record,
-                onTap: () => _showMessage('기록 상세는 다음 단계에서 연결됩니다.'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => RecordDetailScreen(record: record),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: AppSpacing.md),
             ],
