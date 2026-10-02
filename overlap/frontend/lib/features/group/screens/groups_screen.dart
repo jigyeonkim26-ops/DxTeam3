@@ -5,6 +5,7 @@ import '../../../core/constants/app_spacing.dart';
 import '../models/group_list_item_data.dart';
 import '../services/mock_group_repository.dart';
 import '../widgets/group_list_item.dart';
+import 'create_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -50,10 +51,28 @@ class _GroupsScreenState extends State<GroupsScreen> {
                 ?.copyWith(height: 1.65),
           ),
           const SizedBox(height: AppSpacing.lg),
-          Text(
-            '내 모임',
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Text(
+                '내 모임',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const CreateGroupScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('모임 만들기'),
+              ),
+            ],
           ),
           const SizedBox(height: AppSpacing.xs),
           ..._groups.map(
