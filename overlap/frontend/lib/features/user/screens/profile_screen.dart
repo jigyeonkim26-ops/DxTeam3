@@ -8,6 +8,7 @@ import '../widgets/profile_summary_card.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../../notification/screens/notification_settings_screen.dart';
 import 'saved_screen.dart';
+import 'share_card_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -104,7 +105,9 @@ class ProfileScreen extends StatelessWidget {
             title: '공유 및 개인정보',
             description: '공유 허용 범위 관리',
             icon: Icons.privacy_tip_outlined,
-            onTap: () => _show(context, '공유 카드 기능은 다음 단계에서 연결됩니다.'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ShareCardScreen()),
+            ),
           ),
         ],
       ),
