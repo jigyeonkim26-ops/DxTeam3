@@ -7,6 +7,7 @@ import '../models/map_place.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
+import 'place_detail_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -94,7 +95,9 @@ class _MapScreenState extends State<MapScreen> {
         place: place,
         onViewDetails: () {
           Navigator.pop(sheetContext);
-          _showMessage('장소 상세 화면은 추후 연결됩니다.');
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const PlaceDetailScreen()),
+          );
         },
       ),
     );
