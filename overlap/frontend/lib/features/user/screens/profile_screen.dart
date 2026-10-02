@@ -6,6 +6,7 @@ import '../services/mock_profile_repository.dart';
 import '../widgets/profile_menu_item.dart';
 import '../widgets/profile_summary_card.dart';
 import '../../notification/screens/notifications_screen.dart';
+import '../../notification/screens/notification_settings_screen.dart';
 import 'saved_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -93,7 +94,11 @@ class ProfileScreen extends StatelessWidget {
             title: '알림 설정',
             description: '장소 근처 리마인드와 방해 금지 시간',
             icon: Icons.settings_outlined,
-            onTap: () => _show(context, '알림 설정 기능은 다음 단계에서 연결됩니다.'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotificationSettingsScreen(),
+              ),
+            ),
           ),
           ProfileMenuItem(
             title: '공유 및 개인정보',

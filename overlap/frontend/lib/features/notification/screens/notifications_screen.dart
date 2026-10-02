@@ -5,11 +5,13 @@ import '../../../core/constants/app_spacing.dart';
 import '../models/notification_item_data.dart';
 import '../services/mock_notification_repository.dart';
 import '../widgets/notification_list_item.dart';
+import 'notification_settings_screen.dart';
 
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
-  void _settings(BuildContext c) => ScaffoldMessenger.of(c)
-      .showSnackBar(const SnackBar(content: Text('알림 설정 기능은 다음 단계에서 연결됩니다.')));
+  void _settings(BuildContext c) => Navigator.of(c).push(
+    MaterialPageRoute<void>(builder: (_) => const NotificationSettingsScreen()),
+  );
   String _message(NotificationType t) => switch (t) {
     NotificationType.newRecord ||
     NotificationType.comment => '기록 상세 연결은 추후 적용됩니다.',
