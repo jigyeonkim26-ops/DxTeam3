@@ -5,6 +5,7 @@ import '../../../core/constants/app_spacing.dart';
 import '../services/mock_profile_repository.dart';
 import '../widgets/profile_menu_item.dart';
 import '../widgets/profile_summary_card.dart';
+import '../../notification/screens/notifications_screen.dart';
 import 'saved_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -46,7 +47,11 @@ class ProfileScreen extends StatelessWidget {
                 icon: const Icon(Icons.bookmark_border),
               ),
               IconButton(
-                onPressed: () => _show(context, '알림함 기능은 다음 단계에서 연결됩니다.'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const NotificationsScreen(),
+                  ),
+                ),
                 icon: const Icon(Icons.notifications_none),
               ),
             ],
@@ -78,7 +83,11 @@ class ProfileScreen extends StatelessWidget {
             description: '댓글 · 새 기록 · 모임 소식',
             icon: Icons.notifications_outlined,
             badge: '2',
-            onTap: () => _show(context, '알림함 기능은 다음 단계에서 연결됩니다.'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            ),
           ),
           ProfileMenuItem(
             title: '알림 설정',
