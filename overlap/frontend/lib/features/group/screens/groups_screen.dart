@@ -6,6 +6,7 @@ import '../models/group_list_item_data.dart';
 import '../services/mock_group_repository.dart';
 import '../widgets/group_list_item.dart';
 import 'create_group_screen.dart';
+import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -17,6 +18,7 @@ class GroupsScreen extends StatefulWidget {
 class _GroupsScreenState extends State<GroupsScreen> {
   late final List<GroupListItemData> _groups;
   late String _selectedGroupId;
+  final _inviteCodeController = TextEditingController();
 
   @override
   void initState() {
@@ -25,6 +27,27 @@ class _GroupsScreenState extends State<GroupsScreen> {
     _selectedGroupId = _groups
         .firstWhere((group) => group.isInitiallySelected)
         .id;
+  }
+
+  @override
+  void dispose() {
+    _inviteCodeController.dispose();
+    super.dispose();
+  }
+
+  void _openJoinGroupScreen() {
+    final inviteCode = _inviteCodeController.text.trim();
+    if (inviteCode.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('초대 코드를 입력해 주세요.')));
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JoinGroupScreen(inviteCode: inviteCode),
+      ),
+    );
   }
 
   @override
@@ -81,6 +104,34 @@ class _GroupsScreenState extends State<GroupsScreen> {
               isSelected: group.id == _selectedGroupId,
               onTap: () => setState(() => _selectedGroupId = group.id),
             ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          const Divider(),
+          const SizedBox(height: AppSpacing.lg),
+          Text(
+            '모임 참여',
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(color: AppColors.ink, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            '방장님에게 받은 초대 코드를 입력해 참여할 수 있어요. 공유 링크를 열면 바로 참여 확인 화면으로 연결됩니다.',
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(height: 1.65),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text('초대 코드로 참여', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: AppSpacing.xs),
+          TextField(
+            controller: _inviteCodeController,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _openJoinGroupScreen(),
+            decoration: const InputDecoration(hintText: '예: YN-2026'),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          OutlinedButton(
+            onPressed: _openJoinGroupScreen,
+            child: const Text('코드로 참여하기'),
           ),
         ],
       ),
