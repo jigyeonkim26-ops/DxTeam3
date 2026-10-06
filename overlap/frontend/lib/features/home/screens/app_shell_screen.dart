@@ -6,7 +6,10 @@ import '../../group/screens/groups_screen.dart';
 import '../../map/screens/map_screen.dart';
 import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
+import '../../notification/screens/notifications_screen.dart';
 import '../../user/screens/profile_screen.dart';
+import '../../user/screens/saved_screen.dart';
+import '../../../shared/widgets/overlap_header.dart';
 
 class AppShellScreen extends StatefulWidget {
   const AppShellScreen({super.key});
@@ -49,9 +52,28 @@ class _AppShellScreenState extends State<AppShellScreen> {
       const ProfileScreen(),
     ];
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: IndexedStack(index: _selectedIndex, children: screens),
+      body: Column(
+        children: [
+          OverlapHeader(
+            showBackButton: _selectedIndex == 2,
+            onBack: _selectedIndex == 2 ? _showMap : null,
+            onSaved: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
+            ),
+            onNotifications: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            ),
+          ),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: IndexedStack(index: _selectedIndex, children: screens),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: SafeArea(
         top: false,
