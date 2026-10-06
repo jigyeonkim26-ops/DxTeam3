@@ -1,0 +1,8 @@
+# Python 3.12에서 검증한 실행 의존성입니다.
+fastapi==0.142.2
+pydantic==2.13.5
+starlette==1.7.0
+uvicorn==0.54.0
+argon2-cffi==25.1.0
+httpx==0.28.1
+python-dotenv==1.2.4
