@@ -12,7 +12,17 @@ def today_in_korea() -> date:
 
 ShortName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 Content = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-Username = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[a-zA-Z0-9_]{3,30}$")]
+Email = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        to_lower=True,
+        min_length=3,
+        max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    ),
+]
+Nickname = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
 
 
 class InputModel(BaseModel):
@@ -20,20 +30,39 @@ class InputModel(BaseModel):
 
 
 class RegisterInput(InputModel):
-    username: Username
-    display_name: ShortName
+    email: Email
     password: SecretStr = Field(min_length=8, max_length=128)
+    nickname: Nickname
+    birth_date: date
+    gender: Literal["female", "male"]
+    terms_accepted: bool
+
+    @field_validator("birth_date")
+    @classmethod
+    def validate_birth_date(cls, value: date) -> date:
+        if value > today_in_korea():
+            raise ValueError("생년월일은 미래 날짜일 수 없습니다.")
+        return value
+
+    @field_validator("terms_accepted")
+    @classmethod
+    def require_terms_acceptance(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("필수 약관에 동의해 주세요.")
+        return value
 
 
 class LoginInput(InputModel):
-    username: Username
+    email: Email
     password: SecretStr = Field(min_length=1, max_length=128)
 
 
 class UserPublic(BaseModel):
     id: int
-    username: str
-    display_name: str
+    email: str
+    nickname: str
+    birth_date: date
+    gender: Literal["female", "male"]
 
 
 class TokenOutput(BaseModel):

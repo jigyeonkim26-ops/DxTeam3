@@ -28,6 +28,8 @@ def now_utc() -> datetime:
 class Account:
     public: UserPublic
     password_hash: str
+    terms_accepted: bool
+    terms_accepted_at: datetime
 
 
 @dataclass
@@ -51,7 +53,7 @@ class MemoryService:
     def __init__(self) -> None:
         self.lock = RLock()
         self.users: dict[int, Account] = {}
-        self.usernames: dict[str, int] = {}
+        self.emails: dict[str, int] = {}
         self.sessions: dict[str, Session] = {}
         self.groups: dict[int, Group] = {}
         self.invites: dict[str, int] = {}
@@ -88,19 +90,24 @@ class MemoryService:
     def register(self, data: RegisterInput) -> UserPublic:
         password_hash = hash_password(data.password.get_secret_value())
         with self.lock:
-            if data.username in self.usernames:
-                raise HTTPException(409, "이미 사용 중인 아이디입니다.")
-            user = UserPublic(id=self._next_id("user"), username=data.username,
-                              display_name=data.display_name)
-            self.users[user.id] = Account(user, password_hash)
-            self.usernames[user.username] = user.id
+            if data.email in self.emails:
+                raise HTTPException(409, "이미 사용 중인 이메일입니다.")
+            user = UserPublic(
+                id=self._next_id("user"), email=data.email, nickname=data.nickname,
+                birth_date=data.birth_date, gender=data.gender,
+            )
+            self.users[user.id] = Account(
+                user, password_hash, data.terms_accepted, now_utc()
+            )
+            self.emails[user.email] = user.id
             return user
 
-    def login(self, username: str, password: str) -> TokenOutput:
+    def login(self, email: str, password: str) -> TokenOutput:
+        email = email.strip().lower()
         with self.lock:
-            account = self.users.get(self.usernames.get(username, -1))
+            account = self.users.get(self.emails.get(email, -1))
         if not verify_password(account.password_hash if account else None, password):
-            raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다.",
+            raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.",
                                 headers={"WWW-Authenticate": "Bearer"})
         assert account is not None
         token = new_token()
