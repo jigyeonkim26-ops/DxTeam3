@@ -172,7 +172,7 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
     )
     def login(data: LoginInput):
         return service.login(
-            data.username,
+            data.email,
             data.password.get_secret_value(),
         )
 

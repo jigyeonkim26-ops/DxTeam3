@@ -16,8 +16,8 @@
 | 메서드 | 주소 | 기능 |
 |---|---|---|
 | GET | `/health` | 서버 실행 확인 |
-| POST | `/auth/register` | 아이디·표시 이름·비밀번호로 가입 |
-| POST | `/auth/login` | 토큰 발급 |
+| POST | `/auth/register` | 이메일·비밀번호·닉네임·생년월일·성별·필수 약관 동의로 가입 |
+| POST | `/auth/login` | 이메일·비밀번호로 토큰 발급 |
 | GET | `/auth/me` | 내 정보 |
 | POST | `/auth/logout` | 현재 토큰 폐기 |
 | POST | `/groups` | 모임 생성, 모임장 자동 가입, 초대 코드 반환 |

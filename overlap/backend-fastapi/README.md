@@ -79,19 +79,22 @@ API 테스트 화면에서 각 항목을 펼친 다음 **Try it out → 입력 �
 
 ```json
 {
-  "username": "segeon",
-  "display_name": "세건",
-  "password": "overlap-demo-123!"
+  "email": "segeon@example.com",
+  "password": "overlap-demo-123!",
+  "nickname": "세건",
+  "birth_date": "1995-05-17",
+  "gender": "female",
+  "terms_accepted": true
 }
 ```
 
-예시 비밀번호는 테스트용입니다. 가입 성공은 HTTP 201입니다. `username`은 영문·숫자·밑줄 3~30자, 비밀번호는 8~128자입니다. 아이디는 소문자로 정규화됩니다.
+예시 비밀번호는 테스트용입니다. 가입 성공은 HTTP 201입니다. 이메일은 앞뒤 공백 제거 후 소문자로 정규화하며, 닉네임은 공백 제거 후 1~50자, 비밀번호는 8~128자입니다. 생년월일은 실제 날짜이며 미래일 수 없고, 필수 약관 동의가 필요합니다.
 
 ### 4-2. 로그인: POST /auth/login
 
 ```json
 {
-  "username": "segeon",
+  "email": "segeon@example.com",
   "password": "overlap-demo-123!"
 }
 ```

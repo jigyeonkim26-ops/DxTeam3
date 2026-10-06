@@ -12,12 +12,19 @@ from app.service import MemoryService, now_utc
 PASSWORD = "overlap-demo-123!"
 
 
-def account(client, username):
+def register_payload(email):
+    return {
+        "email": email, "password": PASSWORD, "nickname": email.split("@", 1)[0],
+        "birth_date": "1995-05-17", "gender": "female", "terms_accepted": True,
+    }
+
+
+def account(client, email):
     result = client.post("/auth/register", json={
-        "username": username, "display_name": username, "password": PASSWORD,
+        **register_payload(email),
     })
     assert result.status_code == 201, result.text
-    token = client.post("/auth/login", json={"username": username, "password": PASSWORD})
+    token = client.post("/auth/login", json={"email": email, "password": PASSWORD})
     assert token.status_code == 200, token.text
     return result.json(), {"Authorization": "Bearer " + token.json()["access_token"]}
 
@@ -26,9 +33,9 @@ def account(client, username):
 def world():
     service = MemoryService()
     with TestClient(create_app(service)) as client:
-        alice, a = account(client, "alice")
-        bob, b = account(client, "bob")
-        carol, c = account(client, "carol")
+        alice, a = account(client, "alice@example.com")
+        bob, b = account(client, "bob@example.com")
+        carol, c = account(client, "carol@example.com")
         group_result = client.post("/groups", headers=a, json={"name": "대학교 친구"})
         assert group_result.status_code == 201
         group = group_result.json()
@@ -66,12 +73,12 @@ def test_auth_hashing_duplicate_login_and_logout(world):
     assert client.get("/auth/me", headers=world["a"]).json() == world["alice"]
     stored = service.users[world["alice"]["id"]].password_hash
     assert stored.startswith("$argon2id$") and PASSWORD not in stored
-    duplicate = client.post("/auth/register", json={"username": "ALICE", "display_name": "다른 이름", "password": PASSWORD})
+    duplicate = client.post("/auth/register", json=register_payload("  ALICE@EXAMPLE.COM  "))
     assert duplicate.status_code == 409
-    for username in ["alice", "missing_user"]:
-        failure = client.post("/auth/login", json={"username": username, "password": "wrong"})
+    for email in ["alice@example.com", "missing@example.com"]:
+        failure = client.post("/auth/login", json={"email": email, "password": "wrong"})
         assert failure.status_code == 401
-        assert failure.json()["detail"] == "아이디 또는 비밀번호가 올바르지 않습니다."
+        assert failure.json()["detail"] == "이메일 또는 비밀번호가 올바르지 않습니다."
     assert client.post("/auth/logout", headers=world["a"]).status_code == 204
     assert client.get("/auth/me", headers=world["a"]).status_code == 401
 
@@ -84,10 +91,56 @@ def test_expired_session_is_rejected(world):
 
 def test_validation_does_not_echo_password():
     with TestClient(create_app()) as client:
-        response = client.post("/auth/register", json={"username": "hi", "display_name": "이름", "password": "secret"})
+        response = client.post("/auth/register", json={**register_payload("hello@example.com"), "password": "secret"})
         assert response.status_code == 422
         assert "secret" not in response.text
         assert all("input" not in error for error in response.json()["detail"])
+
+
+def test_email_normalization_and_terms_timestamp():
+    service = MemoryService()
+    with TestClient(create_app(service)) as client:
+        response = client.post("/auth/register", json=register_payload("  PERSON@EXAMPLE.COM  "))
+        assert response.status_code == 201
+        user = response.json()
+        assert user == {
+            "id": 1, "email": "person@example.com", "nickname": "PERSON",
+            "birth_date": "1995-05-17", "gender": "female",
+        }
+        account = service.users[user["id"]]
+        assert account.terms_accepted is True
+        assert account.terms_accepted_at.tzinfo is not None
+
+
+def test_email_login_and_me():
+    with TestClient(create_app()) as client:
+        client.post("/auth/register", json=register_payload("person@example.com"))
+        token = client.post("/auth/login", json={
+            "email": " PERSON@EXAMPLE.COM ", "password": PASSWORD,
+        })
+        assert token.status_code == 200
+        headers = {"Authorization": "Bearer " + token.json()["access_token"]}
+        me = client.get("/auth/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["email"] == "person@example.com"
+        assert "password_hash" not in me.json()
+
+
+@pytest.mark.parametrize("birth_date", ["2023-02-29", "2024-02-30", "2999-01-01"])
+def test_invalid_or_future_birth_date_is_rejected(birth_date):
+    with TestClient(create_app()) as client:
+        response = client.post("/auth/register", json=register_payload("person@example.com") | {
+            "birth_date": birth_date,
+        })
+        assert response.status_code == 422
+
+
+def test_terms_must_be_accepted():
+    with TestClient(create_app()) as client:
+        response = client.post("/auth/register", json=register_payload("person@example.com") | {
+            "terms_accepted": False,
+        })
+        assert response.status_code == 422
 
 
 def test_invites_and_duplicate_membership(world):
