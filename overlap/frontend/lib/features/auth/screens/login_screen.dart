@@ -138,6 +138,25 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: () =>
+                        _showMessage('이메일 찾기는 백엔드 연동 후 제공될 예정이에요.'),
+                    child: const Text('이메일 찾기'),
+                  ),
+                  const SizedBox(
+                    height: 18,
+                    child: VerticalDivider(color: AppColors.divider),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        _showMessage('비밀번호 찾기는 백엔드 연동 후 제공될 예정이에요.'),
+                    child: const Text('비밀번호 찾기'),
+                  ),
+                ],
+              ),
               TextButton(
                 onPressed: _openSignup,
                 child: const Text('계정이 없나요? 회원가입'),
