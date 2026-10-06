@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/place.dart';
+import '../../ai/screens/ai_recommendation_screen.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
 import '../widgets/map_filter_sheet.dart';
@@ -114,6 +115,14 @@ class _MapScreenState extends State<MapScreen> {
     _showMessage("'${selectedPlace.name}'를 선택했어요.");
   }
 
+  Future<void> _openAiRecommendations() async {
+    final selectedPlace = await Navigator.of(context).push<Place>(
+      MaterialPageRoute<Place>(builder: (_) => const AiRecommendationScreen()),
+    );
+    if (!mounted || selectedPlace == null) return;
+    _showMessage("'${selectedPlace.name}'을 추천 장소로 선택했어요.");
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -168,7 +177,7 @@ class _MapScreenState extends State<MapScreen> {
                 icon: Icons.auto_awesome,
                 tooltip: 'AI 추천',
                 isPrimary: true,
-                onTap: () => _showMessage('AI 장소 추천은 추후 연결됩니다.'),
+                onTap: _openAiRecommendations,
               ),
             ],
           ),
