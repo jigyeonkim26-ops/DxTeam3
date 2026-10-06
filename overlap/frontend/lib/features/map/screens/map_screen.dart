@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../shared/models/place.dart';
+import '../../ai/screens/ai_recommendation_screen.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
+import 'place_detail_screen.dart';
+import 'place_search_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -94,11 +98,29 @@ class _MapScreenState extends State<MapScreen> {
         place: place,
         onViewDetails: () {
           Navigator.pop(sheetContext);
-          _showMessage('장소 상세 화면은 추후 연결됩니다.');
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const PlaceDetailScreen()),
+          );
         },
       ),
     );
     if (mounted) setState(() => _selectedPlace = null);
+  }
+
+  Future<void> _openPlaceSearch() async {
+    final selectedPlace = await Navigator.of(context).push<Place>(
+      MaterialPageRoute<Place>(builder: (_) => const PlaceSearchScreen()),
+    );
+    if (!mounted || selectedPlace == null) return;
+    _showMessage("'${selectedPlace.name}'를 선택했어요.");
+  }
+
+  Future<void> _openAiRecommendations() async {
+    final selectedPlace = await Navigator.of(context).push<Place>(
+      MaterialPageRoute<Place>(builder: (_) => const AiRecommendationScreen()),
+    );
+    if (!mounted || selectedPlace == null) return;
+    _showMessage("'${selectedPlace.name}'을 추천 장소로 선택했어요.");
   }
 
   @override
@@ -118,11 +140,7 @@ class _MapScreenState extends State<MapScreen> {
           right: AppSpacing.md,
           child: Row(
             children: [
-              Expanded(
-                child: _SearchButton(
-                  onTap: () => _showMessage('장소 검색은 추후 연결됩니다.'),
-                ),
-              ),
+              Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
               const SizedBox(width: AppSpacing.xs),
               _RoundIconButton(
                 icon: Icons.tune_rounded,
@@ -159,7 +177,7 @@ class _MapScreenState extends State<MapScreen> {
                 icon: Icons.auto_awesome,
                 tooltip: 'AI 추천',
                 isPrimary: true,
-                onTap: () => _showMessage('AI 장소 추천은 추후 연결됩니다.'),
+                onTap: _openAiRecommendations,
               ),
             ],
           ),
