@@ -27,12 +27,19 @@ class _AppShellScreenState extends State<AppShellScreen> {
     _NavigationItem('나', Icons.person_outline, Icons.person),
   ];
 
+  void _showMap() {
+    setState(() {
+      _selectedMapGroupId = null;
+      _selectedIndex = 0;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
       MapScreen(selectedGroupId: _selectedMapGroupId),
       const FeedScreen(),
-      const RecordComposeScreen(),
+      RecordComposeScreen(onExitToMap: _showMap),
       GroupsScreen(
         onShowGroupOnMap: (groupId) => setState(() {
           _selectedMapGroupId = groupId;
