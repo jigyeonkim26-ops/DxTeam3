@@ -17,14 +17,7 @@ class AppShellScreen extends StatefulWidget {
 
 class _AppShellScreenState extends State<AppShellScreen> {
   int _selectedIndex = 0;
-
-  static const _screens = <Widget>[
-    MapScreen(),
-    FeedScreen(),
-    RecordComposeScreen(),
-    GroupsScreen(),
-    ProfileScreen(),
-  ];
+  String? _selectedMapGroupId;
 
   static const _items = <_NavigationItem>[
     _NavigationItem('지도', Icons.map_outlined, Icons.map),
@@ -36,10 +29,22 @@ class _AppShellScreenState extends State<AppShellScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screens = <Widget>[
+      MapScreen(selectedGroupId: _selectedMapGroupId),
+      const FeedScreen(),
+      const RecordComposeScreen(),
+      GroupsScreen(
+        onShowGroupOnMap: (groupId) => setState(() {
+          _selectedMapGroupId = groupId;
+          _selectedIndex = 0;
+        }),
+      ),
+      const ProfileScreen(),
+    ];
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: IndexedStack(index: _selectedIndex, children: _screens),
+        child: IndexedStack(index: _selectedIndex, children: screens),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
@@ -57,7 +62,10 @@ class _AppShellScreenState extends State<AppShellScreen> {
                   item: item,
                   selected: _selectedIndex == index,
                   isCompose: index == 2,
-                  onTap: () => setState(() => _selectedIndex = index),
+                  onTap: () => setState(() {
+                    _selectedIndex = index;
+                    if (index == 0) _selectedMapGroupId = null;
+                  }),
                 ),
               );
             }),
