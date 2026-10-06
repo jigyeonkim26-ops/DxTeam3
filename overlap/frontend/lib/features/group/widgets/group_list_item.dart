@@ -1,0 +1,85 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/constants/app_colors.dart';
+import '../../../core/constants/app_spacing.dart';
+import '../models/group_list_item_data.dart';
+
+class GroupListItem extends StatelessWidget {
+  const GroupListItem({
+    super.key,
+    required this.group,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final GroupListItemData group;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = isSelected ? '${group.name} · 현재 선택됨' : group.name;
+    final summary =
+        '멤버 ${group.memberCount}명 · 장소 ${group.placeCount}곳 · ${group.newRecordDescription}';
+
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: '$title, $summary',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            decoration: BoxDecoration(
+              border: const Border(
+                bottom: BorderSide(color: AppColors.divider),
+              ),
+              color: isSelected
+                  ? AppColors.paleMint.withValues(alpha: 0.45)
+                  : null,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: AppColors.ink,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          summary,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontSize: 12, height: 1.55),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isSelected) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    const Icon(
+                      Icons.check_circle,
+                      color: AppColors.deepNavy,
+                      size: 20,
+                      semanticLabel: '현재 선택됨',
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
