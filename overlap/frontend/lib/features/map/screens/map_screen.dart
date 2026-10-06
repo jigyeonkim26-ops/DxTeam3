@@ -13,7 +13,9 @@ import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, this.selectedGroupId});
+
+  final String? selectedGroupId;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -23,6 +25,22 @@ class _MapScreenState extends State<MapScreen> {
   Set<MapFilter> _selectedFilters = {MapFilter.mine};
   MapPlace? _selectedPlace;
   bool _isSatellite = false;
+
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedGroupId != widget.selectedGroupId) {
+      setState(() {
+        _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
+        _selectedPlace = null;
+      });
+    }
+  }
+
+  Set<MapFilter> _filtersForGroupId(String? groupId) {
+    if (groupId == null) return {MapFilter.mine};
+    return {MapFilter.values.firstWhere((filter) => filter.name == groupId)};
+  }
 
   static final List<MapPlace> _places = [
     MapPlace(

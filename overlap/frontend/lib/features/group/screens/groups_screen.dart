@@ -9,7 +9,9 @@ import 'create_group_screen.dart';
 import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
-  const GroupsScreen({super.key});
+  const GroupsScreen({super.key, required this.onShowGroupOnMap});
+
+  final ValueChanged<String> onShowGroupOnMap;
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
@@ -102,7 +104,10 @@ class _GroupsScreenState extends State<GroupsScreen> {
             (group) => GroupListItem(
               group: group,
               isSelected: group.id == _selectedGroupId,
-              onTap: () => setState(() => _selectedGroupId = group.id),
+              onTap: () {
+                setState(() => _selectedGroupId = group.id);
+                widget.onShowGroupOnMap(group.id);
+              },
             ),
           ),
           const SizedBox(height: AppSpacing.lg),

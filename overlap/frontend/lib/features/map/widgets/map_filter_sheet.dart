@@ -61,6 +61,21 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
+            CheckboxListTile(
+              value: _filters.length == MapFilter.values.length,
+              onChanged: (selected) => setState(() {
+                _filters
+                  ..clear()
+                  ..addAll(selected ?? false ? MapFilter.values : const []);
+              }),
+              activeColor: AppColors.deepNavy,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.trailing,
+              title: const Text(
+                '전체',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             for (final filter in MapFilter.values)
               CheckboxListTile(
                 value: _filters.contains(filter),
