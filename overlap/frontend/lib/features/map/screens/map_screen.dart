@@ -49,7 +49,8 @@ class _MapScreenState extends State<MapScreen> {
       recordCount: 3,
       author: '민지 · 서연',
       summary: '비가 그친 뒤, 창가 자리에 남긴 따뜻한 기억',
-      position: const Offset(0.20, 0.32),
+      latitude: 37.5638,
+      longitude: 126.9250,
       filters: {MapFilter.yeonnam},
     ),
     MapPlace(
@@ -58,7 +59,8 @@ class _MapScreenState extends State<MapScreen> {
       recordCount: 5,
       author: '하늘 · 도윤',
       summary: '노을이 지는 시간에 함께 걸었던 산책길',
-      position: const Offset(0.66, 0.48),
+      latitude: 37.5286,
+      longitude: 126.9345,
       filters: {MapFilter.travel},
     ),
     MapPlace(
@@ -67,7 +69,8 @@ class _MapScreenState extends State<MapScreen> {
       recordCount: 2,
       author: '나',
       summary: '새로 발견한 골목의 조용한 오후',
-      position: const Offset(0.44, 0.71),
+      latitude: 37.5446,
+      longitude: 127.0557,
       filters: {MapFilter.mine, MapFilter.neighborhood},
     ),
   ];

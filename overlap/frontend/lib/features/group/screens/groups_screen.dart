@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
@@ -18,17 +19,21 @@ class GroupsScreen extends StatefulWidget {
 }
 
 class _GroupsScreenState extends State<GroupsScreen> {
-  late final List<GroupListItemData> _groups;
-  late String _selectedGroupId;
+  String? _selectedGroupId;
   final _inviteCodeController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _groups = MockGroupRepository.groups;
-    _selectedGroupId = _groups
-        .firstWhere((group) => group.isInitiallySelected)
-        .id;
+    final groups = MockGroupRepository.groups;
+    if (groups.isNotEmpty) {
+      _selectedGroupId = groups
+          .firstWhere(
+            (group) => group.isInitiallySelected,
+            orElse: () => groups.first,
+          )
+          .id;
+    }
   }
 
   @override
@@ -48,6 +53,118 @@ class _GroupsScreenState extends State<GroupsScreen> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => JoinGroupScreen(inviteCode: inviteCode),
+      ),
+    );
+  }
+
+  void _openShareSheet(GroupListItemData group) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Material(
+          color: AppColors.paper,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(AppSpacing.cardRadius),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.sm,
+              AppSpacing.lg,
+              AppSpacing.lg,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: const BoxDecoration(
+                      color: AppColors.divider,
+                      borderRadius: BorderRadius.all(
+                        Radius.circular(AppSpacing.pillRadius),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  '${group.name} 초대',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                const Text(
+                  '친구에게 이 링크를 보내 모임에 초대해보세요.',
+                  style: TextStyle(color: AppColors.muted),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: const BoxDecoration(
+                    color: AppColors.surface,
+                    border: Border(
+                      top: BorderSide(color: AppColors.divider),
+                      right: BorderSide(color: AppColors.divider),
+                      bottom: BorderSide(color: AppColors.divider),
+                      left: BorderSide(color: AppColors.divider),
+                    ),
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(AppSpacing.buttonRadius),
+                    ),
+                  ),
+                  child: Text(
+                    group.inviteUrl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.deepNavy,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: group.inviteUrl),
+                      );
+                      if (!mounted || !sheetContext.mounted) return;
+                      Navigator.pop(sheetContext);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('초대 링크를 복사했습니다.')),
+                      );
+                    },
+                    icon: const Icon(Icons.content_copy_outlined),
+                    label: const Text('링크 복사'),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('실제 시스템 공유 기능을 위해 share_plus 추가가 필요합니다.'),
+                      ),
+                    ),
+                    icon: const Icon(Icons.ios_share_outlined),
+                    label: const Text('공유하기'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -100,15 +217,34 @@ class _GroupsScreenState extends State<GroupsScreen> {
             ],
           ),
           const SizedBox(height: AppSpacing.xs),
-          ..._groups.map(
-            (group) => GroupListItem(
-              group: group,
-              isSelected: group.id == _selectedGroupId,
-              onTap: () {
-                setState(() => _selectedGroupId = group.id);
-                widget.onShowGroupOnMap(group.id);
-              },
-            ),
+          ValueListenableBuilder<List<GroupListItemData>>(
+            valueListenable: MockGroupRepository.groupsListenable,
+            builder: (context, groups, _) {
+              if (groups.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                  child: Text(
+                    '참여 중인 모임이 없어요.',
+                    style: TextStyle(color: AppColors.muted),
+                  ),
+                );
+              }
+
+              return Column(
+                children: [
+                  for (final group in groups)
+                    GroupListItem(
+                      group: group,
+                      isSelected: group.id == _selectedGroupId,
+                      onTap: () {
+                        setState(() => _selectedGroupId = group.id);
+                        widget.onShowGroupOnMap(group.id);
+                      },
+                      onShare: () => _openShareSheet(group),
+                    ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: AppSpacing.lg),
           const Divider(),

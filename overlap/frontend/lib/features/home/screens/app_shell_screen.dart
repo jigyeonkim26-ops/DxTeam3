@@ -6,7 +6,10 @@ import '../../group/screens/groups_screen.dart';
 import '../../map/screens/map_screen.dart';
 import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
+import '../../notification/screens/notifications_screen.dart';
 import '../../user/screens/profile_screen.dart';
+import '../../user/screens/saved_screen.dart';
+import '../../../shared/widgets/overlap_header.dart';
 
 class AppShellScreen extends StatefulWidget {
   const AppShellScreen({super.key});
@@ -27,12 +30,19 @@ class _AppShellScreenState extends State<AppShellScreen> {
     _NavigationItem('나', Icons.person_outline, Icons.person),
   ];
 
+  void _showMap() {
+    setState(() {
+      _selectedMapGroupId = null;
+      _selectedIndex = 0;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
       MapScreen(selectedGroupId: _selectedMapGroupId),
       const FeedScreen(),
-      const RecordComposeScreen(),
+      RecordComposeScreen(onExitToMap: _showMap),
       GroupsScreen(
         onShowGroupOnMap: (groupId) => setState(() {
           _selectedMapGroupId = groupId;
@@ -42,9 +52,28 @@ class _AppShellScreenState extends State<AppShellScreen> {
       const ProfileScreen(),
     ];
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: IndexedStack(index: _selectedIndex, children: screens),
+      body: Column(
+        children: [
+          OverlapHeader(
+            showBackButton: _selectedIndex == 2,
+            onBack: _selectedIndex == 2 ? _showMap : null,
+            onSaved: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
+            ),
+            onNotifications: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            ),
+          ),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: IndexedStack(index: _selectedIndex, children: screens),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: SafeArea(
         top: false,

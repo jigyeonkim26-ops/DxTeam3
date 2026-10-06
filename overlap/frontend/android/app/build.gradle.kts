@@ -1,8 +1,18 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    FileInputStream(localPropertiesFile).use(localProperties::load)
+}
+val kakaoJavascriptKey = localProperties.getProperty("KAKAO_JAVASCRIPT_KEY", "")
 
 android {
     namespace = "com.example.overlap_app"
@@ -27,6 +37,12 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        resValue("string", "kakao_javascript_key", kakaoJavascriptKey)
+    }
+
+    buildFeatures {
+        resValues = true
     }
 
     buildTypes {
