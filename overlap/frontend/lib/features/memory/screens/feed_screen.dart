@@ -10,15 +10,23 @@ import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key});
+  const FeedScreen({super.key, this.initialFilter = FeedFilter.all});
+
+  final FeedFilter initialFilter;
 
   @override
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
 class _FeedScreenState extends State<FeedScreen> {
-  FeedFilter _selectedFilter = FeedFilter.all;
+  late FeedFilter _selectedFilter;
   final Set<String> _likedRecordIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedFilter = widget.initialFilter;
+  }
 
   List<Record> get _visibleRecords {
     final records = switch (_selectedFilter) {
