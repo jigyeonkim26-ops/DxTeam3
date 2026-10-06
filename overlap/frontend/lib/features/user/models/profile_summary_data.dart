@@ -15,4 +15,16 @@ class ProfileSummaryData {
   final int groupCount;
   final String recentRecordTitle;
   final String recentRecordPlace;
+
+  ProfileSummaryData copyWith({int? groupCount}) {
+    return ProfileSummaryData(
+      userName: userName,
+      statusText: statusText,
+      recordCount: recordCount,
+      visitedPlaceCount: visitedPlaceCount,
+      groupCount: groupCount ?? this.groupCount,
+      recentRecordTitle: recentRecordTitle,
+      recentRecordPlace: recentRecordPlace,
+    );
+  }
 }
