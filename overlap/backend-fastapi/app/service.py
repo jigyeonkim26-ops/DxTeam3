@@ -12,11 +12,15 @@ from threading import RLock
 from typing import Literal
 
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from .models import (
     GroupCreated, GroupPublic, MapPin, MemoryInput, MemoryPublic,
     Page, PlaceInput, PlacePublic, RegisterInput, TokenOutput, UserPublic,
 )
+from .db_models import User as DBUser
 from .security import hash_password, new_token, token_digest, verify_password
 
 
@@ -28,8 +32,8 @@ def now_utc() -> datetime:
 class Account:
     public: UserPublic
     password_hash: str
-    terms_accepted: bool
-    terms_accepted_at: datetime
+    terms_accepted: bool | None
+    terms_accepted_at: datetime | None
 
 
 @dataclass
@@ -87,6 +91,35 @@ class MemoryService:
         return GroupPublic(id=group.id, name=group.name, owner_id=group.owner_id,
                            member_count=len(group.member_ids))
 
+    @staticmethod
+    def _public_user(row: DBUser) -> UserPublic:
+        return UserPublic(
+            id=row.id,
+            email=row.email,
+            nickname=row.nickname or "",
+            birth_date=row.birth_date,
+            gender=row.gender,
+        )
+
+    def _remember_account(
+        self,
+        public: UserPublic,
+        password_hash: str,
+        terms_accepted: bool | None = None,
+        terms_accepted_at: datetime | None = None,
+    ) -> None:
+        with self.lock:
+            previous = self.users.get(public.id)
+            if previous is not None:
+                if terms_accepted is None:
+                    terms_accepted = previous.terms_accepted
+                if terms_accepted_at is None:
+                    terms_accepted_at = previous.terms_accepted_at
+            self.users[public.id] = Account(
+                public, password_hash, terms_accepted, terms_accepted_at
+            )
+            self.emails[public.email] = public.id
+
     def register(self, data: RegisterInput) -> UserPublic:
         password_hash = hash_password(data.password.get_secret_value())
         with self.lock:
@@ -102,6 +135,51 @@ class MemoryService:
             self.emails[user.email] = user.id
             return user
 
+    def register_db(self, data: RegisterInput, db: Session) -> UserPublic:
+        email = data.email.strip().lower()
+        if db.scalar(select(DBUser.id).where(DBUser.email == email)) is not None:
+            raise HTTPException(409, "이미 사용 중인 이메일입니다.")
+
+        password_hash = hash_password(data.password.get_secret_value())
+        row = DBUser(
+            email=email,
+            nickname=data.nickname,
+            password_hash=password_hash,
+            gender=data.gender,
+            birth_date=data.birth_date,
+        )
+        try:
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+        except IntegrityError as exc:
+            db.rollback()
+            error_args = getattr(exc.orig, "args", ())
+            if error_args and error_args[0] == 1062:
+                raise HTTPException(409, "이미 사용 중인 이메일입니다.") from exc
+            raise
+        except Exception:
+            db.rollback()
+            raise
+
+        public = self._public_user(row)
+        # TODO: 약관 동의 영속화는 DB 설계 확인 필요
+        self._remember_account(public, password_hash, data.terms_accepted, now_utc())
+        return public
+
+    def _issue_token(self, user_id: int) -> TokenOutput:
+        token = new_token()
+        with self.lock:
+            now = now_utc()
+            self.sessions = {
+                key: value for key, value in self.sessions.items()
+                if value.expires_at > now
+            }
+            self.sessions[token_digest(token)] = Session(
+                user_id, now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS)
+            )
+        return TokenOutput(access_token=token, expires_in=self.TOKEN_LIFETIME_SECONDS)
+
     def login(self, email: str, password: str) -> TokenOutput:
         email = email.strip().lower()
         with self.lock:
@@ -110,15 +188,18 @@ class MemoryService:
             raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.",
                                 headers={"WWW-Authenticate": "Bearer"})
         assert account is not None
-        token = new_token()
-        with self.lock:
-            now = now_utc()
-            self.sessions = {key: value for key, value in self.sessions.items()
-                             if value.expires_at > now}
-            self.sessions[token_digest(token)] = Session(
-                account.public.id, now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS)
-            )
-        return TokenOutput(access_token=token, expires_in=self.TOKEN_LIFETIME_SECONDS)
+        return self._issue_token(account.public.id)
+
+    def login_db(self, email: str, password: str, db: Session) -> TokenOutput:
+        email = email.strip().lower()
+        row = db.scalar(select(DBUser).where(DBUser.email == email))
+        if not verify_password(row.password_hash if row else None, password):
+            raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+        assert row is not None
+        public = self._public_user(row)
+        self._remember_account(public, row.password_hash)
+        return self._issue_token(row.id)
 
     def authenticate(self, token: str) -> UserPublic:
         with self.lock:
@@ -130,10 +211,28 @@ class MemoryService:
                                     headers={"WWW-Authenticate": "Bearer"})
             return self.users[session.user_id].public
 
+    def authenticate_db(self, token: str, db: Session) -> UserPublic:
+        key = token_digest(token)
+        with self.lock:
+            session = self.sessions.get(key)
+            if session is None or session.expires_at <= now_utc():
+                self.sessions.pop(key, None)
+                raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                                    headers={"WWW-Authenticate": "Bearer"})
+            user_id = session.user_id
+
+        row = db.get(DBUser, user_id)
+        if row is None:
+            self.logout(token)
+            raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+        public = self._public_user(row)
+        self._remember_account(public, row.password_hash)
+        return public
+
     def logout(self, token: str) -> None:
         with self.lock:
             self.sessions.pop(token_digest(token), None)
-
     def create_group(self, user_id: int, name: str) -> GroupCreated:
         with self.lock:
             group_id = self._next_id("group")
