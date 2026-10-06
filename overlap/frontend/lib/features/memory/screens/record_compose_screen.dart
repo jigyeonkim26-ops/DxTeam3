@@ -11,7 +11,9 @@ import '../widgets/photo_placeholder_picker.dart';
 import '../widgets/place_picker_sheet.dart';
 
 class RecordComposeScreen extends StatefulWidget {
-  const RecordComposeScreen({super.key});
+  const RecordComposeScreen({super.key, required this.onExitToMap});
+
+  final VoidCallback onExitToMap;
 
   @override
   State<RecordComposeScreen> createState() => _RecordComposeScreenState();
@@ -106,6 +108,19 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     });
   }
 
+  bool get _areAllGroupsSelected =>
+      _groups.isNotEmpty && _selectedGroupIds.length == _groups.length;
+
+  void _toggleAllGroups(bool shouldSelectAll) {
+    setState(() {
+      if (shouldSelectAll) {
+        _selectedGroupIds.addAll(_groups.map((group) => group.id));
+      } else {
+        _selectedGroupIds.clear();
+      }
+    });
+  }
+
   void _publish() {
     if (_photoPlaceholders.isEmpty) {
       _showMessage('사진을 한 장 이상 추가해 주세요.');
@@ -133,6 +148,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _storyController.clear();
     });
     _showMessage('기록이 작성되었습니다.');
+    widget.onExitToMap();
   }
 
   @override
@@ -148,6 +164,14 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
         ),
         children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              onPressed: widget.onExitToMap,
+              icon: const Icon(Icons.arrow_back),
+              tooltip: '지도 메인으로 돌아가기',
+            ),
+          ),
           const Text(
             '새 기록',
             style: TextStyle(
@@ -234,7 +258,9 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
             groups: _groups,
             selectedGroupIds: _selectedGroupIds,
             isDisabled: _isPrivate,
+            areAllSelected: _areAllGroupsSelected,
             onChanged: _toggleGroup,
+            onSelectAll: _toggleAllGroups,
           ),
           const SizedBox(height: AppSpacing.lg),
           SizedBox(

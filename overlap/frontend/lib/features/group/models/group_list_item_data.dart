@@ -6,6 +6,7 @@ class GroupListItemData {
     required this.memberCount,
     required this.placeCount,
     required this.newRecordCount,
+    required this.inviteCode,
     this.hasTodayNewRecords = false,
     this.isInitiallySelected = false,
   });
@@ -15,8 +16,11 @@ class GroupListItemData {
   final int memberCount;
   final int placeCount;
   final int newRecordCount;
+  final String inviteCode;
   final bool hasTodayNewRecords;
   final bool isInitiallySelected;
+
+  String get inviteUrl => 'https://overlap.app/join/$inviteCode';
 
   String get newRecordDescription {
     if (newRecordCount == 0) {
