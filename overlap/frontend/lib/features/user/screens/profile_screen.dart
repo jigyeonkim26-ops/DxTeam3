@@ -7,13 +7,33 @@ import '../widgets/profile_menu_item.dart';
 import '../widgets/profile_summary_card.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../../notification/screens/notification_settings_screen.dart';
+import 'profile_edit_screen.dart';
 import 'saved_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String? _profileImagePath;
 
   void _show(BuildContext context, String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  Future<void> _openProfileEdit() async {
+    final result = await Navigator.of(context).push<ProfileEditResult>(
+      MaterialPageRoute<ProfileEditResult>(
+        builder: (_) =>
+            ProfileEditScreen(initialProfileImagePath: _profileImagePath),
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() => _profileImagePath = result.profileImagePath);
+    _show(context, '프로필이 수정되었어요.');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +78,11 @@ class ProfileScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          ProfileSummaryCard(profile: profile),
+          ProfileSummaryCard(
+            profile: profile,
+            profileImagePath: _profileImagePath,
+            onProfileTap: _openProfileEdit,
+          ),
           const SizedBox(height: AppSpacing.lg),
           Text(
             '내 기록',
