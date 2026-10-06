@@ -75,6 +75,14 @@ class _SignupScreenState extends State<SignupScreen> {
       _showMessage('출생연도를 선택해 주세요.');
       return;
     }
+    if (_birthMonth == null || _birthDay == null) {
+      _showMessage('생일 월과 일을 선택해 주세요.');
+      return;
+    }
+    if (_gender == null) {
+      _showMessage('성별을 선택해 주세요.');
+      return;
+    }
     if (!_agreedToRequiredTerms) {
       _showMessage('필수 약관에 동의해 주세요.');
       return;
@@ -188,7 +196,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             setState(() => _birthYear = value),
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('생일'),
+                      const _FieldLabel('생일 *'),
                       const SizedBox(height: AppSpacing.xs),
                       Row(
                         children: [
@@ -232,11 +240,11 @@ class _SignupScreenState extends State<SignupScreen> {
                         ],
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('성별'),
+                      const _FieldLabel('성별 *'),
                       const SizedBox(height: AppSpacing.xs),
                       DropdownButtonFormField<String>(
                         initialValue: _gender,
-                        hint: const Text('선택 안 함'),
+                        hint: const Text('성별 선택'),
                         isExpanded: true,
                         items: const [
                           DropdownMenuItem(value: 'female', child: Text('여성')),
