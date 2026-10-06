@@ -39,7 +39,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
+from .db import get_db
 from .kakao import search_places
 from .models import (
     GroupCreated,
@@ -65,7 +67,7 @@ Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 
 
-def create_app(service: MemoryService | None = None) -> FastAPI:
+def create_app(service: MemoryService | None = None, *, use_db_auth: bool = False) -> FastAPI:
     service = service if service is not None else MemoryService()
 
     api = FastAPI(
@@ -81,6 +83,8 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
     )
 
     api.state.service = service
+    if not use_db_auth:
+        api.dependency_overrides[get_db] = lambda: None
     bearer = HTTPBearer(auto_error=False)
 
     def current_token(
@@ -100,7 +104,11 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
 
     def current_user(
         token: Annotated[str, Depends(current_token)],
+        db: Session | None = Depends(get_db),
     ) -> UserPublic:
+        if use_db_auth:
+            assert db is not None
+            return service.authenticate_db(token, db)
         return service.authenticate(token)
 
     @api.exception_handler(RequestValidationError)
@@ -161,7 +169,10 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
         tags=["1. 회원"],
         summary="회원가입",
     )
-    def register(data: RegisterInput):
+    def register(data: RegisterInput, db: Session | None = Depends(get_db)):
+        if use_db_auth:
+            assert db is not None
+            return service.register_db(data, db)
         return service.register(data)
 
     @api.post(
@@ -170,7 +181,14 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
         tags=["1. 회원"],
         summary="로그인",
     )
-    def login(data: LoginInput):
+    def login(data: LoginInput, db: Session | None = Depends(get_db)):
+        if use_db_auth:
+            assert db is not None
+            return service.login_db(
+                data.email,
+                data.password.get_secret_value(),
+                db,
+            )
         return service.login(
             data.email,
             data.password.get_secret_value(),
@@ -481,4 +499,4 @@ def create_app(service: MemoryService | None = None) -> FastAPI:
     return api
 
 
-app = create_app()
+app = create_app(use_db_auth=True)
