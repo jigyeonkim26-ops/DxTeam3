@@ -9,6 +9,7 @@ class RecordCard extends StatelessWidget {
     super.key,
     required this.record,
     required this.isLiked,
+    required this.onTap,
     required this.onLikeTap,
     required this.onCommentTap,
     required this.onPlaceTap,
@@ -16,6 +17,7 @@ class RecordCard extends StatelessWidget {
 
   final Record record;
   final bool isLiked;
+  final VoidCallback onTap;
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final VoidCallback onPlaceTap;
@@ -24,87 +26,91 @@ class RecordCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final likeCount = record.likeCount + (isLiked ? 1 : 0);
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _Avatar(name: record.author.name),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        record.author.name,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(
-                        _formattedTime(record.createdAt),
-                        style: const TextStyle(
-                          color: AppColors.muted,
-                          fontSize: 12,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _Avatar(name: record.author.name),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          record.author.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
-                      ),
-                    ],
+                        Text(
+                          _formattedTime(record.createdAt),
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Text(
-                  record.emotion.emoji,
-                  style: const TextStyle(fontSize: 22),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextButton.icon(
-              onPressed: onPlaceTap,
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.deepNavy,
-                padding: EdgeInsets.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
+                  Text(
+                    record.emotion.emoji,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                ],
               ),
-              icon: const Icon(Icons.location_on_outlined, size: 17),
-              label: Text(
-                record.place.name,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+              const SizedBox(height: AppSpacing.sm),
+              TextButton.icon(
+                onPressed: onPlaceTap,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.deepNavy,
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: const Icon(Icons.location_on_outlined, size: 17),
+                label: Text(
+                  record.place.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(record.content, style: const TextStyle(height: 1.5)),
-            const SizedBox(height: AppSpacing.sm),
-            _PhotoPlaceholder(record: record),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                _EmotionChip(record: record),
-                for (final group in record.sharedGroups)
-                  _GroupChip(label: group.name),
-              ],
-            ),
-            const Divider(height: AppSpacing.lg),
-            Row(
-              children: [
-                _ActionButton(
-                  icon: isLiked ? Icons.favorite : Icons.favorite_border,
-                  label: '공감 $likeCount',
-                  color: isLiked ? AppColors.coral : AppColors.muted,
-                  onTap: onLikeTap,
-                ),
-                const SizedBox(width: AppSpacing.lg),
-                _ActionButton(
-                  icon: Icons.chat_bubble_outline,
-                  label: '댓글 ${record.commentCount}',
-                  color: AppColors.muted,
-                  onTap: onCommentTap,
-                ),
-              ],
-            ),
-          ],
+              const SizedBox(height: AppSpacing.xs),
+              Text(record.content, style: const TextStyle(height: 1.5)),
+              const SizedBox(height: AppSpacing.sm),
+              _PhotoPlaceholder(record: record),
+              const SizedBox(height: AppSpacing.sm),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  _EmotionChip(record: record),
+                  for (final group in record.sharedGroups)
+                    _GroupChip(label: group.name),
+                ],
+              ),
+              const Divider(height: AppSpacing.lg),
+              Row(
+                children: [
+                  _ActionButton(
+                    icon: isLiked ? Icons.favorite : Icons.favorite_border,
+                    label: '공감 $likeCount',
+                    color: isLiked ? AppColors.coral : AppColors.muted,
+                    onTap: onLikeTap,
+                  ),
+                  const SizedBox(width: AppSpacing.lg),
+                  _ActionButton(
+                    icon: Icons.chat_bubble_outline,
+                    label: '댓글 ${record.commentCount}',
+                    color: AppColors.muted,
+                    onTap: onCommentTap,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

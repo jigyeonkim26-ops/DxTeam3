@@ -177,7 +177,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                       },
                     ),
                     const SizedBox(height: AppSpacing.md),
-                    _RecordPhoto(recordId: record.id),
+                    _RecordPhoto(record: record),
                     const SizedBox(height: AppSpacing.md),
                     Text(
                       record.content,
@@ -334,15 +334,27 @@ class _RecordAuthor extends StatelessWidget {
 }
 
 class _RecordPhoto extends StatelessWidget {
-  const _RecordPhoto({required this.recordId});
+  const _RecordPhoto({required this.record});
 
-  final String recordId;
+  final Record record;
 
   @override
   Widget build(BuildContext context) {
-    final colors = switch (recordId) {
+    final colors = switch (record.id) {
       'place-record-sun' => const [Color(0xFFE9B67A), Color(0xFFFF7058)],
       'place-record-rain' => const [Color(0xFF86A7B6), AppColors.deepNavy],
+      _ when record.id.contains('coast') => const [
+        Color(0xFF5E8EA8),
+        Color(0xFFFFB26B),
+      ],
+      _ when record.id.contains('park') => const [
+        Color(0xFF86B88C),
+        Color(0xFFDCEFE5),
+      ],
+      _ when record.id.contains('bakery') => const [
+        Color(0xFFE6B07A),
+        Color(0xFF9B6A57),
+      ],
       _ => const [Color(0xFF9FC4B2), Color(0xFF5C8474)],
     };
     return Container(

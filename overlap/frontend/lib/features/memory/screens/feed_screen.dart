@@ -5,6 +5,7 @@ import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/record.dart';
 import '../data/mock_feed_data.dart';
 import '../models/feed_filter.dart';
+import 'record_detail_screen.dart';
 import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
@@ -67,6 +68,14 @@ class _FeedScreenState extends State<FeedScreen> {
     });
   }
 
+  void _openRecordDetail(Record record) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordDetailScreen(record: record),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final records = _visibleRecords;
@@ -110,8 +119,9 @@ class _FeedScreenState extends State<FeedScreen> {
               RecordCard(
                 record: record,
                 isLiked: _likedRecordIds.contains(record.id),
+                onTap: () => _openRecordDetail(record),
                 onLikeTap: () => _toggleLike(record.id),
-                onCommentTap: () => _showMessage('기록 상세에서 댓글 기능이 연결됩니다.'),
+                onCommentTap: () => _openRecordDetail(record),
                 onPlaceTap: () => _showMessage('장소 상세는 추후 연결됩니다.'),
               ),
               const SizedBox(height: AppSpacing.md),
