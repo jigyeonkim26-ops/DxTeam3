@@ -10,11 +10,13 @@ class GroupListItem extends StatelessWidget {
     required this.group,
     required this.isSelected,
     required this.onTap,
+    required this.onShare,
   });
 
   final GroupListItemData group;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -65,15 +67,20 @@ class GroupListItem extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (isSelected) ...[
-                    const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: AppSpacing.xs),
+                  IconButton(
+                    onPressed: onShare,
+                    icon: const Icon(Icons.ios_share_outlined),
+                    color: AppColors.deepNavy,
+                    tooltip: '${group.name} 공유',
+                  ),
+                  if (isSelected)
                     const Icon(
                       Icons.check_circle,
                       color: AppColors.deepNavy,
                       size: 20,
                       semanticLabel: '현재 선택됨',
                     ),
-                  ],
                 ],
               ),
             ),

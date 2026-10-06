@@ -142,8 +142,9 @@ class _NotificationSettingsScreenState
                           )
                           .toList(),
                       onChanged: (v) {
-                        if (v != null)
+                        if (v != null) {
                           _change(_settings.copyWith(quietStartTime: v));
+                        }
                       },
                     ),
                   ),
@@ -157,8 +158,9 @@ class _NotificationSettingsScreenState
                           )
                           .toList(),
                       onChanged: (v) {
-                        if (v != null)
+                        if (v != null) {
                           _change(_settings.copyWith(quietEndTime: v));
+                        }
                       },
                     ),
                   ),

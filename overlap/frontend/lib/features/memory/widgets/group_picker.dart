@@ -10,13 +10,17 @@ class GroupPicker extends StatelessWidget {
     required this.groups,
     required this.selectedGroupIds,
     required this.isDisabled,
+    required this.areAllSelected,
     required this.onChanged,
+    required this.onSelectAll,
   });
 
   final List<Group> groups;
   final Set<String> selectedGroupIds;
   final bool isDisabled;
+  final bool areAllSelected;
   final ValueChanged<Group> onChanged;
+  final ValueChanged<bool> onSelectAll;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +34,22 @@ class GroupPicker extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
             child: Column(
               children: [
+                CheckboxListTile(
+                  value: areAllSelected,
+                  onChanged: isDisabled
+                      ? null
+                      : (selected) => onSelectAll(selected ?? false),
+                  activeColor: AppColors.deepNavy,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.xs,
+                  ),
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  title: const Text(
+                    '전체 선택',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const Divider(height: 1, color: AppColors.divider),
                 for (final group in groups)
                   CheckboxListTile(
                     value: selectedGroupIds.contains(group.id),

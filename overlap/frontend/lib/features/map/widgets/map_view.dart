@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../models/map_place.dart';
-import 'place_marker.dart';
+import 'kakao_map_webview.dart';
 
 /// 현재는 가벼운 placeholder를 그리며, 추후 Kakao Map View로 교체할 영역입니다.
 class MapView extends StatelessWidget {
@@ -21,44 +22,34 @@ class MapView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => Stack(
-        fit: StackFit.expand,
-        children: [
-          RepaintBoundary(
-            child: CustomPaint(
-              painter: _MapPlaceholderPainter(isSatellite: isSatellite),
-            ),
-          ),
-          for (final place in places)
-            Positioned(
-              left: (constraints.maxWidth - 90) * place.position.dx,
-              top: (constraints.maxHeight - 60) * place.position.dy,
-              child: PlaceMarker(
-                place: place,
-                isSelected: place.id == selectedPlaceId,
-                onTap: () => onPlaceTap(place),
-              ),
-            ),
-          Positioned(
-            left: 16,
-            bottom: 18,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: AppColors.surface.withValues(alpha: 0.82),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: Text(
-                  'Kakao Map 연결 전 미리보기',
-                  style: TextStyle(color: AppColors.muted, fontSize: 10),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+              ? KakaoMapWebView(places: places, onPlaceTap: onPlaceTap)
+              : CustomPaint(
+                  painter: _MapPlaceholderPainter(isSatellite: isSatellite),
                 ),
+        ),
+        Positioned(
+          left: 16,
+          bottom: 18,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.82),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              child: Text(
+                'Kakao Map 연결 전 미리보기',
+                style: TextStyle(color: AppColors.muted, fontSize: 10),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

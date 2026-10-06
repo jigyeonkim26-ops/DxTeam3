@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
@@ -5,8 +7,16 @@ import '../../../core/constants/app_spacing.dart';
 import '../models/profile_summary_data.dart';
 
 class ProfileSummaryCard extends StatelessWidget {
-  const ProfileSummaryCard({super.key, required this.profile});
+  const ProfileSummaryCard({
+    super.key,
+    required this.profile,
+    this.onProfileTap,
+    this.profileImagePath,
+  });
+
   final ProfileSummaryData profile;
+  final VoidCallback? onProfileTap;
+  final String? profileImagePath;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(AppSpacing.lg),
@@ -17,10 +27,44 @@ class ProfileSummaryCard extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const CircleAvatar(
-          radius: 22,
-          backgroundColor: AppColors.softMint,
-          child: Icon(Icons.person, color: AppColors.deepNavy),
+        Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            onTap: onProfileTap,
+            customBorder: const CircleBorder(),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: AppColors.softMint,
+                  backgroundImage: profileImagePath == null
+                      ? null
+                      : FileImage(File(profileImagePath!)),
+                  child: profileImagePath == null
+                      ? const Icon(Icons.person, color: AppColors.deepNavy)
+                      : null,
+                ),
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                      color: AppColors.coral,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.edit,
+                      color: Colors.white,
+                      size: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
