@@ -56,19 +56,53 @@ from .models import (
     Page,
     PlaceInput,
     PlacePublic,
+    PlaceCandidateResponse,
+    PlaceRecommendationResponse,
+    PreferenceKeywordResponse,
+    RecommendationMemory,
     RegisterInput,
     TokenOutput,
     UserPublic,
 )
 from .service import MemoryService
+from .preference_keyword_service import (
+    InvalidPreferenceResponseError,
+    MissingOpenAIKeyError,
+    PreferenceKeywordService,
+    PreferenceLLMRequestError,
+)
+from .place_web_search_service import (
+    OpenAIResponseRequestError,
+    PlaceSearchNotConfiguredError,
+    PlaceSearchParseError,
+    PlaceWebSearchService,
+    WebSearchToolError,
+)
+from .place_recommendation_service import (
+    InvalidRecommendationError,
+    PlaceRecommendationService,
+    RecommendationRequestError,
+    RecommendationResponseParseError,
+    RecommendationServiceNotConfiguredError,
+)
 
 
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 
 
-def create_app(service: MemoryService | None = None, *, use_db_auth: bool = False) -> FastAPI:
+def create_app(
+    service: MemoryService | None = None,
+    *,
+    use_db_auth: bool = False,
+    preference_service: PreferenceKeywordService | None = None,
+    place_web_search_service: PlaceWebSearchService | None = None,
+    place_recommendation_service: PlaceRecommendationService | None = None,
+) -> FastAPI:
     service = service if service is not None else MemoryService()
+    preference_service = preference_service or PreferenceKeywordService()
+    place_web_search_service = place_web_search_service or PlaceWebSearchService()
+    place_recommendation_service = place_recommendation_service or PlaceRecommendationService()
 
     api = FastAPI(
         title="오버랩 Backend — 시작 프로젝트",
@@ -161,6 +195,201 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
         ],
     ):
         return search_places(query)
+
+    @api.get(
+        "/ai/recommendations/input",
+        response_model=list[RecommendationMemory],
+        tags=["6. AI recommendations"],
+        summary="List the current user's positive memories for recommendation analysis",
+    )
+    def recommendation_input(
+        user: Annotated[
+            UserPublic,
+            Depends(current_user),
+        ],
+    ):
+        return service.list_positive_recommendation_memories(user.id)
+
+    @api.get(
+        "/ai/recommendations/keywords",
+        response_model=PreferenceKeywordResponse,
+        tags=["6. AI recommendations"],
+        summary="Extract preference keywords from the current user's positive memories",
+    )
+    def recommendation_keywords(
+        user: Annotated[
+            UserPublic,
+            Depends(current_user),
+        ],
+    ):
+        memories = service.list_positive_recommendation_memories(user.id)
+        try:
+            return preference_service.extract_keywords(memories)
+        except MissingOpenAIKeyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except InvalidPreferenceResponseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "invalid_llm_response", "message": "The keyword analysis response was invalid"},
+            ) from exc
+        except PreferenceLLMRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "llm_request_failed", "message": "The keyword analysis service is unavailable"},
+            ) from exc
+
+    @api.get(
+        "/ai/recommendations/candidates",
+        response_model=PlaceCandidateResponse,
+        tags=["6. AI recommendations"],
+        summary="Collect place candidates for the current user's positive preferences",
+    )
+    def recommendation_candidates(
+        user: Annotated[
+            UserPublic,
+            Depends(current_user),
+        ],
+    ):
+        memories = service.list_positive_recommendation_memories(user.id)
+        try:
+            preference_response = preference_service.extract_keywords(memories)
+        except MissingOpenAIKeyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except InvalidPreferenceResponseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "invalid_llm_response", "message": "The keyword analysis response was invalid"},
+            ) from exc
+        except PreferenceLLMRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "llm_request_failed", "message": "The keyword analysis service is unavailable"},
+            ) from exc
+
+        if not memories or not preference_response.keywords:
+            return PlaceCandidateResponse(candidates=[])
+        try:
+            return place_web_search_service.search_candidates(
+                preference_response.keywords,
+                memories,
+            )
+        except PlaceSearchNotConfiguredError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except OpenAIResponseRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "openai_request_failed", "message": "The OpenAI Responses request failed"},
+            ) from exc
+        except WebSearchToolError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "web_search_failed", "message": "The web search tool did not complete"},
+            ) from exc
+        except PlaceSearchParseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "candidate_response_invalid", "message": "The place candidate response was invalid"},
+            ) from exc
+
+    @api.get(
+        "/ai/recommendations",
+        response_model=PlaceRecommendationResponse,
+        tags=["6. AI recommendations"],
+        summary="Recommend the best matching places for the current user",
+    )
+    def recommendations(
+        user: Annotated[
+            UserPublic,
+            Depends(current_user),
+        ],
+    ):
+        memories = service.list_positive_recommendation_memories(user.id)
+        if not memories:
+            return PlaceRecommendationResponse(recommendations=[])
+
+        try:
+            preference_response = preference_service.extract_keywords(memories)
+        except MissingOpenAIKeyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except InvalidPreferenceResponseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "invalid_llm_response", "message": "The keyword analysis response was invalid"},
+            ) from exc
+        except PreferenceLLMRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "llm_request_failed", "message": "The keyword analysis service is unavailable"},
+            ) from exc
+        if not preference_response.keywords:
+            return PlaceRecommendationResponse(recommendations=[])
+
+        try:
+            candidate_response = place_web_search_service.search_candidates(
+                preference_response.keywords,
+                memories,
+            )
+        except PlaceSearchNotConfiguredError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except OpenAIResponseRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "openai_request_failed", "message": "The OpenAI Responses request failed"},
+            ) from exc
+        except WebSearchToolError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "web_search_failed", "message": "The web search tool did not complete"},
+            ) from exc
+        except PlaceSearchParseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "candidate_response_invalid", "message": "The place candidate response was invalid"},
+            ) from exc
+        if not candidate_response.candidates:
+            return PlaceRecommendationResponse(recommendations=[])
+
+        try:
+            return place_recommendation_service.recommend(
+                memories,
+                preference_response.keywords,
+                candidate_response,
+            )
+        except RecommendationServiceNotConfiguredError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
+            ) from exc
+        except RecommendationRequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "recommendation_request_failed", "message": "The recommendation analysis request failed"},
+            ) from exc
+        except RecommendationResponseParseError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "recommendation_response_invalid", "message": "The recommendation response was invalid"},
+            ) from exc
+        except InvalidRecommendationError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "invalid_recommendation", "message": "The response did not match the candidate list or preference keywords"},
+            ) from exc
 
     @api.post(
         "/auth/register",

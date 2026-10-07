@@ -1,6 +1,7 @@
 """API로 주고받을 데이터 형식. 날짜와 작성 시각을 따로 저장합니다."""
 
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, field_validator
@@ -106,10 +107,31 @@ class PlacePublic(PlaceInput):
     group_id: int
 
 
+class EmotionCode(str, Enum):
+    LOVE = "LOVE"
+    LIKE = "LIKE"
+    GOOD = "GOOD"
+    NEUTRAL = "NEUTRAL"
+    DISAPPOINTED = "DISAPPOINTED"
+    BAD = "BAD"
+
+
+def emotion_code_to_text(emotion_code: EmotionCode) -> str:
+    return {
+        EmotionCode.LOVE: "\ucd5c\uace0",
+        EmotionCode.LIKE: "\uc88b\uc544",
+        EmotionCode.GOOD: "\uad1c\ucc2e\uc544",
+        EmotionCode.NEUTRAL: "\uadf8\uc800 \uadf8\ub798",
+        EmotionCode.DISAPPOINTED: "\uc544\uc26c\uc6cc",
+        EmotionCode.BAD: "\ubcc4\ub85c",
+    }[emotion_code]
+
+
 class MemoryInput(InputModel):
     place_id: int = Field(gt=0)
     content: Content
     visited_on: date
+    emotion_code: EmotionCode = EmotionCode.NEUTRAL
 
     @field_validator("visited_on")
     @classmethod
@@ -126,8 +148,63 @@ class MemoryPublic(BaseModel):
     author: UserPublic
     content: str
     visited_on: date
+    emotion_code: EmotionCode = EmotionCode.NEUTRAL
     created_at: datetime
     updated_at: datetime
+
+
+class RecommendationMemory(BaseModel):
+    memory_id: int
+    user_id: int
+    place_id: int
+    place_name: str
+    address: str
+    latitude: float
+    longitude: float
+    content: str
+    emotion_code: EmotionCode
+    emotion_meaning: str
+    visited_on: date
+    created_at: datetime
+
+
+class PreferenceKeyword(BaseModel):
+    keyword: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    score: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class PreferenceKeywordResponse(BaseModel):
+    keywords: list[PreferenceKeyword] = Field(max_length=5)
+
+
+class PlaceCandidate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    address: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+    matched_keywords: list[str]
+    summary: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    source_url: str
+
+
+class PlaceCandidateResponse(BaseModel):
+    candidates: list[PlaceCandidate] = Field(max_length=10)
+
+
+class RecommendedPlace(BaseModel):
+    rank: int = Field(ge=1, le=3)
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    address: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+    match_score: float = Field(ge=0, le=1, allow_inf_nan=False)
+    matched_keywords: list[str]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    source_url: str
+
+
+class PlaceRecommendationResponse(BaseModel):
+    recommendations: list[RecommendedPlace] = Field(max_length=3)
 
 
 class MapPin(BaseModel):

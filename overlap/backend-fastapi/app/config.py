@@ -11,3 +11,4 @@ load_dotenv(BASE_DIR / ".env")
 
 # 설정에서 카카오 REST API 키 가져오기
 KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()

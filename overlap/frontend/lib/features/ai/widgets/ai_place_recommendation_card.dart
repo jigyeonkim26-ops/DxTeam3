@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../data/mock_ai_recommendations.dart';
+import '../models/ai_place_recommendation.dart';
 
 class AiPlaceRecommendationCard extends StatelessWidget {
   const AiPlaceRecommendationCard({
@@ -25,7 +25,7 @@ class AiPlaceRecommendationCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _ImagePlaceholder(imageSeed: recommendation.imageSeed),
+              _ImagePlaceholder(imageSeed: recommendation.rank - 1),
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
@@ -41,7 +41,7 @@ class AiPlaceRecommendationCard extends StatelessWidget {
                     ),
                     const SizedBox(height: AppSpacing.xxs),
                     Text(
-                      recommendation.place.name,
+                      recommendation.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -52,7 +52,7 @@ class AiPlaceRecommendationCard extends StatelessWidget {
                     ),
                     const SizedBox(height: AppSpacing.xxs),
                     Text(
-                      recommendation.place.address ?? '',
+                      recommendation.address ?? '',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -65,7 +65,7 @@ class AiPlaceRecommendationCard extends StatelessWidget {
                       spacing: AppSpacing.xxs,
                       runSpacing: AppSpacing.xxs,
                       children: [
-                        for (final keyword in recommendation.keywords)
+                        for (final keyword in recommendation.matchedKeywords)
                           _KeywordChip(label: keyword),
                       ],
                     ),

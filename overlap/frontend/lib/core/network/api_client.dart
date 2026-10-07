@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import '../../features/ai/models/ai_place_recommendation.dart';
 
 import 'api_config.dart';
 
@@ -79,6 +80,23 @@ class ApiClient {
       headers: {'Authorization': 'Bearer $token'},
     );
     return _decodeObject(response);
+  }
+
+  static Future<AiPlaceRecommendationResponse> getAiRecommendations() async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Login is required.', statusCode: 401);
+    }
+    final response = await _send(
+      'GET',
+      '/ai/recommendations',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    try {
+      return AiPlaceRecommendationResponse.fromJson(_decodeObject(response));
+    } on FormatException {
+      throw const ApiException('The AI recommendation response could not be read.');
+    }
   }
 
   static Future<http.Response> searchPlaces(String query) async {

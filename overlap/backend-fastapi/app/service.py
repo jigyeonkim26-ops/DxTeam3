@@ -17,8 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
-    GroupCreated, GroupPublic, MapPin, MemoryInput, MemoryPublic,
-    Page, PlaceInput, PlacePublic, RegisterInput, TokenOutput, UserPublic,
+    EmotionCode, GroupCreated, GroupPublic, MapPin, MemoryInput, MemoryPublic,
+    Page, PlaceInput, PlacePublic, RecommendationMemory, RegisterInput,
+    TokenOutput, UserPublic, emotion_code_to_text,
 )
 from .db_models import User as DBUser
 from .security import hash_password, new_token, token_digest, verify_password
@@ -53,6 +54,11 @@ class Group:
 
 class MemoryService:
     TOKEN_LIFETIME_SECONDS = 3600
+    POSITIVE_EMOTIONS = frozenset({
+        EmotionCode.LOVE,
+        EmotionCode.LIKE,
+        EmotionCode.GOOD,
+    })
 
     def __init__(self) -> None:
         self.lock = RLock()
@@ -290,8 +296,12 @@ class MemoryService:
             self._require_place(group_id, data.place_id)
             now = now_utc()
             memory = MemoryPublic(id=self._next_id("memory"), group_id=group_id,
-                                  author=self.users[user_id].public, created_at=now, updated_at=now,
-                                  **data.model_dump())
+                                  author=self.users[user_id].public,
+                                  place_id=data.place_id,
+                                  content=data.content,
+                                  visited_on=data.visited_on,
+                                  emotion_code=data.emotion_code,
+                                  created_at=now, updated_at=now)
             self.memories[memory.id] = memory
             return memory
 
@@ -307,7 +317,13 @@ class MemoryService:
             if memory.author.id != user_id:
                 raise HTTPException(403, "작성자만 기록을 수정할 수 있습니다.")
             self._require_place(group_id, data.place_id)
-            updated = memory.model_copy(update={**data.model_dump(), "updated_at": now_utc()})
+            updated = memory.model_copy(update={
+                "place_id": data.place_id,
+                "content": data.content,
+                "visited_on": data.visited_on,
+                "emotion_code": data.emotion_code,
+                "updated_at": now_utc(),
+            })
             self.memories[memory_id] = updated
             return updated
 
@@ -336,6 +352,45 @@ class MemoryService:
             items.sort(key=lambda memory: (memory.visited_on, memory.created_at, memory.id),
                        reverse=order == "newest")
             return Page(items=items[offset:offset + limit], total=len(items), offset=offset, limit=limit)
+
+    def list_positive_recommendation_memories(
+        self,
+        user_id: int,
+    ) -> list[RecommendationMemory]:
+        with self.lock:
+            memories = [
+                memory
+                for memory in self.memories.values()
+                if memory.author.id == user_id
+                and memory.emotion_code in self.POSITIVE_EMOTIONS
+            ]
+            memories.sort(
+                key=lambda memory: (memory.visited_on, memory.created_at, memory.id),
+                reverse=True,
+            )
+
+            recommendation_inputs = []
+            for memory in memories:
+                place = self.places.get(memory.place_id)
+                if place is None or place.group_id != memory.group_id:
+                    continue
+                recommendation_inputs.append(
+                    RecommendationMemory(
+                        memory_id=memory.id,
+                        user_id=user_id,
+                        place_id=place.id,
+                        place_name=place.name,
+                        address=place.address,
+                        latitude=place.latitude,
+                        longitude=place.longitude,
+                        content=memory.content,
+                        emotion_code=memory.emotion_code,
+                        emotion_meaning=emotion_code_to_text(memory.emotion_code),
+                        visited_on=memory.visited_on,
+                        created_at=memory.created_at,
+                    )
+                )
+            return recommendation_inputs
 
     def map_pins(self, user_id: int, group_id: int, offset: int, limit: int) -> Page[MapPin]:
         with self.lock:
