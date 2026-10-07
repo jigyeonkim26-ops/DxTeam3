@@ -5,6 +5,7 @@ from sqlalchemy import BigInteger, Integer, Boolean, DateTime, Numeric, String, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
+from .group_db_models import GroupMember, MemoryGroup  # Re-export the shared group models.
 
 Id = BigInteger().with_variant(Integer, "sqlite")
 
@@ -47,20 +48,6 @@ class RecordPhoto(Base):
     file_size: Mapped[int | None] = mapped_column(BigInteger)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-
-
-class MemoryGroup(Base):
-    __tablename__ = "memory_groups"
-    id: Mapped[int] = mapped_column(Id, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100))
-    description: Mapped[str | None] = mapped_column(String(500))
-
-
-class GroupMember(Base):
-    __tablename__ = "group_members"
-    group_id: Mapped[int] = mapped_column(ForeignKey("memory_groups.id"), primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class RecordGroup(Base):

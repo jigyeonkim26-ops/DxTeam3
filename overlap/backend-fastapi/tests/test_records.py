@@ -99,6 +99,47 @@ def test_record_save_and_photo_url(world):
     assert world[0].get(response.json()["photo_urls"][0], headers=world[3][1]).content == image()
 
 
+def test_group_api_memberships_and_settings_are_shared_with_records(world):
+    client, engine, _, headers = world
+    response = client.post("/groups", headers=headers[1], json={
+        "name": "통합 모임", "description": "모임과 기록 연동",
+        "visibility": "INVITED_ONLY",
+    })
+    assert response.status_code == 201, response.text
+    group = response.json()
+    group_id = group["id"]
+    invite = client.get(f"/groups/{group_id}/invite", headers=headers[1])
+    assert invite.status_code == 200
+    assert invite.json()["invite_code"] == group["invite_code"]
+    joined = client.post("/groups/join", headers=headers[2], json={
+        "invite_code": group["invite_code"],
+    })
+    assert joined.status_code == 200, joined.text
+    assert joined.json()["member_count"] == 2
+    preferences = client.patch(f"/groups/{group_id}/preferences", headers=headers[2], json={
+        "custom_name": "내 별칭", "notifications_enabled": False,
+        "pin_color_value": 0xFF6FAE8F,
+    })
+    assert preferences.status_code == 200, preferences.text
+    assert preferences.json()["display_name"] == "내 별칭"
+    with Session(engine) as db:
+        member = db.get(GroupMember, (group_id, 2))
+        assert member.custom_name == "내 별칭"
+        assert member.notifications_enabled is False
+        assert db.get(MemoryGroup, group_id).name == "통합 모임"
+    record_groups = client.get("/records/groups", headers=headers[2])
+    assert record_groups.status_code == 200
+    assert any(item["id"] == group_id for item in record_groups.json())
+    saved = create(world, groups=[group_id])
+    assert saved.status_code == 201, saved.text
+    record = saved.json()
+    assert record["id"] in feed_ids(world, 2, f"?group_id={group_id}")
+    assert client.get(record["photo_urls"][0], headers=headers[2]).status_code == 200
+    assert client.delete(f"/groups/{group_id}/members/me", headers=headers[2]).status_code == 204
+    assert record["id"] not in feed_ids(world, 2)
+    assert client.get(record["photo_urls"][0], headers=headers[2]).status_code == 404
+
+
 def test_personalized_feed_and_private_visibility(world):
     own = create(world, private=True).json()
     shared = create(world, user=2).json()

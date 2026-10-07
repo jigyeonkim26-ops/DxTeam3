@@ -1,4 +1,4 @@
-/// 모임 목록 화면에서만 사용하는 표시용 mock data 모델입니다.
+/// 실제 모임 API 응답과 화면 표시 정보를 함께 보관합니다.
 class GroupListItemData {
   const GroupListItemData({
     required this.id,
@@ -11,6 +11,8 @@ class GroupListItemData {
     this.pinColorValue = 0xFFFF7058,
     this.notificationsEnabled = true,
     List<GroupMemberData> members = const [],
+    this.description,
+    this.visibility = 'INVITED_ONLY',
     this.hasTodayNewRecords = false,
     this.isInitiallySelected = false,
     // ignore: prefer_initializing_formals
@@ -18,6 +20,8 @@ class GroupListItemData {
 
   final String id;
   final String name;
+  final String? description;
+  final String visibility;
   final int memberCount;
   final int placeCount;
   final int newRecordCount;
@@ -34,13 +38,17 @@ class GroupListItemData {
 
   GroupListItemData copyWith({
     String? name,
+    int? memberCount,
+    List<GroupMemberData>? members,
+    String? description,
+    String? visibility,
     int? pinColorValue,
     bool? notificationsEnabled,
   }) {
     return GroupListItemData(
       id: id,
       name: name ?? this.name,
-      memberCount: memberCount,
+      memberCount: memberCount ?? this.memberCount,
       placeCount: placeCount,
       newRecordCount: newRecordCount,
       inviteCode: inviteCode,
@@ -48,7 +56,9 @@ class GroupListItemData {
       pinColorValue: pinColorValue ?? this.pinColorValue ?? 0xFFFF7058,
       notificationsEnabled:
           notificationsEnabled ?? this.notificationsEnabled ?? true,
-      members: members,
+      members: members ?? this.members,
+      description: description ?? this.description,
+      visibility: visibility ?? this.visibility,
       hasTodayNewRecords: hasTodayNewRecords,
       isInitiallySelected: isInitiallySelected,
     );

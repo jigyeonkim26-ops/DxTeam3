@@ -9,6 +9,7 @@ import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../../user/screens/profile_screen.dart';
+import '../../user/screens/saved_screen.dart';
 import '../../../shared/widgets/overlap_header.dart';
 
 class AppShellScreen extends StatefulWidget {
@@ -59,7 +60,7 @@ class _AppShellScreenState extends State<AppShellScreen> {
         onExitToMap: _showMap,
         onPublished: () => setState(() => _selectedIndex = 1),
       ),
-      const GroupsScreen(),
+      GroupsScreen(isActive: _selectedIndex == 3),
       ProfileScreen(onShowMyMap: _showMyMap, isActive: _selectedIndex == 4),
     ];
     return Scaffold(
@@ -68,6 +69,9 @@ class _AppShellScreenState extends State<AppShellScreen> {
           OverlapHeader(
             showBackButton: _selectedIndex == 2,
             onBack: _selectedIndex == 2 ? _showMap : null,
+            onSaved: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
+            ),
             onNotifications: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const NotificationsScreen(),

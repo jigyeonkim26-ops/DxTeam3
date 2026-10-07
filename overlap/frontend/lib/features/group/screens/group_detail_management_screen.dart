@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../models/group_list_item_data.dart';
-import '../services/mock_group_repository.dart';
+import '../services/group_api_service.dart';
+import '../services/group_list_store.dart';
+import '../../../core/network/api_transport.dart';
 
 class GroupDetailManagementScreen extends StatefulWidget {
   const GroupDetailManagementScreen({super.key, required this.groupId});
@@ -27,11 +29,16 @@ class _GroupDetailManagementScreenState
   ];
 
   final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
   bool _isEditingName = false;
+  bool _isSaving = false;
+  bool _settingsInitialized = false;
+  String _visibility = 'INVITED_ONLY';
 
   @override
   void dispose() {
     _nameController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -46,34 +53,103 @@ class _GroupDetailManagementScreenState
     setState(() => _isEditingName = false);
   }
 
-  void _saveName(GroupListItemData group) {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('모임 이름을 입력해 주세요.')));
-      return;
-    }
-
-    MockGroupRepository.updateGroup(group.copyWith(name: name));
-    setState(() => _isEditingName = false);
+  Future<void> _saveName(GroupListItemData group) async {
+    await _runRequest(() async {
+      final alias = _nameController.text.trim();
+      final updated = await GroupApiService.updatePreferences(
+        id: int.parse(group.id),
+        updateCustomName: true,
+        customName: alias.isEmpty ? null : alias,
+      );
+      _applyApiGroup(group, updated);
+      if (mounted) {
+        setState(() => _isEditingName = false);
+      }
+    });
   }
 
-  void _toggleNotifications(GroupListItemData group) {
+  Future<void> _saveGroupDetails(GroupListItemData group) async {
+    await _runRequest(() async {
+      final updated = await GroupApiService.updateGroupDetails(
+        id: int.parse(group.id),
+        description: _descriptionController.text.trim().isEmpty
+            ? null
+            : _descriptionController.text.trim(),
+        visibility: _visibility,
+      );
+      _applyApiGroup(group, updated);
+    });
+  }
+
+  Future<void> _toggleNotifications(GroupListItemData group) async {
     final isEnabled = !(group.notificationsEnabled ?? true);
-    MockGroupRepository.updateGroup(
-      group.copyWith(notificationsEnabled: isEnabled),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${group.name} 알림을 ${isEnabled ? '켰습니다.' : '껐습니다.'}'),
+    await _runRequest(() async {
+      final updated = await GroupApiService.updatePreferences(
+        id: int.parse(group.id),
+        notificationsEnabled: isEnabled,
+      );
+      _applyApiGroup(group, updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${group.name} 알림을 ${isEnabled ? '켰습니다.' : '껐습니다.'}'),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _updatePinColor(GroupListItemData group, Color color) async {
+    await _runRequest(() async {
+      final updated = await GroupApiService.updatePreferences(
+        id: int.parse(group.id),
+        pinColorValue: color.toARGB32(),
+      );
+      _applyApiGroup(group, updated);
+    });
+  }
+
+  Future<void> _runRequest(Future<void> Function() request) async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      await request();
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } on FormatException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('모임 ID를 확인할 수 없습니다.')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('요청을 처리하지 못했습니다. 다시 시도해 주세요.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _applyApiGroup(GroupListItemData old, GroupApiItem updated) {
+    GroupListStore.updateGroup(
+      old.copyWith(
+        name: updated.displayName ?? updated.name,
+        memberCount: updated.memberCount,
+        description: updated.description ?? '',
+        visibility: updated.visibility,
+        notificationsEnabled: updated.notificationsEnabled,
+        pinColorValue: updated.pinColorValue,
       ),
     );
-  }
-
-  void _updatePinColor(GroupListItemData group, Color color) {
-    MockGroupRepository.updateGroup(
-      group.copyWith(pinColorValue: color.toARGB32()),
-    );
+    if (!mounted) return;
+    _nameController.text = updated.displayName ?? updated.name;
+    _descriptionController.text = updated.description ?? '';
+    _visibility = updated.visibility;
   }
 
   Future<void> _confirmLeave(GroupListItemData group) async {
@@ -97,15 +173,17 @@ class _GroupDetailManagementScreenState
     );
 
     if (shouldLeave != true || !mounted) return;
-    if (!MockGroupRepository.leaveGroup(group.id)) return;
-
-    Navigator.of(context).pop(group.name);
+    await _runRequest(() async {
+      await GroupApiService.leaveGroup(int.parse(group.id));
+      GroupListStore.removeGroupFromCache(group.id);
+      if (mounted) Navigator.of(context).pop(group.name);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<GroupListItemData>>(
-      valueListenable: MockGroupRepository.groupsListenable,
+      valueListenable: GroupListStore.groupsListenable,
       builder: (context, groups, _) {
         final group = groups
             .where((item) => item.id == widget.groupId)
@@ -116,10 +194,16 @@ class _GroupDetailManagementScreenState
           );
         }
 
+        if (!_settingsInitialized) {
+          _nameController.text = group.name;
+          _descriptionController.text = group.description ?? '';
+          _visibility = group.visibility;
+          _settingsInitialized = true;
+        }
         final isNotificationsEnabled = group.notificationsEnabled ?? true;
         final pinColorValue = group.pinColorValue ?? AppColors.coral.toARGB32();
         final recordCount = group.recordCount ?? 0;
-        final members = MockGroupRepository.membersFor(group);
+        final members = group.members;
         final memberCount = members.isEmpty
             ? group.memberCount
             : members.length;
@@ -144,80 +228,127 @@ class _GroupDetailManagementScreenState
           ),
           body: SafeArea(
             top: false,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.md,
-                AppSpacing.lg,
-                AppSpacing.xl,
-              ),
-              children: [
-                _GroupNameEditor(
-                  group: group,
-                  controller: _nameController,
-                  isEditing: _isEditingName,
-                  onStartEditing: () => _startEditingName(group),
-                  onCancel: _cancelEditingName,
-                  onSave: () => _saveName(group),
+            child: AbsorbPointer(
+              absorbing: _isSaving,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.md,
+                  AppSpacing.lg,
+                  AppSpacing.xl,
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  '멤버 $memberCount명  ·  장소 ${group.placeCount}곳  ·  기록 $recordCount개',
-                  style: const TextStyle(color: AppColors.muted),
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                Text(
-                  '핀 색상',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w700,
+                children: [
+                  if (_isSaving) const LinearProgressIndicator(),
+                  _GroupNameEditor(
+                    group: group,
+                    controller: _nameController,
+                    isEditing: _isEditingName,
+                    onStartEditing: () => _startEditingName(group),
+                    onCancel: _cancelEditingName,
+                    onSave: () => _saveName(group),
                   ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.sm,
-                  children: [
-                    for (final color in _pinColors)
-                      _PinColorButton(
-                        color: color,
-                        isSelected: color.toARGB32() == pinColorValue,
-                        onTap: () => _updatePinColor(group, color),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                Text(
-                  '멤버',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                for (final member in members) _GroupMemberRow(member: member),
-                if (members.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    padding: EdgeInsets.only(bottom: AppSpacing.xs),
                     child: Text(
-                      '현재 표시할 멤버 정보가 없어요.',
-                      style: TextStyle(color: AppColors.muted),
+                      '내 화면에서만 보이는 별칭입니다.',
+                      style: TextStyle(color: AppColors.muted, fontSize: 12),
                     ),
                   ),
-                const SizedBox(height: AppSpacing.lg),
-                const Divider(),
-                const SizedBox(height: AppSpacing.sm),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: () => _confirmLeave(group),
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppColors.coral,
-                    ),
-                    child: const Text('모임 탈퇴하기'),
+                  TextFormField(
+                    controller: _descriptionController,
+                    maxLength: 500,
+                    maxLines: 2,
+                    enabled: !_isSaving,
+                    decoration: const InputDecoration(labelText: '모임 소개'),
+                    onFieldSubmitted: (_) => _saveGroupDetails(group),
                   ),
-                ),
-              ],
+                  DropdownButtonFormField<String>(
+                    initialValue: _visibility,
+                    decoration: const InputDecoration(labelText: '공유 범위'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'INVITED_ONLY',
+                        child: Text('초대받은 멤버만'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'LINK_REQUEST_ALLOWED',
+                        child: Text('링크를 가진 사람은 바로 참여 가능'),
+                      ),
+                    ],
+                    onChanged: _isSaving
+                        ? null
+                        : (value) => setState(
+                            () => _visibility = value ?? _visibility,
+                          ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _isSaving
+                          ? null
+                          : () => _saveGroupDetails(group),
+                      child: const Text('소개/공유 범위 저장'),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    '멤버 $memberCount명  ·  장소 ${group.placeCount}곳  ·  기록 $recordCount개',
+                    style: const TextStyle(color: AppColors.muted),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  Text(
+                    '핀 색상',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: AppColors.ink,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      for (final color in _pinColors)
+                        _PinColorButton(
+                          color: color,
+                          isSelected: color.toARGB32() == pinColorValue,
+                          onTap: () => _updatePinColor(group, color),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  Text(
+                    '멤버',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: AppColors.ink,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  for (final member in members) _GroupMemberRow(member: member),
+                  if (members.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                      child: Text(
+                        '멤버 상세 정보가 제공되지 않았어요.',
+                        style: TextStyle(color: AppColors.muted),
+                      ),
+                    ),
+                  const SizedBox(height: AppSpacing.lg),
+                  const Divider(),
+                  const SizedBox(height: AppSpacing.sm),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => _confirmLeave(group),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.coral,
+                      ),
+                      child: const Text('모임 탈퇴하기'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -313,7 +444,7 @@ class _GroupNameEditor extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '모임 이름 수정',
+            tooltip: '내 모임 별칭 수정',
             onPressed: onStartEditing,
             icon: const Icon(Icons.edit_outlined, size: 19),
           ),

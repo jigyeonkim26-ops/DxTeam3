@@ -73,6 +73,8 @@ class TokenOutput(BaseModel):
 
 class GroupInput(InputModel):
     name: ShortName
+    description: str | None = Field(default=None, max_length=500)
+    visibility: Literal["INVITED_ONLY", "LINK_REQUEST_ALLOWED"] = "INVITED_ONLY"
 
 
 class JoinInput(InputModel):
@@ -82,12 +84,27 @@ class JoinInput(InputModel):
 class GroupPublic(BaseModel):
     id: int
     name: str
-    owner_id: int
+    display_name: str | None = None
     member_count: int
+    description: str | None = None
+    visibility: str = "INVITED_ONLY"
+    notifications_enabled: bool = True
+    pin_color_value: int | None = None
 
 
 class GroupCreated(GroupPublic):
     invite_code: str
+
+
+class GroupUpdateInput(InputModel):
+    description: str | None = Field(default=None, max_length=500)
+    visibility: Literal["INVITED_ONLY", "LINK_REQUEST_ALLOWED"]
+
+
+class GroupPreferencesInput(InputModel):
+    custom_name: str | None = Field(default=None, max_length=100)
+    notifications_enabled: bool | None = None
+    pin_color_value: int | None = Field(default=None, ge=0, le=4294967295)
 
 
 class InviteOutput(BaseModel):

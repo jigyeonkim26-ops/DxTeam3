@@ -3,8 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_transport.dart';
 import '../models/group_visibility.dart';
-import '../services/mock_group_invite_service.dart';
+import '../services/group_api_service.dart';
 import '../widgets/invite_info_card.dart';
 
 class CreateGroupScreen extends StatefulWidget {
@@ -20,7 +21,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _descriptionController = TextEditingController();
 
   GroupVisibility _visibility = GroupVisibility.invitedMembersOnly;
-  MockGroupInvite? _invite;
+  GroupApiCreated? _invite;
+  bool _isCreating = false;
 
   @override
   void dispose() {
@@ -29,16 +31,31 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     super.dispose();
   }
 
-  void _createGroup() {
+  Future<void> _createGroup() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
     FocusScope.of(context).unfocus();
-    setState(() => _invite = MockGroupInviteService.create());
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_nameController.text.trim()} 모임을 만들었어요.')),
-    );
+    setState(() => _isCreating = true);
+    try {
+      final created = await GroupApiService.createGroup(
+        name: _nameController.text.trim(),
+        description: _descriptionController.text,
+        visibility: _visibility.apiValue,
+      );
+      if (!mounted) return;
+      setState(() => _invite = created);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('${created.name} 모임을 만들었어요.')));
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isCreating = false);
+    }
   }
 
   void _copyInviteValue(String value, String label) {
@@ -125,8 +142,14 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
               ElevatedButton(
-                onPressed: _createGroup,
-                child: const Text('모임 만들기'),
+                onPressed: _isCreating ? null : _createGroup,
+                child: _isCreating
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('모임 만들기'),
               ),
               if (invite != null) ...[
                 const Padding(
@@ -150,16 +173,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 InviteInfoCard(
                   title: '초대 코드',
                   description: '짧은 코드를 직접 전달할 때 사용하세요.',
-                  value: invite.code,
+                  value: invite.inviteCode,
                   copyLabel: '코드 복사',
-                  onCopy: () => _copyInviteValue(invite.code, '초대 코드'),
-                ),
-                InviteInfoCard(
-                  title: '공유 링크',
-                  description: '링크 참여 화면은 다음 모임 참여 작업에서 연결됩니다.',
-                  value: invite.shareLink,
-                  copyLabel: '링크 복사',
-                  onCopy: () => _copyInviteValue(invite.shareLink, '공유 링크'),
+                  onCopy: () => _copyInviteValue(invite.inviteCode, '초대 코드'),
                 ),
               ],
             ],

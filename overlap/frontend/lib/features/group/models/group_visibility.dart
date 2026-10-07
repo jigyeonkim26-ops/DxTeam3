@@ -4,6 +4,11 @@ enum GroupVisibility {
 
   String get label => switch (this) {
     GroupVisibility.invitedMembersOnly => '초대받은 멤버만',
-    GroupVisibility.linkRequestAllowed => '링크를 가진 사람은 참여 요청 가능',
+    GroupVisibility.linkRequestAllowed => '링크를 가진 사람은 바로 참여 가능',
+  };
+
+  String get apiValue => switch (this) {
+    GroupVisibility.invitedMembersOnly => 'INVITED_ONLY',
+    GroupVisibility.linkRequestAllowed => 'LINK_REQUEST_ALLOWED',
   };
 }

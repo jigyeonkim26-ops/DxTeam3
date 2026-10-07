@@ -4,14 +4,17 @@ import 'package:flutter/services.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../models/group_list_item_data.dart';
-import '../services/mock_group_repository.dart';
+import '../services/group_api_service.dart';
+import '../services/group_list_store.dart';
+import '../../../core/network/api_transport.dart';
 import '../widgets/group_list_item.dart';
 import 'create_group_screen.dart';
 import 'group_detail_management_screen.dart';
 import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
-  const GroupsScreen({super.key});
+  const GroupsScreen({super.key, this.isActive = true});
+  final bool isActive;
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
@@ -19,14 +22,53 @@ class GroupsScreen extends StatefulWidget {
 
 class _GroupsScreenState extends State<GroupsScreen> {
   final _inviteCodeController = TextEditingController();
+  bool _isLoadingGroups = true;
+  String? _loadError;
+  int _loadGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGroups();
+  }
+
+  @override
+  void didUpdateWidget(covariant GroupsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    final generation = ++_loadGeneration;
+    setState(() {
+      _isLoadingGroups = true;
+      _loadError = null;
+    });
+    try {
+      await GroupListStore.refreshGroups();
+    } on ApiException catch (error) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loadError = error.message);
+      }
+    } catch (_) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loadError = '모임 목록을 불러오지 못했습니다.');
+      }
+    } finally {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _isLoadingGroups = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
+    _loadGeneration++;
     _inviteCodeController.dispose();
     super.dispose();
   }
 
-  void _openJoinGroupScreen() {
+  Future<void> _openJoinGroupScreen() async {
     final inviteCode = _inviteCodeController.text.trim();
     if (inviteCode.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -34,14 +76,31 @@ class _GroupsScreenState extends State<GroupsScreen> {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final joined = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
         builder: (_) => JoinGroupScreen(inviteCode: inviteCode),
       ),
     );
+    if (!mounted) return;
+    if (joined == true) _inviteCodeController.clear();
+    await _loadGroups();
   }
 
-  void _openShareSheet(GroupListItemData group) {
+  Future<void> _openShareSheet(GroupListItemData group) async {
+    final String inviteCode;
+    try {
+      inviteCode = await GroupApiService.getInviteCode(int.parse(group.id));
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      return;
+    } on FormatException {
+      return;
+    }
+    if (!mounted) return;
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -85,7 +144,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 const Text(
-                  '친구에게 이 링크를 보내 모임에 초대해보세요.',
+                  '초대 코드를 친구에게 전달해 모임에 초대해보세요.',
                   style: TextStyle(color: AppColors.muted),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -105,7 +164,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     ),
                   ),
                   child: Text(
-                    group.inviteUrl,
+                    inviteCode,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -119,17 +178,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(text: group.inviteUrl),
-                      );
+                      await Clipboard.setData(ClipboardData(text: inviteCode));
                       if (!mounted || !sheetContext.mounted) return;
                       Navigator.pop(sheetContext);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('초대 링크를 복사했습니다.')),
+                        const SnackBar(content: Text('초대 코드를 복사했습니다.')),
                       );
                     },
                     icon: const Icon(Icons.content_copy_outlined),
-                    label: const Text('링크 복사'),
+                    label: const Text('코드 복사'),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
@@ -192,12 +249,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
+                onPressed: () async {
+                  await Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => const CreateGroupScreen(),
                     ),
                   );
+                  if (mounted) await _loadGroups();
                 },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('모임 만들기'),
@@ -205,9 +263,18 @@ class _GroupsScreenState extends State<GroupsScreen> {
             ],
           ),
           const SizedBox(height: AppSpacing.xs),
+          if (_isLoadingGroups) const LinearProgressIndicator(),
+          if (_loadError != null)
+            TextButton(
+              onPressed: _loadGroups,
+              child: Text('$_loadError 다시 시도'),
+            ),
           ValueListenableBuilder<List<GroupListItemData>>(
-            valueListenable: MockGroupRepository.groupsListenable,
+            valueListenable: GroupListStore.groupsListenable,
             builder: (context, groups, _) {
+              if (groups.isEmpty && (_isLoadingGroups || _loadError != null)) {
+                return const SizedBox.shrink();
+              }
               if (groups.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
@@ -234,6 +301,8 @@ class _GroupsScreenState extends State<GroupsScreen> {
                                 ),
                               ),
                             );
+                        if (!mounted) return;
+                        await _loadGroups();
                         if (!mounted || leftGroupName == null) return;
                         scaffoldMessenger
                           ..hideCurrentSnackBar()

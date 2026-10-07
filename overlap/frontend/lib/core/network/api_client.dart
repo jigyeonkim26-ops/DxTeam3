@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
@@ -16,8 +17,15 @@ class ApiException implements Exception {
 
 class ApiClient {
   static String? _accessToken;
+  static final sessionRevision = ValueNotifier<int>(0);
 
   static String? get accessToken => _accessToken;
+
+  static void setAccessToken(String token) {
+    if (_accessToken == token) return;
+    _accessToken = token;
+    sessionRevision.value++;
+  }
 
   static Future<void> checkHealth() async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/health');
@@ -65,7 +73,7 @@ class ApiClient {
     if (token is! String || token.isEmpty) {
       throw const ApiException('로그인 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.');
     }
-    _accessToken = token;
+    setAccessToken(token);
   }
 
   static Future<Map<String, dynamic>> me() async {
@@ -106,7 +114,10 @@ class ApiClient {
     }
   }
 
-  static void clearSession() => _accessToken = null;
+  static void clearSession() {
+    _accessToken = null;
+    sessionRevision.value++;
+  }
 
   static Future<http.Response> _send(
     String method,

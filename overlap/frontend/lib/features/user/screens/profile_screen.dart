@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../group/models/group_list_item_data.dart';
-import '../../group/services/mock_group_repository.dart';
+import '../../group/services/group_list_store.dart';
 import '../../memory/services/record_api.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../../../shared/models/record.dart';
@@ -126,7 +126,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<GroupListItemData>>(
-      valueListenable: MockGroupRepository.groupsListenable,
+      valueListenable: GroupListStore.groupsListenable,
       builder: (context, groups, _) {
         final profile = MockProfileRepository.profile.copyWith(
           groupCount: groups.length,
