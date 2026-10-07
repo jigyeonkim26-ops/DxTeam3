@@ -10,34 +10,70 @@ import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key});
+  const FeedScreen({
+    super.key,
+    this.initialFilter = FeedFilter.all,
+    this.showBackButton = false,
+  });
+
+  final FeedFilter initialFilter;
+  final bool showBackButton;
 
   @override
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
 class _FeedScreenState extends State<FeedScreen> {
-  FeedFilter _selectedFilter = FeedFilter.all;
+  Set<FeedFilter> _selectedFilters = Set.of(FeedFilter.selectableFilters);
   final Set<String> _likedRecordIds = {};
 
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialFilter != FeedFilter.all) {
+      _selectedFilters = {widget.initialFilter};
+    }
+  }
+
+  Set<FeedFilter> get _activeFilters =>
+      _selectedFilters.contains(FeedFilter.all)
+      ? Set.of(FeedFilter.selectableFilters)
+      : _selectedFilters;
+
+  bool get _isAllSelected =>
+      _activeFilters.length == FeedFilter.selectableFilters.length &&
+      _activeFilters.containsAll(FeedFilter.selectableFilters);
+
   List<Record> get _visibleRecords {
-    final records = switch (_selectedFilter) {
-      FeedFilter.all => mockFeedRecords,
-      FeedFilter.mine =>
-        mockFeedRecords
-            .where((record) => record.author.id == currentFeedUser.id)
-            .toList(),
-      final filter =>
-        mockFeedRecords
-            .where(
-              (record) => record.sharedGroups.any(
-                (group) => group.id == _groupIdForFilter(filter),
-              ),
-            )
-            .toList(),
-    };
+    final filters = _activeFilters;
+    final records = _isAllSelected
+        ? mockFeedRecords
+        : mockFeedRecords.where((record) {
+            final matchesMine =
+                filters.contains(FeedFilter.mine) &&
+                record.author.id == currentFeedUser.id;
+            final matchesGroup = record.sharedGroups.any(
+              (group) => filters
+                  .where(
+                    (filter) =>
+                        filter != FeedFilter.all && filter != FeedFilter.mine,
+                  )
+                  .map(_groupIdForFilter)
+                  .contains(group.id),
+            );
+            return matchesMine || matchesGroup;
+          });
     return [...records]
       ..sort((first, second) => second.createdAt.compareTo(first.createdAt));
+  }
+
+  String get _filterLabel {
+    final filters = _activeFilters;
+    if (_isAllSelected) {
+      return FeedFilter.all.label;
+    }
+    if (filters.length == 1) return filters.single.label;
+    return '${filters.length}개 선택';
   }
 
   String _groupIdForFilter(FeedFilter filter) => switch (filter) {
@@ -54,12 +90,13 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _selectFilter() async {
-    final filter = await showModalBottomSheet<FeedFilter>(
+    final filters = await showModalBottomSheet<Set<FeedFilter>>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => FeedFilterSheet(selectedFilter: _selectedFilter),
+      isScrollControlled: true,
+      builder: (_) => FeedFilterSheet(selectedFilters: _activeFilters),
     );
-    if (filter != null) setState(() => _selectedFilter = filter);
+    if (filters != null) setState(() => _selectedFilters = Set.of(filters));
   }
 
   void _toggleLike(String recordId) {
@@ -83,12 +120,21 @@ class _FeedScreenState extends State<FeedScreen> {
       color: AppColors.paper,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
           AppSpacing.lg,
           AppSpacing.md,
+          AppSpacing.lg,
           AppSpacing.lg,
         ),
         children: [
+          if (widget.showBackButton)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back, color: AppColors.deepNavy),
+                tooltip: '뒤로가기',
+              ),
+            ),
           const Text(
             '피드',
             style: TextStyle(
@@ -106,10 +152,7 @@ class _FeedScreenState extends State<FeedScreen> {
           const SizedBox(height: AppSpacing.md),
           Align(
             alignment: Alignment.centerLeft,
-            child: _FeedFilterButton(
-              label: _selectedFilter.label,
-              onTap: _selectFilter,
-            ),
+            child: _FeedFilterButton(label: _filterLabel, onTap: _selectFilter),
           ),
           const SizedBox(height: AppSpacing.md),
           if (records.isEmpty)

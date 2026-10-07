@@ -7,34 +7,18 @@ import '../models/group_list_item_data.dart';
 import '../services/mock_group_repository.dart';
 import '../widgets/group_list_item.dart';
 import 'create_group_screen.dart';
+import 'group_detail_management_screen.dart';
 import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
-  const GroupsScreen({super.key, required this.onShowGroupOnMap});
-
-  final ValueChanged<String> onShowGroupOnMap;
+  const GroupsScreen({super.key});
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
 }
 
 class _GroupsScreenState extends State<GroupsScreen> {
-  String? _selectedGroupId;
   final _inviteCodeController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    final groups = MockGroupRepository.groups;
-    if (groups.isNotEmpty) {
-      _selectedGroupId = groups
-          .firstWhere(
-            (group) => group.isInitiallySelected,
-            orElse: () => groups.first,
-          )
-          .id;
-    }
-  }
 
   @override
   void dispose() {
@@ -176,15 +160,19 @@ class _GroupsScreenState extends State<GroupsScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.lg,
-          AppSpacing.xl,
+          AppSpacing.xs,
           AppSpacing.lg,
           AppSpacing.xl,
         ),
         children: [
-          Text(
+          const Text(
             '함께 쌓는 장소',
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(fontSize: 27, height: 1.25),
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -1,
+            ),
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
@@ -235,10 +223,23 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   for (final group in groups)
                     GroupListItem(
                       group: group,
-                      isSelected: group.id == _selectedGroupId,
-                      onTap: () {
-                        setState(() => _selectedGroupId = group.id);
-                        widget.onShowGroupOnMap(group.id);
+                      isSelected: false,
+                      onTap: () async {
+                        final scaffoldMessenger = ScaffoldMessenger.of(context);
+                        final leftGroupName = await Navigator.of(context)
+                            .push<String>(
+                              MaterialPageRoute<String>(
+                                builder: (_) => GroupDetailManagementScreen(
+                                  groupId: group.id,
+                                ),
+                              ),
+                            );
+                        if (!mounted || leftGroupName == null) return;
+                        scaffoldMessenger
+                          ..hideCurrentSnackBar()
+                          ..showSnackBar(
+                            SnackBar(content: Text('$leftGroupName에서 탈퇴했습니다.')),
+                          );
                       },
                       onShare: () => _openShareSheet(group),
                     ),

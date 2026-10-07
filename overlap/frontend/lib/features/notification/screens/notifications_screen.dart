@@ -21,7 +21,14 @@ class NotificationsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('NOTIFICATIONS'),
+      centerTitle: true,
+      title: const Text(
+        '실시간 알림',
+        style: TextStyle(
+          color: AppColors.deepNavy,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
       actions: [
         IconButton(
           onPressed: () => _settings(context),
@@ -40,30 +47,11 @@ class NotificationsScreen extends StatelessWidget {
         ),
         children: [
           Text(
-            '실시간 알림',
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(fontSize: 27),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
             '내 모임에서 일어난 기록 활동을 모아 보여줘요.',
             style: Theme.of(context).textTheme.bodyMedium
                 ?.copyWith(height: 1.65),
           ),
-          const SizedBox(height: AppSpacing.md),
-          Row(
-            children: [
-              const Expanded(child: _Tab(label: '알림함', active: true)),
-              const SizedBox(width: AppSpacing.xs),
-              Expanded(
-                child: InkWell(
-                  onTap: () => _settings(context),
-                  child: const _Tab(label: '알림 설정', active: false),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
+          const SizedBox(height: AppSpacing.sm),
           ...MockNotificationRepository.items.map(
             (item) => NotificationListItem(
               item: item,
@@ -78,28 +66,6 @@ class NotificationsScreen extends StatelessWidget {
             child: const Text('샘플 알림 보내기'),
           ),
         ],
-      ),
-    ),
-  );
-}
-
-class _Tab extends StatelessWidget {
-  const _Tab({required this.label, required this.active});
-  final String label;
-  final bool active;
-  @override
-  Widget build(BuildContext c) => Container(
-    alignment: Alignment.center,
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    decoration: BoxDecoration(
-      color: active ? AppColors.deepNavy : AppColors.paleMint,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        color: active ? Colors.white : AppColors.deepNavy,
-        fontWeight: FontWeight.w700,
       ),
     ),
   );

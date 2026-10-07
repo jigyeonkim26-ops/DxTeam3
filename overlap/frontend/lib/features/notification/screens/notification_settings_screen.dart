@@ -16,6 +16,11 @@ class NotificationSettingsScreen extends StatefulWidget {
 class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   late NotificationSettingsData _settings;
+  final _quietHourOptions = List.generate(
+    24,
+    (hour) => '${hour.toString().padLeft(2, '0')}:00',
+  );
+
   @override
   void initState() {
     super.initState();
@@ -30,7 +35,16 @@ class _NotificationSettingsScreenState
 
   @override
   Widget build(BuildContext c) => Scaffold(
-    appBar: AppBar(title: const Text('NOTIFICATION SETTINGS')),
+    appBar: AppBar(
+      centerTitle: true,
+      title: const Text(
+        '알림 설정',
+        style: TextStyle(
+          color: AppColors.deepNavy,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
     body: SafeArea(
       top: false,
       child: ListView(
@@ -42,26 +56,8 @@ class _NotificationSettingsScreenState
         ),
         children: [
           Text(
-            '알림 설정',
-            style: Theme.of(c).textTheme.headlineSmall?.copyWith(fontSize: 27),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
             '원하는 소식만 받을 수 있도록 유형별로 조절하세요.',
             style: Theme.of(c).textTheme.bodyMedium?.copyWith(height: 1.65),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Row(
-            children: [
-              Expanded(
-                child: InkWell(
-                  onTap: () => Navigator.pop(c),
-                  child: const _Tab('알림함', false),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              const Expanded(child: _Tab('알림 설정', true)),
-            ],
           ),
           _Group(
             title: '기록 활동',
@@ -136,7 +132,8 @@ class _NotificationSettingsScreenState
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _settings.quietStartTime,
-                      items: ['22:00', '23:00']
+                      menuMaxHeight: 300,
+                      items: _quietHourOptions
                           .map(
                             (v) => DropdownMenuItem(value: v, child: Text(v)),
                           )
@@ -152,7 +149,8 @@ class _NotificationSettingsScreenState
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _settings.quietEndTime,
-                      items: ['08:00', '09:00']
+                      menuMaxHeight: 300,
+                      items: _quietHourOptions
                           .map(
                             (v) => DropdownMenuItem(value: v, child: Text(v)),
                           )
@@ -169,28 +167,6 @@ class _NotificationSettingsScreenState
             ],
           ),
         ],
-      ),
-    ),
-  );
-}
-
-class _Tab extends StatelessWidget {
-  const _Tab(this.label, this.active);
-  final String label;
-  final bool active;
-  @override
-  Widget build(BuildContext c) => Container(
-    alignment: Alignment.center,
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    decoration: BoxDecoration(
-      color: active ? AppColors.deepNavy : AppColors.paleMint,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        color: active ? Colors.white : AppColors.deepNavy,
-        fontWeight: FontWeight.w700,
       ),
     ),
   );
