@@ -47,6 +47,12 @@ class KakaoMapLocalServer {
     }
     .place-marker__label::before { content: '●'; font-size: 12px; }
     .place-marker__pointer { border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid #ff6b57; height: 0; margin: 0 auto; width: 0; }
+    .search-marker { border: 0; background: transparent; padding: 0; pointer-events: none; }
+    .search-marker__label {
+      background: #173f73; border: 2px solid #fff; border-radius: 10px; box-shadow: 0 3px 10px rgba(20, 50, 74, .35);
+      color: #fff; display: block; font: 700 13px/1.3 sans-serif; max-width: 220px; padding: 9px 12px; text-align: center;
+    }
+    .search-marker__pointer { border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 9px solid #173f73; height: 0; margin: 0 auto; width: 0; }
   </style>
 </head>
 <body>
@@ -56,6 +62,8 @@ class KakaoMapLocalServer {
     var map;
     var overlays = [];
     var pendingPlaces = [];
+    var searchOverlay = null;
+    var pendingSearchPlace = null;
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>'"]/g, function (character) {
@@ -69,7 +77,10 @@ class KakaoMapLocalServer {
 
       overlays.forEach(function (overlay) { overlay.setMap(null); });
       overlays = [];
-      if (!pendingPlaces.length) return;
+      if (!pendingPlaces.length) {
+        if (pendingSearchPlace) setSearchPlace(pendingSearchPlace);
+        return;
+      }
 
       var bounds = new kakao.maps.LatLngBounds();
       pendingPlaces.forEach(function (place) {
@@ -85,11 +96,44 @@ class KakaoMapLocalServer {
         bounds.extend(position);
       });
 
-      if (pendingPlaces.length === 1) {
+      if (pendingSearchPlace) {
+        setSearchPlace(pendingSearchPlace);
+      } else if (pendingPlaces.length === 1) {
         map.setCenter(bounds.getSouthWest());
       } else {
         map.setBounds(bounds);
       }
+    }
+
+    function clearSearchPlace() {
+      pendingSearchPlace = null;
+      if (searchOverlay) {
+        searchOverlay.setMap(null);
+        searchOverlay = null;
+      }
+    }
+
+    function setSearchPlace(place) {
+      clearSearchPlace();
+      if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) {
+        return;
+      }
+      pendingSearchPlace = place;
+      if (!map) return;
+
+      var position = new kakao.maps.LatLng(Number(place.latitude), Number(place.longitude));
+      var content = document.createElement('div');
+      content.className = 'search-marker';
+      var label = document.createElement('span');
+      label.className = 'search-marker__label';
+      label.textContent = '검색 장소 · ' + String(place.name || '');
+      var pointer = document.createElement('span');
+      pointer.className = 'search-marker__pointer';
+      content.appendChild(label);
+      content.appendChild(pointer);
+      searchOverlay = new kakao.maps.CustomOverlay({ content: content, map: map, position: position, yAnchor: 1 });
+      map.setCenter(position);
+      map.setLevel(3);
     }
 
     var sdkScript = document.createElement('script');

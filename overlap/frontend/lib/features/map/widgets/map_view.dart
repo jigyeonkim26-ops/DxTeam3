@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../models/map_place.dart';
+import '../models/map_search_place.dart';
 import 'kakao_map_webview.dart';
 
 /// 현재는 가벼운 placeholder를 그리며, 추후 Kakao Map View로 교체할 영역입니다.
@@ -12,12 +13,14 @@ class MapView extends StatelessWidget {
     required this.isSatellite,
     required this.places,
     required this.selectedPlaceId,
+    required this.searchPlace,
     required this.onPlaceTap,
   });
 
   final bool isSatellite;
   final List<MapPlace> places;
   final String? selectedPlaceId;
+  final MapSearchPlace? searchPlace;
   final ValueChanged<MapPlace> onPlaceTap;
 
   @override
@@ -27,7 +30,11 @@ class MapView extends StatelessWidget {
       children: [
         RepaintBoundary(
           child: !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-              ? KakaoMapWebView(places: places, onPlaceTap: onPlaceTap)
+              ? KakaoMapWebView(
+                  places: places,
+                  searchPlace: searchPlace,
+                  onPlaceTap: onPlaceTap,
+                )
               : CustomPaint(
                   painter: _MapPlaceholderPainter(isSatellite: isSatellite),
                 ),

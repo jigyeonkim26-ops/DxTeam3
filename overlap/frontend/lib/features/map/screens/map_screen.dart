@@ -6,6 +6,7 @@ import '../../../shared/models/place.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
+import '../models/map_search_place.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
@@ -24,6 +25,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   Set<MapFilter> _selectedFilters = {MapFilter.mine};
   MapPlace? _selectedPlace;
+  MapSearchPlace? _selectedSearchPlace;
   bool _isSatellite = false;
 
   @override
@@ -133,7 +135,12 @@ class _MapScreenState extends State<MapScreen> {
       MaterialPageRoute<Place>(builder: (_) => const PlaceSearchScreen()),
     );
     if (!mounted || selectedPlace == null) return;
-    _showMessage("'${selectedPlace.name}'를 선택했어요.");
+    final searchPlace = MapSearchPlace.fromPlace(selectedPlace);
+    if (!searchPlace.hasValidCoordinates) {
+      _showMessage('선택한 장소의 좌표가 올바르지 않습니다.');
+      return;
+    }
+    setState(() => _selectedSearchPlace = searchPlace);
   }
 
   Future<void> _openAiRecommendations() async {
@@ -153,6 +160,7 @@ class _MapScreenState extends State<MapScreen> {
           isSatellite: _isSatellite,
           places: _visiblePlaces,
           selectedPlaceId: _selectedPlace?.id,
+          searchPlace: _selectedSearchPlace,
           onPlaceTap: _openPlacePreview,
         ),
         Positioned(
