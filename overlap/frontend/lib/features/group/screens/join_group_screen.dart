@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../models/group_invite_preview.dart';
-import '../services/mock_group_join_service.dart';
-import '../widgets/group_invite_summary_card.dart';
+import '../../../core/network/api_transport.dart';
+import '../services/group_api_service.dart';
 
 class JoinGroupScreen extends StatefulWidget {
   const JoinGroupScreen({super.key, required this.inviteCode});
@@ -16,19 +15,25 @@ class JoinGroupScreen extends StatefulWidget {
 }
 
 class _JoinGroupScreenState extends State<JoinGroupScreen> {
-  late final GroupInvitePreview _preview;
-  bool _hasJoined = false;
+  GroupApiItem? _joinedGroup;
+  bool _isJoining = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _preview = MockGroupJoinService.previewForCode(widget.inviteCode);
-  }
-
-  void _joinGroup() {
-    setState(() => _hasJoined = true);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('${_preview.groupName}에 참여했어요.')));
+  Future<void> _joinGroup() async {
+    setState(() => _isJoining = true);
+    try {
+      final group = await GroupApiService.joinGroup(widget.inviteCode);
+      if (!mounted) return;
+      setState(() => _joinedGroup = group);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('${group.displayName ?? group.name}에 참여했어요.')));
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isJoining = false);
+    }
   }
 
   @override
@@ -45,16 +50,49 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
             AppSpacing.xl,
           ),
           children: [
-            GroupInviteSummaryCard(preview: _preview),
-            const SizedBox(height: AppSpacing.lg),
+            if (_joinedGroup case final group?)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Row(
+                    children: [
+                      const CircleAvatar(
+                        radius: 22,
+                        backgroundColor: AppColors.softMint,
+                        child: Icon(
+                          Icons.groups_outlined,
+                          color: AppColors.deepNavy,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              group.name,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            Text('멤버 ${group.memberCount}명'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_joinedGroup != null) const SizedBox(height: AppSpacing.lg),
             Text(
-              '${_preview.ownerName}님이 모임에\n초대했습니다.',
+              _joinedGroup == null ? '초대 코드로\n모임에 참여할까요?' : '모임에 참여했어요.',
               style: Theme.of(context).textTheme.headlineSmall
                   ?.copyWith(fontSize: 27, height: 1.25),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              '참여하면 ${_preview.groupName}의 장소 기록을 보고, 나의 순간도 함께 남길 수 있어요.',
+              _joinedGroup == null
+                  ? '초대 코드를 확인하고 참여하면 모임 멤버와 기록을 공유할 수 있어요.'
+                  : '이제 모임 멤버와 장소 기록을 공유할 수 있어요.',
               style: Theme.of(context).textTheme.bodyMedium
                   ?.copyWith(height: 1.65),
             ),
@@ -89,7 +127,7 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
                         ),
                       ),
                       child: Text(
-                        '초대 코드: ${_preview.inviteCode}',
+                        '초대 코드: ${widget.inviteCode}',
                         style: const TextStyle(
                           color: AppColors.deepNavy,
                           fontFamily: 'monospace',
@@ -102,10 +140,16 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            if (!_hasJoined) ...[
+            if (_joinedGroup == null) ...[
               ElevatedButton(
-                onPressed: _joinGroup,
-                child: Text('${_preview.groupName}에 참여하기'),
+                onPressed: _isJoining ? null : _joinGroup,
+                child: _isJoining
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('코드로 모임 참여하기'),
               ),
               const SizedBox(height: AppSpacing.sm),
               Text(
@@ -137,7 +181,7 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
                       ),
                       const SizedBox(height: AppSpacing.md),
                       ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: () => Navigator.pop(context, true),
                         child: const Text('모임 목록으로 돌아가기'),
                       ),
                     ],

@@ -43,12 +43,7 @@ class _AppShellScreenState extends State<AppShellScreen> {
       MapScreen(selectedGroupId: _selectedMapGroupId),
       const FeedScreen(),
       RecordComposeScreen(onExitToMap: _showMap),
-      GroupsScreen(
-        onShowGroupOnMap: (groupId) => setState(() {
-          _selectedMapGroupId = groupId;
-          _selectedIndex = 0;
-        }),
-      ),
+      const GroupsScreen(),
       const ProfileScreen(),
     ];
     return Scaffold(

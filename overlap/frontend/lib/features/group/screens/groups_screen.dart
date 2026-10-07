@@ -3,36 +3,63 @@ import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_transport.dart';
 import '../models/group_list_item_data.dart';
-import '../services/mock_group_repository.dart';
+import '../services/group_api_service.dart';
+import '../services/group_list_store.dart';
 import '../widgets/group_list_item.dart';
 import 'create_group_screen.dart';
+import 'group_detail_management_screen.dart';
 import 'join_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
-  const GroupsScreen({super.key, required this.onShowGroupOnMap});
-
-  final ValueChanged<String> onShowGroupOnMap;
+  const GroupsScreen({super.key});
 
   @override
   State<GroupsScreen> createState() => _GroupsScreenState();
 }
 
 class _GroupsScreenState extends State<GroupsScreen> {
-  String? _selectedGroupId;
   final _inviteCodeController = TextEditingController();
+  bool _isLoadingGroups = true;
 
   @override
   void initState() {
     super.initState();
-    final groups = MockGroupRepository.groups;
-    if (groups.isNotEmpty) {
-      _selectedGroupId = groups
-          .firstWhere(
-            (group) => group.isInitiallySelected,
-            orElse: () => groups.first,
-          )
-          .id;
+    _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    setState(() => _isLoadingGroups = true);
+    try {
+      final groups = await GroupApiService.listGroups();
+      if (!mounted) return;
+      GroupListStore.replaceGroups(
+        groups
+            .map(
+              (group) => GroupListItemData(
+                id: group.id.toString(),
+                name: group.displayName ?? group.name,
+                memberCount: group.memberCount,
+                placeCount: 0,
+                newRecordCount: 0,
+                inviteCode: '',
+                description: group.description,
+                visibility: group.visibility,
+                notificationsEnabled: group.notificationsEnabled,
+                pinColorValue: group.pinColorValue,
+              ),
+            )
+            .toList(growable: false),
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingGroups = false);
     }
   }
 
@@ -42,7 +69,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
     super.dispose();
   }
 
-  void _openJoinGroupScreen() {
+  Future<void> _openJoinGroupScreen() async {
     final inviteCode = _inviteCodeController.text.trim();
     if (inviteCode.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -50,14 +77,31 @@ class _GroupsScreenState extends State<GroupsScreen> {
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final joined = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
         builder: (_) => JoinGroupScreen(inviteCode: inviteCode),
       ),
     );
+    if (mounted && joined == true) {
+      _inviteCodeController.clear();
+      await _loadGroups();
+    }
   }
 
-  void _openShareSheet(GroupListItemData group) {
+  Future<void> _openShareSheet(GroupListItemData group) async {
+    final String inviteCode;
+    try {
+      inviteCode = await GroupApiService.getInviteCode(int.parse(group.id));
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      return;
+    } on FormatException {
+      return;
+    }
+    if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -101,7 +145,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 const Text(
-                  '친구에게 이 링크를 보내 모임에 초대해보세요.',
+                  '초대 코드를 친구에게 전달해 모임에 초대해보세요.',
                   style: TextStyle(color: AppColors.muted),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -121,7 +165,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     ),
                   ),
                   child: Text(
-                    group.inviteUrl,
+                    inviteCode,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -135,13 +179,11 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(text: group.inviteUrl),
-                      );
+                      await Clipboard.setData(ClipboardData(text: inviteCode));
                       if (!mounted || !sheetContext.mounted) return;
                       Navigator.pop(sheetContext);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('초대 링크를 복사했습니다.')),
+                        const SnackBar(content: Text('초대 코드를 복사했습니다.')),
                       );
                     },
                     icon: const Icon(Icons.content_copy_outlined),
@@ -204,12 +246,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
+                onPressed: () async {
+                  await Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => const CreateGroupScreen(),
                     ),
                   );
+                  if (mounted) await _loadGroups();
                 },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('모임 만들기'),
@@ -218,9 +261,15 @@ class _GroupsScreenState extends State<GroupsScreen> {
           ),
           const SizedBox(height: AppSpacing.xs),
           ValueListenableBuilder<List<GroupListItemData>>(
-            valueListenable: MockGroupRepository.groupsListenable,
+            valueListenable: GroupListStore.groupsListenable,
             builder: (context, groups, _) {
               if (groups.isEmpty) {
+                if (_isLoadingGroups) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
                   child: Text(
@@ -235,10 +284,26 @@ class _GroupsScreenState extends State<GroupsScreen> {
                   for (final group in groups)
                     GroupListItem(
                       group: group,
-                      isSelected: group.id == _selectedGroupId,
-                      onTap: () {
-                        setState(() => _selectedGroupId = group.id);
-                        widget.onShowGroupOnMap(group.id);
+                      isSelected: false,
+                      onTap: () async {
+                        final scaffoldMessenger = ScaffoldMessenger.of(context);
+                        final leftGroupName = await Navigator.of(context)
+                            .push<String>(
+                              MaterialPageRoute<String>(
+                                builder: (_) => GroupDetailManagementScreen(
+                                  groupId: group.id,
+                                ),
+                              ),
+                            );
+                        if (!mounted) return;
+                        await _loadGroups();
+                        if (leftGroupName != null) {
+                          scaffoldMessenger
+                            ..hideCurrentSnackBar()
+                            ..showSnackBar(
+                              SnackBar(content: Text('$leftGroupName에서 탈퇴했습니다.')),
+                            );
+                        }
                       },
                       onShare: () => _openShareSheet(group),
                     ),

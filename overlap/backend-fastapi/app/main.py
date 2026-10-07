@@ -41,12 +41,15 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from . import group_management_service, group_service
 from .db import get_db
 from .kakao import search_places
 from .models import (
     GroupCreated,
     GroupInput,
     GroupPublic,
+    GroupPreferencesInput,
+    GroupUpdateInput,
     InviteOutput,
     JoinInput,
     LoginInput,
@@ -240,8 +243,17 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
             UserPublic,
             Depends(current_user),
         ],
+        db: Session = Depends(get_db),
     ):
-        return service.create_group(user.id, data.name)
+        if db is None:
+            return service.create_group(user.id, data.name)
+        return group_management_service.create_group(
+            db,
+            user_id=user.id,
+            name=data.name,
+            description=data.description,
+            visibility=data.visibility,
+        )
 
     @api.post(
         "/groups/join",
@@ -255,8 +267,11 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
             UserPublic,
             Depends(current_user),
         ],
+        db: Session = Depends(get_db),
     ):
-        return service.join_group(user.id, data.invite_code)
+        if db is None:
+            return service.join_group(user.id, data.invite_code)
+        return group_service.join_group(db, user_id=user.id, invite_code=data.invite_code)
 
     @api.get(
         "/groups",
@@ -269,8 +284,11 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
             UserPublic,
             Depends(current_user),
         ],
+        db: Session = Depends(get_db),
     ):
-        return service.list_groups(user.id)
+        if db is None:
+            return service.list_groups(user.id)
+        return group_service.list_groups(db, user_id=user.id)
 
     @api.get(
         "/groups/{group_id}/invite",
@@ -284,10 +302,46 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
             UserPublic,
             Depends(current_user),
         ],
+        db: Session = Depends(get_db),
     ):
+        if db is None:
+            return InviteOutput(invite_code=service.get_invite(user.id, group_id))
         return InviteOutput(
-            invite_code=service.get_invite(user.id, group_id),
+            invite_code=group_service.get_invite(db, user_id=user.id, group_id=group_id),
         )
+
+    @api.put("/groups/{group_id}", response_model=GroupPublic, tags=["2. 모임"])
+    def update_group(
+        group_id: int,
+        data: GroupUpdateInput,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session = Depends(get_db),
+    ):
+        if db is None:
+            raise HTTPException(status_code=503, detail="모임 설정은 데이터베이스 연결이 필요합니다.")
+        return group_management_service.update_group(db, user_id=user.id, group_id=group_id, data=data)
+
+    @api.patch("/groups/{group_id}/preferences", response_model=GroupPublic, tags=["2. 모임"])
+    def update_group_preferences(
+        group_id: int,
+        data: GroupPreferencesInput,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session = Depends(get_db),
+    ):
+        if db is None:
+            raise HTTPException(status_code=503, detail="모임 설정은 데이터베이스 연결이 필요합니다.")
+        return group_management_service.update_preferences(db, user_id=user.id, group_id=group_id, data=data)
+
+    @api.delete("/groups/{group_id}/members/me", status_code=204, tags=["2. 모임"])
+    def leave_group(
+        group_id: int,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session = Depends(get_db),
+    ):
+        if db is None:
+            raise HTTPException(status_code=503, detail="모임 탈퇴는 데이터베이스 연결이 필요합니다.")
+        group_management_service.leave_group(db, user_id=user.id, group_id=group_id)
+        return Response(status_code=204)
 
     @api.post(
         "/groups/{group_id}/places",

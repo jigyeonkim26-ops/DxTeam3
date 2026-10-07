@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../core/network/api_client.dart';
+import '../../../core/network/api_transport.dart';
+import '../services/auth_api_service.dart';
 import '../../home/screens/app_shell_screen.dart';
 import '../widgets/auth_text_field.dart';
 import 'signup_screen.dart';
@@ -18,7 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
-  bool _isSubmitting = false;
+  bool _isSigningIn = false;
 
   @override
   void dispose() {
@@ -37,7 +38,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
-    if (_isSubmitting) return;
     final email = _emailController.text.trim();
     if (email.isEmpty) {
       _showMessage('이메일을 입력해 주세요.');
@@ -51,20 +51,22 @@ class _LoginScreenState extends State<LoginScreen> {
       _showMessage('비밀번호를 입력해 주세요.');
       return;
     }
-    setState(() => _isSubmitting = true);
+    setState(() => _isSigningIn = true);
     try {
-      await ApiClient.login(email: email, password: _passwordController.text);
-      await ApiClient.me();
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(builder: (_) => const AppShellScreen()),
+      await AuthApiService.login(
+        email: email,
+        password: _passwordController.text,
       );
     } on ApiException catch (error) {
-      ApiClient.clearSession();
       if (mounted) _showMessage(error.message);
+      return;
     } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+      if (mounted) setState(() => _isSigningIn = false);
     }
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => const AppShellScreen()),
+    );
   }
 
   Future<void> _openSignup() async {
@@ -144,8 +146,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: AppSpacing.lg),
                       ElevatedButton(
-                        onPressed: _isSubmitting ? null : _login,
-                        child: _isSubmitting
+                        onPressed: _isSigningIn ? null : _login,
+                        child: _isSigningIn
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
