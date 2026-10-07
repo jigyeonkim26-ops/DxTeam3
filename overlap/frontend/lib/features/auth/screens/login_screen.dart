@@ -79,14 +79,25 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: AppSpacing.xl),
-              const Text(
-                'OVERLAP',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: AppColors.deepNavy,
-                  fontSize: 34,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -1.4,
+              Center(
+                child: RichText(
+                  text: TextSpan(
+                    style: TextStyle(
+                      fontSize: 34,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -1.4,
+                    ),
+                    children: [
+                      TextSpan(
+                        text: 'OVER',
+                        style: TextStyle(color: AppColors.deepNavy),
+                      ),
+                      TextSpan(
+                        text: 'LAP',
+                        style: TextStyle(color: AppColors.coral),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
