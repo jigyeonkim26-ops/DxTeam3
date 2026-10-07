@@ -96,9 +96,9 @@ class _FeedScreenState extends State<FeedScreen> {
       color: AppColors.paper,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
           AppSpacing.lg,
           AppSpacing.md,
+          AppSpacing.lg,
           AppSpacing.lg,
         ),
         children: [
