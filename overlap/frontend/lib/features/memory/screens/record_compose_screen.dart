@@ -8,7 +8,7 @@ import '../../../shared/models/place.dart';
 import '../widgets/emotion_picker.dart';
 import '../widgets/group_picker.dart';
 import '../widgets/photo_placeholder_picker.dart';
-import '../widgets/place_picker_sheet.dart';
+import 'place_picker_screen.dart';
 
 class RecordComposeScreen extends StatefulWidget {
   const RecordComposeScreen({super.key, required this.onExitToMap});
@@ -27,37 +27,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   Place? _selectedPlace;
   bool _isPrivate = false;
   int _photoSequence = 0;
-
-  static const _places = [
-    Place(
-      id: 'place-yeonnam-cafe',
-      name: '연남동 작은 카페',
-      latitude: 37.5665,
-      longitude: 126.9250,
-      address: '서울 마포구 연남동',
-    ),
-    Place(
-      id: 'place-hangang',
-      name: '한강공원',
-      latitude: 37.5283,
-      longitude: 126.9328,
-      address: '서울 영등포구 여의도동',
-    ),
-    Place(
-      id: 'place-seongsu',
-      name: '성수동',
-      latitude: 37.5446,
-      longitude: 127.0557,
-      address: '서울 성동구 성수동',
-    ),
-    Place(
-      id: 'place-jeju-coast',
-      name: '제주 해안 산책로',
-      latitude: 33.4996,
-      longitude: 126.5312,
-      address: '제주특별자치도 제주시',
-    ),
-  ];
 
   static const _groups = [
     Group(id: 'group-yeonnam', name: '연남 산책단', memberCount: 3),
@@ -87,10 +56,10 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   }
 
   Future<void> _selectPlace() async {
-    final place = await showModalBottomSheet<Place>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const PlacePickerSheet(places: _places),
+    final place = await Navigator.of(context).push<Place>(
+      MaterialPageRoute(
+        builder: (_) => PlacePickerScreen(initialPlace: _selectedPlace),
+      ),
     );
     if (place != null) setState(() => _selectedPlace = place);
   }
@@ -319,7 +288,12 @@ class _PlaceSelector extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        subtitle: place == null ? null : Text(place!.address ?? ''),
+        subtitle: place == null
+            ? null
+            : Text(
+                '${place!.latitude.toStringAsFixed(6)}, '
+                '${place!.longitude.toStringAsFixed(6)}',
+              ),
         trailing: const Icon(Icons.chevron_right),
       ),
     );

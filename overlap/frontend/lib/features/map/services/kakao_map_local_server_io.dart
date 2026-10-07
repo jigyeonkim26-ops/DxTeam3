@@ -4,35 +4,65 @@ import 'dart:io';
 /// Serves the Kakao map page from the exact localhost origin registered in
 /// Kakao Developers. It never listens on an external network interface.
 class KakaoMapLocalServer {
-  HttpServer? _server;
+  static HttpServer? _server;
+  static String? _javascriptKey;
+  static var _clientCount = 0;
+
+  var _hasLease = false;
 
   Future<void> start({required String javascriptKey}) async {
-    if (_server != null) {
+    if (_hasLease) {
       return;
     }
 
-    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
-    unawaited(
-      _server!.forEach((request) => _handleRequest(request, javascriptKey)),
-    );
+    if (_server == null) {
+      _javascriptKey = javascriptKey;
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
+      unawaited(_server!.forEach(_handleRequest));
+    }
+    _hasLease = true;
+    _clientCount += 1;
   }
 
-  Future<void> _handleRequest(HttpRequest request, String javascriptKey) async {
+  Future<void> _handleRequest(HttpRequest request) async {
+    final query = request.uri.queryParameters;
+    final selectionMode = query['selectionMode'] == 'true';
+    final latitude = double.tryParse(query['latitude'] ?? '') ?? 37.5663;
+    final longitude = double.tryParse(query['longitude'] ?? '') ?? 126.9779;
     request.response
       ..statusCode = HttpStatus.ok
       ..headers.contentType = ContentType.html
-      ..write(_mapHtml(javascriptKey));
+      ..write(
+        _mapHtml(
+          _javascriptKey!,
+          selectionMode: selectionMode,
+          latitude: latitude,
+          longitude: longitude,
+        ),
+      );
     await request.response.close();
   }
 
   Future<void> close() async {
+    if (!_hasLease) return;
+    _hasLease = false;
+    _clientCount -= 1;
+    if (_clientCount > 0) return;
+
     final server = _server;
     _server = null;
+    _javascriptKey = null;
     await server?.close(force: true);
   }
 
-  String _mapHtml(String javascriptKey) {
+  String _mapHtml(
+    String javascriptKey, {
+    required bool selectionMode,
+    required double latitude,
+    required double longitude,
+  }) {
     final encodedKey = Uri.encodeQueryComponent(javascriptKey);
+    final selectionModeLiteral = selectionMode ? 'true' : 'false';
     return '''<!doctype html>
 <html lang="ko">
 <head>
@@ -56,6 +86,9 @@ class KakaoMapLocalServer {
     var map;
     var overlays = [];
     var pendingPlaces = [];
+    var selectionMarker;
+    var selectionMode = $selectionModeLiteral;
+    var initialSelection = { latitude: $latitude, longitude: $longitude };
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>'"]/g, function (character) {
@@ -64,6 +97,7 @@ class KakaoMapLocalServer {
     }
 
     function setPlaces(places) {
+      if (selectionMode) return;
       pendingPlaces = Array.isArray(places) ? places : [];
       if (!map) return;
 
@@ -92,6 +126,35 @@ class KakaoMapLocalServer {
       }
     }
 
+    function postSelectedLocation(position) {
+      OverlapMap.postMessage(JSON.stringify({
+        type: 'locationChanged',
+        latitude: position.getLat(),
+        longitude: position.getLng()
+      }));
+    }
+
+    function initializeSelectionMarker() {
+      var position = new kakao.maps.LatLng(
+        initialSelection.latitude,
+        initialSelection.longitude
+      );
+      selectionMarker = new kakao.maps.Marker({
+        map: map,
+        position: position,
+        draggable: true
+      });
+      map.setCenter(position);
+      kakao.maps.event.addListener(map, 'click', function (event) {
+        selectionMarker.setPosition(event.latLng);
+        postSelectedLocation(event.latLng);
+      });
+      kakao.maps.event.addListener(selectionMarker, 'dragend', function () {
+        postSelectedLocation(selectionMarker.getPosition());
+      });
+      postSelectedLocation(position);
+    }
+
     var sdkScript = document.createElement('script');
     sdkScript.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=$encodedKey&autoload=false';
     sdkScript.onload = function () {
@@ -104,10 +167,14 @@ class KakaoMapLocalServer {
         kakao.maps.load(function () {
           try {
             map = new kakao.maps.Map(mapElement, {
-              center: new kakao.maps.LatLng(37.5663, 126.9779),
+              center: new kakao.maps.LatLng(initialSelection.latitude, initialSelection.longitude),
               level: 5
             });
-            setPlaces(pendingPlaces);
+            if (selectionMode) {
+              initializeSelectionMarker();
+            } else {
+              setPlaces(pendingPlaces);
+            }
           } catch (error) {
             mapElement.textContent = '지도를 불러오지 못했습니다.';
           }
