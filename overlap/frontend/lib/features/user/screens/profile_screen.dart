@@ -43,7 +43,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _openMyRecords() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const FeedScreen(initialFilter: FeedFilter.mine),
+        builder: (_) => const Scaffold(
+          body: SafeArea(
+            child: FeedScreen(
+              initialFilter: FeedFilter.mine,
+              showBackButton: true,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -103,21 +110,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 profileImagePath: _profileImagePath,
                 onProfileTap: _openProfileEdit,
                 onRecordsTap: _openMyRecords,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Text(
-                '내 기록',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: AppColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              ProfileMenuItem(
-                title: profile.recentRecordTitle,
-                description: profile.recentRecordPlace,
-                icon: Icons.coffee_outlined,
-                onTap: () => _show(context, '기록 상세 기능은 다음 단계에서 연결됩니다.'),
               ),
               const SizedBox(height: AppSpacing.lg),
               ProfileMenuItem(

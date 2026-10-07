@@ -10,9 +10,14 @@ import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key, this.initialFilter = FeedFilter.all});
+  const FeedScreen({
+    super.key,
+    this.initialFilter = FeedFilter.all,
+    this.showBackButton = false,
+  });
 
   final FeedFilter initialFilter;
+  final bool showBackButton;
 
   @override
   State<FeedScreen> createState() => _FeedScreenState();
@@ -97,6 +102,15 @@ class _FeedScreenState extends State<FeedScreen> {
           AppSpacing.lg,
         ),
         children: [
+          if (widget.showBackButton)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back, color: AppColors.deepNavy),
+                tooltip: '뒤로가기',
+              ),
+            ),
           const Text(
             '피드',
             style: TextStyle(
