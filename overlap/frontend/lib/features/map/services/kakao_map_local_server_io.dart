@@ -47,6 +47,18 @@ class KakaoMapLocalServer {
     }
     .place-marker__label::before { content: '●'; font-size: 12px; }
     .place-marker__pointer { border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid #ff6b57; height: 0; margin: 0 auto; width: 0; }
+    .place-marker__pin {
+      display: block; height: 48px; position: relative; width: 38px;
+    }
+    .place-marker__shape {
+      display: block; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .18)); height: 48px; width: 38px;
+    }
+    .place-marker__shape path {
+      fill: var(--pin-color); stroke: #fff; stroke-width: 2;
+    }
+    .place-marker__count {
+      color: #fff; font: 700 14px/1 sans-serif; left: 0; position: absolute; text-align: center; top: 13px; width: 100%;
+    }
   </style>
 </head>
 <body>
@@ -56,11 +68,16 @@ class KakaoMapLocalServer {
     var map;
     var overlays = [];
     var pendingPlaces = [];
+    function markerColor(value) {
+      if (typeof value !== 'string') return '#14364A';
+      var color = value.trim();
+      return /^#[0-9a-fA-F]{6}\$/.test(color) ? color : '#14364A';
+    }
 
-    function escapeHtml(value) {
-      return String(value).replace(/[&<>'"]/g, function (character) {
-        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character];
-      });
+    function markerCountLabel(value) {
+      var count = Number(value);
+      if (!Number.isFinite(count) || count < 1) return '0';
+      return count >= 10 ? '10+' : String(Math.floor(count));
     }
 
     function setPlaces(places) {
@@ -77,7 +94,8 @@ class KakaoMapLocalServer {
         var content = document.createElement('button');
         content.type = 'button';
         content.className = 'place-marker';
-        content.innerHTML = '<span class="place-marker__label">' + escapeHtml(place.name) + ' ' + Number(place.recordCount) + '</span><span class="place-marker__pointer"></span>';
+        content.style.setProperty('--pin-color', markerColor(place.groupColorHex));
+        content.innerHTML = '<span class="place-marker__pin"><svg class="place-marker__shape" viewBox="0 0 38 48" aria-hidden="true"><path d="M19 1C9.1 1 2 8.3 2 18.2C2 30.4 13.2 42 19 47C24.8 42 36 30.4 36 18.2C36 8.3 28.9 1 19 1Z"/></svg><span class="place-marker__count">' + markerCountLabel(place.recordCount) + '</span></span>';
         content.addEventListener('click', function () {
           OverlapMap.postMessage(String(place.id));
         });

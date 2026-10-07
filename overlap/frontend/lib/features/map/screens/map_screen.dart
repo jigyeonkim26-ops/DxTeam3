@@ -52,6 +52,7 @@ class _MapScreenState extends State<MapScreen> {
       latitude: 37.5638,
       longitude: 126.9250,
       filters: {MapFilter.yeonnam},
+      groupColorHex: MapGroupColors.coral,
     ),
     MapPlace(
       id: 'hangang-park',
@@ -62,6 +63,7 @@ class _MapScreenState extends State<MapScreen> {
       latitude: 37.5286,
       longitude: 126.9345,
       filters: {MapFilter.travel},
+      groupColorHex: MapGroupColors.green,
     ),
     MapPlace(
       id: 'seongsu',
@@ -72,6 +74,7 @@ class _MapScreenState extends State<MapScreen> {
       latitude: 37.5446,
       longitude: 127.0557,
       filters: {MapFilter.mine, MapFilter.neighborhood},
+      groupColorHex: MapGroupColors.deepNavy,
     ),
   ];
 

@@ -124,10 +124,10 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         .map(
           (place) => {
             'id': place.id,
-            'name': place.name,
             'recordCount': place.recordCount,
             'latitude': place.latitude,
             'longitude': place.longitude,
+            'groupColorHex': place.groupColorHex,
           },
         )
         .toList();
