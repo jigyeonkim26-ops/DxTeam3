@@ -38,7 +38,8 @@ class _MapScreenState extends State<MapScreen> {
   CurrentLocation? _currentLocation;
   var _currentLocationRequestId = 0;
   var _isLocating = false;
-  bool _isSatellite = false;
+  final bool _isSatellite = false;
+  double _aiSheetExtent = 0.22;
 
   Future<void> _goToCurrentLocation() async {
     if (_isLocating) return;
@@ -185,77 +186,94 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _selectedSearchPlace = searchPlace);
   }
 
-  Future<void> _openAiRecommendations() async {
-    final selectedPlace = await Navigator.of(context).push<Place>(
-      MaterialPageRoute<Place>(builder: (_) => const AiRecommendationScreen()),
-    );
-    if (!mounted || selectedPlace == null) return;
-    _showMessage("'${selectedPlace.name}'을 추천 장소로 선택했어요.");
+  void _showPlaceOnMap(Place place) {
+    final searchPlace = MapSearchPlace.fromPlace(place);
+    if (!searchPlace.hasValidCoordinates) {
+      _showMessage('선택한 장소의 좌표가 올바르지 않습니다.');
+      return;
+    }
+    setState(() => _selectedSearchPlace = searchPlace);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        MapView(
-          isSatellite: _isSatellite,
-          places: _visiblePlaces,
-          selectedPlaceId: _selectedPlace?.id,
-          searchPlace: _selectedSearchPlace,
-          currentLocation: _currentLocation,
-          currentLocationRequestId: _currentLocationRequestId,
-          onPlaceTap: _openPlacePreview,
-        ),
-        Positioned(
-          top: AppSpacing.sm,
-          left: AppSpacing.md,
-          right: AppSpacing.md,
-          child: Row(
-            children: [
-              Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
-              const SizedBox(width: AppSpacing.xs),
-              _RoundIconButton(
-                icon: Icons.tune_rounded,
-                tooltip: '기록 필터',
-                onTap: _openFilterSheet,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gpsBottom = constraints.maxHeight * _aiSheetExtent + 14;
+        final shouldHideGps = _aiSheetExtent >= 0.75;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            MapView(
+              isSatellite: _isSatellite,
+              places: _visiblePlaces,
+              selectedPlaceId: _selectedPlace?.id,
+              searchPlace: _selectedSearchPlace,
+              currentLocation: _currentLocation,
+              currentLocationRequestId: _currentLocationRequestId,
+              onPlaceTap: _openPlacePreview,
+            ),
+            Positioned(
+              top: AppSpacing.sm,
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              child: Row(
+                children: [
+                  Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
+                  const SizedBox(width: AppSpacing.xs),
+                  _RoundIconButton(
+                    icon: Icons.tune_rounded,
+                    tooltip: '기록 필터',
+                    onTap: _openFilterSheet,
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-        Positioned(
-          top: 68,
-          left: AppSpacing.md,
-          child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
-        ),
-        Positioned(
-          right: AppSpacing.md,
-          bottom: AppSpacing.lg,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _RoundIconButton(
-                icon: _isSatellite ? Icons.satellite_alt : Icons.map_outlined,
-                tooltip: '지도 유형 전환',
-                onTap: () => setState(() => _isSatellite = !_isSatellite),
+            ),
+            Positioned(
+              top: 68,
+              left: AppSpacing.md,
+              child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
+            ),
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 120),
+              right: AppSpacing.md,
+              bottom: gpsBottom,
+              child: IgnorePointer(
+                ignoring: shouldHideGps,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: shouldHideGps ? 0 : 1,
+                  child: _RoundIconButton(
+                    icon: Icons.my_location,
+                    tooltip: '현재 위치',
+                    onTap: _goToCurrentLocation,
+                  ),
+                ),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              _RoundIconButton(
-                icon: Icons.my_location,
-                tooltip: '현재 위치',
-                onTap: _goToCurrentLocation,
+            ),
+            NotificationListener<DraggableScrollableNotification>(
+              onNotification: (notification) {
+                if (notification.extent != _aiSheetExtent) {
+                  setState(() => _aiSheetExtent = notification.extent);
+                }
+                return false;
+              },
+              child: DraggableScrollableSheet(
+                minChildSize: 0.12,
+                initialChildSize: 0.22,
+                maxChildSize: 0.90,
+                snap: true,
+                snapSizes: const [0.12, 0.50, 0.90],
+                builder: (context, scrollController) => AiRecommendationContent(
+                  scrollController: scrollController,
+                  showSheetHeader: true,
+                  onPlaceSelected: _showPlaceOnMap,
+                ),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              _RoundIconButton(
-                icon: Icons.auto_awesome,
-                tooltip: 'AI 추천',
-                isPrimary: true,
-                onTap: _openAiRecommendations,
-              ),
-            ],
-          ),
-        ),
-      ],
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -336,18 +354,16 @@ class _RoundIconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onTap,
-    this.isPrimary = false,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
-  final bool isPrimary;
 
   @override
   Widget build(BuildContext context) {
-    final background = isPrimary ? AppColors.deepNavy : AppColors.surface;
-    final foreground = isPrimary ? Colors.white : AppColors.deepNavy;
+    const background = AppColors.surface;
+    const foreground = AppColors.deepNavy;
     return Tooltip(
       message: tooltip,
       child: Material(

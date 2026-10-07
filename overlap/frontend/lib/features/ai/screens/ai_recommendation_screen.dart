@@ -3,17 +3,47 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/emotion.dart';
+import '../../../shared/models/place.dart';
 import '../data/mock_ai_recommendations.dart';
 import '../widgets/ai_place_recommendation_card.dart';
 
-class AiRecommendationScreen extends StatefulWidget {
+class AiRecommendationScreen extends StatelessWidget {
   const AiRecommendationScreen({super.key});
 
   @override
-  State<AiRecommendationScreen> createState() => _AiRecommendationScreenState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.paper,
+      body: SafeArea(
+        child: AiRecommendationContent(
+          showNavigation: true,
+          onPlaceSelected: (place) => Navigator.pop(context, place),
+        ),
+      ),
+    );
+  }
 }
 
-class _AiRecommendationScreenState extends State<AiRecommendationScreen> {
+class AiRecommendationContent extends StatefulWidget {
+  const AiRecommendationContent({
+    super.key,
+    this.scrollController,
+    this.showNavigation = false,
+    this.showSheetHeader = false,
+    this.onPlaceSelected,
+  });
+
+  final ScrollController? scrollController;
+  final bool showNavigation;
+  final bool showSheetHeader;
+  final ValueChanged<Place>? onPlaceSelected;
+
+  @override
+  State<AiRecommendationContent> createState() =>
+      _AiRecommendationContentState();
+}
+
+class _AiRecommendationContentState extends State<AiRecommendationContent> {
   int _recommendationSetIndex = 0;
 
   List<AiPlaceRecommendation> get _recommendations =>
@@ -31,12 +61,40 @@ class _AiRecommendationScreenState extends State<AiRecommendationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.paper,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-          children: [
+    final content = ListView(
+      controller: widget.scrollController,
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+      children: [
+        if (widget.showSheetHeader) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Center(
+            child: Container(
+              width: 42,
+              height: 5,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.xs,
+            ),
+            child: Text(
+              'AI 장소 추천',
+              style: TextStyle(
+                color: AppColors.deepNavy,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+            if (widget.showNavigation)
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.sm,
@@ -146,14 +204,35 @@ class _AiRecommendationScreenState extends State<AiRecommendationScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 child: AiPlaceRecommendationCard(
                   recommendation: recommendation,
-                  onTap: () => Navigator.pop(context, recommendation.place),
+                  onTap: () {
+                    final onPlaceSelected = widget.onPlaceSelected;
+                    if (onPlaceSelected != null) {
+                      onPlaceSelected(recommendation.place);
+                    } else {
+                      Navigator.maybePop(context);
+                    }
+                  },
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
             ],
-          ],
-        ),
+      ],
+    );
+    if (!widget.showSheetHeader) return content;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.ink.withValues(alpha: 0.16),
+            blurRadius: 16,
+            offset: const Offset(0, -3),
+          ),
+        ],
       ),
+      child: content,
     );
   }
 }
