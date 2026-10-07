@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../group/screens/groups_screen.dart';
+import '../../map/models/map_filter.dart';
 import '../../map/screens/map_screen.dart';
 import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
@@ -20,6 +21,7 @@ class AppShellScreen extends StatefulWidget {
 class _AppShellScreenState extends State<AppShellScreen> {
   int _selectedIndex = 0;
   String? _selectedMapGroupId;
+  Set<MapFilter>? _requestedMapFilters;
 
   static const _items = <_NavigationItem>[
     _NavigationItem('지도', Icons.map_outlined, Icons.map),
@@ -36,14 +38,25 @@ class _AppShellScreenState extends State<AppShellScreen> {
     });
   }
 
+  void _showMyMap() {
+    setState(() {
+      _selectedMapGroupId = null;
+      _requestedMapFilters = {MapFilter.mine};
+      _selectedIndex = 0;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
-      MapScreen(selectedGroupId: _selectedMapGroupId),
+      MapScreen(
+        selectedGroupId: _selectedMapGroupId,
+        requestedFilters: _requestedMapFilters,
+      ),
       const FeedScreen(),
       RecordComposeScreen(onExitToMap: _showMap),
       const GroupsScreen(),
-      const ProfileScreen(),
+      ProfileScreen(onShowMyMap: _showMyMap),
     ];
     return Scaffold(
       body: Column(
@@ -158,7 +171,7 @@ class _BottomNavigationItem extends StatelessWidget {
                 ),
               SizedBox(height: isCompose ? 0 : 2),
               if (isCompose)
-                const SizedBox(height: 12)
+                const SizedBox(height: 4)
               else
                 Text(
                   item.label,

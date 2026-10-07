@@ -16,6 +16,10 @@ class MapFilterSheet extends StatefulWidget {
 class _MapFilterSheetState extends State<MapFilterSheet> {
   late final Set<MapFilter> _filters = {...widget.selectedFilters};
 
+  bool get _isAllSelected =>
+      _filters.length == MapFilter.values.length &&
+      _filters.containsAll(MapFilter.values);
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -62,7 +66,7 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
             ),
             const SizedBox(height: AppSpacing.sm),
             CheckboxListTile(
-              value: _filters.length == MapFilter.values.length,
+              value: _isAllSelected,
               onChanged: (selected) => setState(() {
                 _filters
                   ..clear()

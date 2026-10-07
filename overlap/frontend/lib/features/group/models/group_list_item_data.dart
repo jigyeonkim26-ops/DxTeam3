@@ -10,9 +10,11 @@ class GroupListItemData {
     this.recordCount = 0,
     this.pinColorValue = 0xFFFF7058,
     this.notificationsEnabled = true,
+    List<GroupMemberData> members = const [],
     this.hasTodayNewRecords = false,
     this.isInitiallySelected = false,
-  });
+    // ignore: prefer_initializing_formals
+  }) : _members = members;
 
   final String id;
   final String name;
@@ -23,6 +25,8 @@ class GroupListItemData {
   final int? recordCount;
   final int? pinColorValue;
   final bool? notificationsEnabled;
+  final List<GroupMemberData>? _members;
+  List<GroupMemberData> get members => _members ?? const [];
   final bool hasTodayNewRecords;
   final bool isInitiallySelected;
 
@@ -44,6 +48,7 @@ class GroupListItemData {
       pinColorValue: pinColorValue ?? this.pinColorValue ?? 0xFFFF7058,
       notificationsEnabled:
           notificationsEnabled ?? this.notificationsEnabled ?? true,
+      members: members,
       hasTodayNewRecords: hasTodayNewRecords,
       isInitiallySelected: isInitiallySelected,
     );
@@ -57,4 +62,16 @@ class GroupListItemData {
     final prefix = hasTodayNewRecords ? '오늘 새 기록' : '새 기록';
     return '$prefix $newRecordCount개';
   }
+}
+
+class GroupMemberData {
+  const GroupMemberData({
+    required this.id,
+    required this.nickname,
+    this.profileImagePath,
+  });
+
+  final String id;
+  final String nickname;
+  final String? profileImagePath;
 }

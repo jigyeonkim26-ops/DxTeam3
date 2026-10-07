@@ -164,14 +164,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
         ),
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: IconButton(
-              onPressed: widget.onExitToMap,
-              icon: const Icon(Icons.arrow_back),
-              tooltip: '지도 메인으로 돌아가기',
-            ),
-          ),
           const Text(
             '새 기록',
             style: TextStyle(

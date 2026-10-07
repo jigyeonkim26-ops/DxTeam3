@@ -13,23 +13,40 @@ import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.selectedGroupId});
+  const MapScreen({super.key, this.selectedGroupId, this.requestedFilters});
 
   final String? selectedGroupId;
+  final Set<MapFilter>? requestedFilters;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
 class _MapScreenState extends State<MapScreen> {
-  Set<MapFilter> _selectedFilters = {MapFilter.mine};
+  Set<MapFilter> _selectedFilters = Set.of(MapFilter.values);
   MapPlace? _selectedPlace;
   bool _isSatellite = false;
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.requestedFilters != null) {
+      _selectedFilters = Set.of(widget.requestedFilters!);
+    } else if (widget.selectedGroupId != null) {
+      _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedGroupId != widget.selectedGroupId) {
+    if (oldWidget.requestedFilters != widget.requestedFilters &&
+        widget.requestedFilters != null) {
+      setState(() {
+        _selectedFilters = Set.of(widget.requestedFilters!);
+        _selectedPlace = null;
+      });
+    } else if (oldWidget.selectedGroupId != widget.selectedGroupId) {
       setState(() {
         _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
         _selectedPlace = null;
@@ -38,9 +55,13 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Set<MapFilter> _filtersForGroupId(String? groupId) {
-    if (groupId == null) return {MapFilter.mine};
+    if (groupId == null) return Set.of(MapFilter.values);
     return {MapFilter.values.firstWhere((filter) => filter.name == groupId)};
   }
+
+  bool get _areAllFiltersSelected =>
+      _selectedFilters.length == MapFilter.values.length &&
+      _selectedFilters.containsAll(MapFilter.values);
 
   static final List<MapPlace> _places = [
     MapPlace(
@@ -80,6 +101,7 @@ class _MapScreenState extends State<MapScreen> {
       .toList();
 
   String get _filterLabel {
+    if (_areAllFiltersSelected) return '전체';
     if (_selectedFilters.isEmpty) return '기록 필터';
     if (_selectedFilters.length == 1) return _selectedFilters.single.label;
     return '선택 ${_selectedFilters.length}개';

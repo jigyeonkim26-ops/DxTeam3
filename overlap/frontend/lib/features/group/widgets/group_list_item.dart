@@ -70,8 +70,14 @@ class GroupListItem extends StatelessWidget {
                   const SizedBox(width: AppSpacing.xs),
                   IconButton(
                     onPressed: onShare,
-                    icon: const Icon(Icons.ios_share_outlined),
-                    color: AppColors.deepNavy,
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFFF2F4F5),
+                      foregroundColor: AppColors.deepNavy,
+                      minimumSize: const Size(36, 36),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    icon: const Icon(Icons.ios_share_outlined, size: 18),
                     tooltip: '${group.name} 공유',
                   ),
                   if (isSelected)
