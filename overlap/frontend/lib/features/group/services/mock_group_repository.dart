@@ -13,6 +13,7 @@ abstract final class MockGroupRepository {
           placeCount: 8,
           newRecordCount: 2,
           inviteCode: 'YN1234',
+          recordCount: 12,
           hasTodayNewRecords: true,
           isInitiallySelected: true,
         ),
@@ -23,6 +24,7 @@ abstract final class MockGroupRepository {
           placeCount: 14,
           newRecordCount: 0,
           inviteCode: 'FRIEND5',
+          recordCount: 8,
         ),
         GroupListItemData(
           id: 'travel',
@@ -31,6 +33,7 @@ abstract final class MockGroupRepository {
           placeCount: 20,
           newRecordCount: 2,
           inviteCode: 'TRIP20',
+          recordCount: 16,
         ),
       ]);
 
@@ -43,6 +46,19 @@ abstract final class MockGroupRepository {
         .toList(growable: false);
     if (updatedGroups.length == groupsListenable.value.length) return false;
 
+    groupsListenable.value = updatedGroups;
+    return true;
+  }
+
+  static bool updateGroup(GroupListItemData updatedGroup) {
+    final groups = groupsListenable.value;
+    final groupIndex = groups.indexWhere(
+      (group) => group.id == updatedGroup.id,
+    );
+    if (groupIndex == -1) return false;
+
+    final updatedGroups = List<GroupListItemData>.of(groups)
+      ..[groupIndex] = updatedGroup;
     groupsListenable.value = updatedGroups;
     return true;
   }
