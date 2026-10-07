@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:overlap_app/features/map/widgets/kakao_map_webview.dart';
 import 'package:overlap_app/features/memory/screens/record_compose_screen.dart';
 import 'package:overlap_app/features/memory/services/record_api.dart';
 import 'package:overlap_app/shared/models/place.dart';
@@ -15,6 +17,17 @@ void main() {
   testWidgets(
     'private compose requires photo emotion place but allows empty story',
     (tester) async {
+      const config = MethodChannel('overlap/kakao_config');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        config,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          config,
+          null,
+        ),
+      );
       var saves = 0;
       var published = false;
       final api = RecordApi(
@@ -25,6 +38,13 @@ void main() {
           final body = utf8.decode(request.bodyBytes, allowMalformed: true);
           expect(body, contains('"is_private":true'));
           expect(body, contains('"content":""'));
+          expect(body, contains('"kakao_place_id":"123"'));
+          expect(body, contains('"latitude":36.25'));
+          expect(body, contains('"longitude":128.5'));
+          expect(
+            request.headers['content-type'],
+            contains('multipart/form-data'),
+          );
           return http.Response(
             jsonEncode(recordJson()),
             201,
@@ -72,6 +92,9 @@ void main() {
       await tester.tap(find.text('좋아요'));
       await tester.ensureVisible(find.text('장소를 선택해 주세요'));
       await tester.tap(find.text('장소를 선택해 주세요'));
+      await tester.pumpAndSettle();
+      final map = tester.widget<KakaoMapWebView>(find.byType(KakaoMapWebView));
+      map.onLocationChanged!(36.25, 128.5);
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));

@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/record.dart';
 import '../services/record_api.dart';
+import '../models/feed_filter.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/models/group.dart';
 import 'record_detail_screen.dart';
@@ -11,7 +12,17 @@ import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key, this.recordApi, this.isActive = true});
+  const FeedScreen({
+    super.key,
+    this.recordApi,
+    this.isActive = true,
+    this.initialFilter = FeedFilter.all,
+    this.initialGroupId,
+    this.showBackButton = false,
+  });
+  final FeedFilter initialFilter;
+  final String? initialGroupId;
+  final bool showBackButton;
   final RecordApi? recordApi;
   final bool isActive;
 
@@ -20,7 +31,8 @@ class FeedScreen extends StatefulWidget {
 }
 
 class _FeedScreenState extends State<FeedScreen> {
-  String _selectedFilter = 'all';
+  Set<String> _selectedFilters = {'all'};
+  final Set<String> _likedRecordIds = {};
   List<Record> _records = [];
   List<Group> _groups = [];
   bool _isLoading = true;
@@ -31,6 +43,7 @@ class _FeedScreenState extends State<FeedScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedFilters = {widget.initialGroupId ?? widget.initialFilter.name};
     _api = widget.recordApi ?? RecordApi();
     RecordApi.revision.addListener(_reload);
     _reload();
@@ -50,12 +63,13 @@ class _FeedScreenState extends State<FeedScreen> {
     super.dispose();
   }
 
-  String get _filterLabel => _selectedFilter == 'all'
-      ? '내 맞춤 피드'
-      : _selectedFilter == 'mine'
-      ? '내 기록만 보기'
-      : _groups.where((g) => g.id == _selectedFilter).firstOrNull?.name ??
-            '내 맞춤 피드';
+  String get _filterLabel {
+    if (_selectedFilters.contains('all')) return '내 맞춤 피드';
+    if (_selectedFilters.length != 1) return '${_selectedFilters.length}개 선택';
+    final filter = _selectedFilters.single;
+    if (filter == 'mine') return '내 기록만 보기';
+    return _groups.where((g) => g.id == filter).firstOrNull?.name ?? '내 맞춤 피드';
+  }
 
   Future<void> _reload() async {
     final generation = ++_generation;
@@ -66,17 +80,26 @@ class _FeedScreenState extends State<FeedScreen> {
     try {
       final groups = await _api.groups();
       if (!mounted || generation != _generation) return;
-      if (_selectedFilter != 'all' &&
-          _selectedFilter != 'mine' &&
-          !groups.any((g) => g.id == _selectedFilter)) {
-        _selectedFilter = 'all';
+      _selectedFilters.retainAll({'all', 'mine', ...groups.map((g) => g.id)});
+      if (_selectedFilters.isEmpty) _selectedFilters = {'all'};
+      final selection = Set<String>.of(_selectedFilters);
+      final List<Record> records;
+      if (selection.contains('all')) {
+        records = await _api.feed();
+      } else {
+        final batches = await Future.wait([
+          for (final filter in selection)
+            _api.feed(
+              mine: filter == 'mine',
+              groupId: filter == 'mine' ? null : filter,
+            ),
+        ]);
+        records = {
+          for (final batch in batches)
+            for (final record in batch) record.id: record,
+        }.values.toList();
       }
-      final records = await _api.feed(
-        mine: _selectedFilter == 'mine',
-        groupId: _selectedFilter == 'all' || _selectedFilter == 'mine'
-            ? null
-            : _selectedFilter,
-      );
+      records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       if (!mounted || generation != _generation) return;
       setState(() {
         _records = records;
@@ -113,16 +136,23 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _selectFilter() async {
-    final filter = await showModalBottomSheet<String>(
+    final filters = await showModalBottomSheet<Set<String>>(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) =>
-          FeedFilterSheet(selectedFilter: _selectedFilter, groups: _groups),
+          FeedFilterSheet(selectedFilters: _selectedFilters, groups: _groups),
     );
-    if (filter != null && mounted) {
-      setState(() => _selectedFilter = filter);
+    if (filters != null && mounted) {
+      setState(() => _selectedFilters = Set.of(filters));
       await _reload();
     }
+  }
+
+  void _toggleLike(String recordId) {
+    setState(() {
+      if (!_likedRecordIds.add(recordId)) _likedRecordIds.remove(recordId);
+    });
   }
 
   void _openRecordDetail(Record record) {
@@ -143,12 +173,21 @@ class _FeedScreenState extends State<FeedScreen> {
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
             AppSpacing.lg,
             AppSpacing.md,
+            AppSpacing.lg,
             AppSpacing.lg,
           ),
           children: [
+            if (widget.showBackButton)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.arrow_back, color: AppColors.deepNavy),
+                  tooltip: '뒤로가기',
+                ),
+              ),
             const Text(
               '피드',
               style: TextStyle(
@@ -182,10 +221,10 @@ class _FeedScreenState extends State<FeedScreen> {
               for (final record in records) ...[
                 RecordCard(
                   record: record,
-                  isLiked: false,
+                  isLiked: _likedRecordIds.contains(record.id),
                   onTap: () => _openRecordDetail(record),
-                  onLikeTap: () => _showMessage('공감 기능은 준비 중입니다.'),
-                  onCommentTap: () => _showMessage('댓글 기능은 준비 중입니다.'),
+                  onLikeTap: () => _toggleLike(record.id),
+                  onCommentTap: () => _openRecordDetail(record),
                   onPlaceTap: () => _showMessage('장소 상세는 추후 연결됩니다.'),
                 ),
                 const SizedBox(height: AppSpacing.md),

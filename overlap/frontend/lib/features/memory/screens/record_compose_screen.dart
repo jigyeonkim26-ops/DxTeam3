@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
@@ -9,6 +10,9 @@ import '../widgets/emotion_picker.dart';
 import '../widgets/group_picker.dart';
 import '../widgets/photo_placeholder_picker.dart';
 import '../../map/screens/place_search_screen.dart';
+import '../../map/widgets/kakao_map_webview.dart';
+import '../../map/models/current_location.dart';
+import '../../map/services/current_location_service.dart';
 import '../services/record_api.dart';
 import '../../../core/network/api_client.dart';
 
@@ -22,8 +26,10 @@ class RecordComposeScreen extends StatefulWidget {
     this.onPublished,
     this.pickPhotos,
     this.pickPlace,
+    this.locationService,
   });
 
+  final CurrentLocationService? locationService;
   final VoidCallback onExitToMap;
   final VoidCallback? onPublished;
   final RecordApi? recordApi;
@@ -36,6 +42,10 @@ class RecordComposeScreen extends StatefulWidget {
 
 class _RecordComposeScreenState extends State<RecordComposeScreen> {
   final _storyController = TextEditingController();
+  final _placeNameController = TextEditingController();
+  CurrentLocation? _currentLocation;
+  int _currentLocationRequestId = 0;
+  bool _isLocating = false;
   final List<XFile> _photos = [];
   final Set<String> _selectedGroupIds = {};
   Emotion? _selectedEmotion;
@@ -55,6 +65,10 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   }
 
   Future<void> _loadGroups() async {
+    setState(() {
+      _isLoadingGroups = true;
+      _groupError = null;
+    });
     try {
       final groups = await _api.groups();
       if (!mounted) return;
@@ -71,12 +85,20 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           _isLoadingGroups = false;
         });
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _groupError = '모임을 불러오지 못했습니다.';
+          _isLoadingGroups = false;
+        });
+      }
     }
   }
 
   @override
   void dispose() {
     _storyController.dispose();
+    _placeNameController.dispose();
     if (widget.recordApi == null) _api.close();
     super.dispose();
   }
@@ -125,7 +147,69 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         : await Navigator.of(context).push<Place>(
             MaterialPageRoute(builder: (_) => const PlaceSearchScreen()),
           );
-    if (mounted && place != null) setState(() => _selectedPlace = place);
+    if (!mounted || place == null) return;
+    if (!RegExp(r'^\d+$').hasMatch(place.id)) {
+      _showMessage('검색 결과에서 장소를 다시 선택해 주세요.');
+      return;
+    }
+    setState(() {
+      _selectedPlace = place;
+      _placeNameController.text = place.name;
+    });
+  }
+
+  void _onLocationChanged(double latitude, double longitude) {
+    final place = _selectedPlace;
+    if (place == null ||
+        !latitude.isFinite ||
+        !longitude.isFinite ||
+        latitude.abs() > 90 ||
+        longitude.abs() > 180) {
+      return;
+    }
+    if (place.latitude == latitude && place.longitude == longitude) return;
+    setState(
+      () => _selectedPlace = Place(
+        id: place.id,
+        name: place.name,
+        address: place.address,
+        latitude: latitude,
+        longitude: longitude,
+      ),
+    );
+  }
+
+  Future<void> _goToCurrentLocation() async {
+    if (_isLocating) return;
+    setState(() => _isLocating = true);
+    try {
+      final location =
+          await (widget.locationService ??
+                  const GeolocatorCurrentLocationService())
+              .getCurrentLocation();
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = location;
+        _currentLocationRequestId++;
+      });
+    } on CurrentLocationFailure catch (failure) {
+      if (!mounted) return;
+      final message = switch (failure.reason) {
+        CurrentLocationFailureReason.serviceDisabled => '위치 서비스를 켜주세요.',
+        CurrentLocationFailureReason.permissionDenied =>
+          '현재 위치를 사용하려면 위치 권한이 필요합니다.',
+        CurrentLocationFailureReason.permissionPermanentlyDenied =>
+          '위치 권한이 영구적으로 거부되었습니다. 설정에서 허용해주세요.',
+        CurrentLocationFailureReason.timeout ||
+        CurrentLocationFailureReason.unavailable =>
+          '현재 위치를 확인하지 못했습니다. 다시 시도해주세요.',
+      };
+      _showMessage(message);
+    } catch (_) {
+      if (mounted) _showMessage('현재 위치를 확인하지 못했습니다. 다시 시도해주세요.');
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
   }
 
   void _togglePrivate(bool value) {
@@ -164,7 +248,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _showMessage('이곳의 느낌을 하나 선택해 주세요.');
       return;
     }
-    if (_selectedPlace == null) {
+    if (_selectedPlace == null ||
+        !RegExp(r'^\d+$').hasMatch(_selectedPlace!.id)) {
       _showMessage('기록할 장소를 선택해 주세요.');
       return;
     }
@@ -189,6 +274,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         _selectedGroupIds.clear();
         _selectedEmotion = null;
         _selectedPlace = null;
+        _placeNameController.clear();
+        _currentLocation = null;
         _isPrivate = false;
         _storyController.clear();
       });
@@ -216,14 +303,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
             AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
           ),
           children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: IconButton(
-                onPressed: widget.onExitToMap,
-                icon: const Icon(Icons.arrow_back),
-                tooltip: '지도 메인으로 돌아가기',
-              ),
-            ),
             const Text(
               '새 기록',
               style: TextStyle(
@@ -258,6 +337,62 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
             const _SectionTitle(title: '어디에서 보냈나요?', isRequired: true),
             const SizedBox(height: AppSpacing.xs),
             _PlaceSelector(place: _selectedPlace, onTap: _selectPlace),
+            const SizedBox(height: AppSpacing.sm),
+            if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+                child: SizedBox(
+                  height: 230,
+                  child: KakaoMapWebView(
+                    selectionMode: true,
+                    initialLatitude:
+                        _selectedPlace?.latitude ??
+                        _currentLocation?.latitude ??
+                        37.5663,
+                    initialLongitude:
+                        _selectedPlace?.longitude ??
+                        _currentLocation?.longitude ??
+                        126.9779,
+                    onLocationChanged: _onLocationChanged,
+                    currentLocation: _currentLocation,
+                    currentLocationRequestId: _currentLocationRequestId,
+                  ),
+                ),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              '장소를 검색해 선택한 뒤, 핀을 드래그하거나 지도를 탭해 위치를 조정해요.',
+              style: TextStyle(color: AppColors.muted),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _selectedPlace == null
+                        ? '장소를 선택해 주세요.'
+                        : '선택 위치  ${_selectedPlace!.latitude.toStringAsFixed(6)}, ${_selectedPlace!.longitude.toStringAsFixed(6)}',
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _isLocating ? null : _goToCurrentLocation,
+                  icon: const Icon(Icons.my_location_outlined, size: 18),
+                  label: Text(_isLocating ? '위치 확인 중...' : '현재 위치 다시 찾기'),
+                ),
+              ],
+            ),
+            TextField(
+              controller: _placeNameController,
+              readOnly: true,
+              onTap: _selectPlace,
+              decoration: const InputDecoration(
+                labelText: '장소 이름',
+                hintText: '장소를 검색해 선택해 주세요.',
+              ),
+            ),
             const SizedBox(height: AppSpacing.lg),
             const _SectionTitle(title: '이 순간을 한 줄로'),
             const SizedBox(height: AppSpacing.xs),

@@ -14,6 +14,70 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 void main() {
   testWidgets(
+    'selection map retains repeated GPS requests and coordinate events',
+    (tester) async {
+      final original = WebViewPlatform.instance;
+      final platform = _WebViewPlatform();
+      WebViewPlatform.instance = platform;
+      const config = MethodChannel('overlap/kakao_config');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        config,
+        (_) async => 'test-key',
+      );
+      addTearDown(() {
+        if (original != null) WebViewPlatform.instance = original;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          config,
+          null,
+        );
+      });
+      final coordinates = <double>[];
+      Widget view(int request) => MaterialApp(
+        home: KakaoMapWebView(
+          localServer: _OfflineServer(),
+          selectionMode: true,
+          currentLocation: const CurrentLocation(
+            latitude: 35.1,
+            longitude: 126.8,
+          ),
+          currentLocationRequestId: request,
+          onLocationChanged: (latitude, longitude) {
+            coordinates.addAll([latitude, longitude]);
+          },
+        ),
+      );
+      await tester.pumpWidget(view(1));
+      await tester.pump();
+      platform.navigation.finished!('http://localhost:8080/');
+      await tester.pumpAndSettle();
+      platform.controller.channel!.onMessageReceived(
+        JavaScriptMessage(
+          message:
+              '{"type":"locationChanged","latitude":36.25,"longitude":128.5}',
+        ),
+      );
+      expect(coordinates, [36.25, 128.5]);
+      await tester.pumpWidget(view(2));
+      await tester.pumpAndSettle();
+      expect(
+        platform.controller.commands.where(
+          (c) => c.startsWith('setCurrentLocation'),
+        ),
+        hasLength(2),
+      );
+      expect(
+        platform.controller.commands.last,
+        startsWith('setCurrentLocation'),
+      );
+      expect(
+        platform.controller.commands.any((c) => c.startsWith('setPlaces')),
+        isFalse,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'same GPS request recenters A after search B and retains both pins',
     (tester) async {
       final original = WebViewPlatform.instance;
@@ -173,6 +237,7 @@ class _WebViewPlatform extends WebViewPlatform {
 class _Controller extends PlatformWebViewController {
   _Controller(super.params) : super.implementation();
   final commands = <String>[];
+  JavaScriptChannelParams? channel;
   @override
   Future<void> runJavaScript(String javaScript) async {
     commands.add(javaScript);
@@ -181,7 +246,10 @@ class _Controller extends PlatformWebViewController {
   @override
   Future<void> setJavaScriptMode(JavaScriptMode javaScriptMode) async {}
   @override
-  Future<void> addJavaScriptChannel(JavaScriptChannelParams params) async {}
+  Future<void> addJavaScriptChannel(JavaScriptChannelParams params) async {
+    channel = params;
+  }
+
   @override
   Future<void> setPlatformNavigationDelegate(
     PlatformNavigationDelegate handler,

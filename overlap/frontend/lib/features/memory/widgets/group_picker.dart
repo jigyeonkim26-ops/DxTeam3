@@ -22,6 +22,42 @@ class GroupPicker extends StatelessWidget {
   final ValueChanged<Group> onChanged;
   final ValueChanged<bool> onSelectAll;
 
+  static const _scrollThreshold = 4;
+  static const _scrollListHeight = 240.0;
+
+  Widget _buildGroupTile(Group group) {
+    return CheckboxListTile(
+      value: selectedGroupIds.contains(group.id),
+      onChanged: (_) => onChanged(group),
+      activeColor: AppColors.deepNavy,
+      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+      controlAffinity: ListTileControlAffinity.trailing,
+      title: Text(
+        group.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text('멤버 ${group.memberCount}명'),
+    );
+  }
+
+  Widget _buildGroupList() {
+    if (groups.length < _scrollThreshold) {
+      return Column(
+        children: [for (final group in groups) _buildGroupTile(group)],
+      );
+    }
+
+    return SizedBox(
+      height: _scrollListHeight,
+      child: ListView.builder(
+        primary: false,
+        padding: EdgeInsets.zero,
+        itemCount: groups.length,
+        itemBuilder: (context, index) => _buildGroupTile(groups[index]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Opacity(
@@ -50,21 +86,7 @@ class GroupPicker extends StatelessWidget {
                   ),
                 ),
                 const Divider(height: 1, color: AppColors.divider),
-                for (final group in groups)
-                  CheckboxListTile(
-                    value: selectedGroupIds.contains(group.id),
-                    onChanged: (_) => onChanged(group),
-                    activeColor: AppColors.deepNavy,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.xs,
-                    ),
-                    controlAffinity: ListTileControlAffinity.trailing,
-                    title: Text(
-                      group.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text('멤버 ${group.memberCount}명'),
-                  ),
+                _buildGroupList(),
               ],
             ),
           ),

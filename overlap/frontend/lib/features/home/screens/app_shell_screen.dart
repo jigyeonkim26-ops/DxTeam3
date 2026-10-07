@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../group/screens/groups_screen.dart';
+import '../../map/models/map_filter.dart';
 import '../../map/screens/map_screen.dart';
 import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../../user/screens/profile_screen.dart';
-import '../../user/screens/saved_screen.dart';
 import '../../../shared/widgets/overlap_header.dart';
 
 class AppShellScreen extends StatefulWidget {
@@ -21,6 +21,7 @@ class AppShellScreen extends StatefulWidget {
 class _AppShellScreenState extends State<AppShellScreen> {
   int _selectedIndex = 0;
   String? _selectedMapGroupId;
+  Set<MapFilter>? _requestedMapFilters;
 
   static const _items = <_NavigationItem>[
     _NavigationItem('지도', Icons.map_outlined, Icons.map),
@@ -33,6 +34,15 @@ class _AppShellScreenState extends State<AppShellScreen> {
   void _showMap() {
     setState(() {
       _selectedMapGroupId = null;
+      _requestedMapFilters = null;
+      _selectedIndex = 0;
+    });
+  }
+
+  void _showMyMap() {
+    setState(() {
+      _selectedMapGroupId = null;
+      _requestedMapFilters = {MapFilter.mine};
       _selectedIndex = 0;
     });
   }
@@ -40,16 +50,17 @@ class _AppShellScreenState extends State<AppShellScreen> {
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
-      MapScreen(selectedGroupId: _selectedMapGroupId),
-      const FeedScreen(),
-      RecordComposeScreen(onExitToMap: _showMap),
-      GroupsScreen(
-        onShowGroupOnMap: (groupId) => setState(() {
-          _selectedMapGroupId = groupId;
-          _selectedIndex = 0;
-        }),
+      MapScreen(
+        selectedGroupId: _selectedMapGroupId,
+        requestedFilters: _requestedMapFilters,
       ),
-      const ProfileScreen(),
+      FeedScreen(isActive: _selectedIndex == 1),
+      RecordComposeScreen(
+        onExitToMap: _showMap,
+        onPublished: () => setState(() => _selectedIndex = 1),
+      ),
+      const GroupsScreen(),
+      ProfileScreen(onShowMyMap: _showMyMap, isActive: _selectedIndex == 4),
     ];
     return Scaffold(
       body: Column(
@@ -57,9 +68,6 @@ class _AppShellScreenState extends State<AppShellScreen> {
           OverlapHeader(
             showBackButton: _selectedIndex == 2,
             onBack: _selectedIndex == 2 ? _showMap : null,
-            onSaved: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const SavedScreen()),
-            ),
             onNotifications: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const NotificationsScreen(),
@@ -93,7 +101,10 @@ class _AppShellScreenState extends State<AppShellScreen> {
                   isCompose: index == 2,
                   onTap: () => setState(() {
                     _selectedIndex = index;
-                    if (index == 0) _selectedMapGroupId = null;
+                    if (index == 0) {
+                      _selectedMapGroupId = null;
+                      _requestedMapFilters = null;
+                    }
                   }),
                 ),
               );
@@ -166,14 +177,17 @@ class _BottomNavigationItem extends StatelessWidget {
                   size: 22,
                 ),
               SizedBox(height: isCompose ? 0 : 2),
-              Text(
-                isCompose ? '+' : item.label,
-                style: TextStyle(
-                  color: isCompose ? AppColors.coral : color,
-                  fontSize: 10,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              if (isCompose)
+                const SizedBox(height: 4)
+              else
+                Text(
+                  item.label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

@@ -16,6 +16,10 @@ class MapFilterSheet extends StatefulWidget {
 class _MapFilterSheetState extends State<MapFilterSheet> {
   late final Set<MapFilter> _filters = {...widget.selectedFilters};
 
+  bool get _isAllSelected =>
+      _filters.length == MapFilter.values.length &&
+      _filters.containsAll(MapFilter.values);
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -62,13 +66,11 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
             ),
             const SizedBox(height: AppSpacing.sm),
             CheckboxListTile(
-              value: _filters.contains(MapFilter.mine),
+              value: _isAllSelected,
               onChanged: (selected) => setState(() {
                 _filters
                   ..clear()
-                  ..addAll(
-                    selected ?? false ? const [MapFilter.mine] : const [],
-                  );
+                  ..addAll(selected ?? false ? MapFilter.values : const []);
               }),
               activeColor: AppColors.deepNavy,
               contentPadding: EdgeInsets.zero,
@@ -78,9 +80,7 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
-            for (final filter in MapFilter.values.where(
-              (filter) => filter == MapFilter.mine,
-            ))
+            for (final filter in MapFilter.values)
               CheckboxListTile(
                 value: _filters.contains(filter),
                 onChanged: (selected) => setState(() {
@@ -93,6 +93,16 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
                 activeColor: AppColors.deepNavy,
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.trailing,
+                secondary: Icon(
+                  Icons.circle,
+                  size: 14,
+                  color: switch (filter) {
+                    MapFilter.mine ||
+                    MapFilter.neighborhood => AppColors.deepNavy,
+                    MapFilter.yeonnam => AppColors.coral,
+                    MapFilter.travel => const Color(0xFF6FAE8F),
+                  },
+                ),
                 title: Text(
                   filter.label,
                   style: const TextStyle(fontWeight: FontWeight.w600),
