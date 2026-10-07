@@ -16,7 +16,7 @@ class CreateGroupScreen extends StatefulWidget {
 
 class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController(text: '새로운 산책 모임');
+  final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
 
   GroupVisibility _visibility = GroupVisibility.invitedMembersOnly;
@@ -84,10 +84,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 controller: _nameController,
                 maxLength: 30,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  hintText: '예: 새로운 산책 모임',
-                  counterText: '',
-                ),
+                decoration: const InputDecoration(counterText: ''),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return '모임 이름을 입력해 주세요.';
@@ -103,10 +100,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 minLines: 3,
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
-                  hintText: '예: 주말마다 동네의 좋은 장소를 기록해요.',
-                  alignLabelWithHint: true,
-                ),
+                decoration: const InputDecoration(alignLabelWithHint: true),
               ),
               const SizedBox(height: AppSpacing.md),
               Text('공유 범위', style: Theme.of(context).textTheme.labelLarge),

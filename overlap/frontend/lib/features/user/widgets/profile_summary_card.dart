@@ -37,7 +37,7 @@ class ProfileSummaryCard extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     CircleAvatar(
-                      radius: 40,
+                      radius: 50,
                       backgroundColor: AppColors.softMint,
                       backgroundImage: profileImagePath == null
                           ? null
@@ -51,8 +51,8 @@ class ProfileSummaryCard extends StatelessWidget {
                           : null,
                     ),
                     Positioned(
-                      right: -2,
-                      bottom: -2,
+                      right: -1,
+                      bottom: -1,
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: const BoxDecoration(
@@ -88,7 +88,6 @@ class ProfileSummaryCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
           decoration: BoxDecoration(
             color: AppColors.surface,
-            border: Border.all(color: AppColors.divider),
             borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
           ),
           child: Row(

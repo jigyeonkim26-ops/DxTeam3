@@ -13,23 +13,40 @@ import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.selectedGroupId});
+  const MapScreen({super.key, this.selectedGroupId, this.requestedFilters});
 
   final String? selectedGroupId;
+  final Set<MapFilter>? requestedFilters;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
 class _MapScreenState extends State<MapScreen> {
-  Set<MapFilter> _selectedFilters = {MapFilter.mine};
+  Set<MapFilter> _selectedFilters = Set.of(MapFilter.values);
   MapPlace? _selectedPlace;
-  bool _isSatellite = false;
+  double _aiSheetExtent = 0.22;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.requestedFilters != null) {
+      _selectedFilters = Set.of(widget.requestedFilters!);
+    } else if (widget.selectedGroupId != null) {
+      _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
+    }
+  }
 
   @override
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedGroupId != widget.selectedGroupId) {
+    if (oldWidget.requestedFilters != widget.requestedFilters &&
+        widget.requestedFilters != null) {
+      setState(() {
+        _selectedFilters = Set.of(widget.requestedFilters!);
+        _selectedPlace = null;
+      });
+    } else if (oldWidget.selectedGroupId != widget.selectedGroupId) {
       setState(() {
         _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
         _selectedPlace = null;
@@ -38,9 +55,13 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Set<MapFilter> _filtersForGroupId(String? groupId) {
-    if (groupId == null) return {MapFilter.mine};
+    if (groupId == null) return Set.of(MapFilter.values);
     return {MapFilter.values.firstWhere((filter) => filter.name == groupId)};
   }
+
+  bool get _areAllFiltersSelected =>
+      _selectedFilters.length == MapFilter.values.length &&
+      _selectedFilters.containsAll(MapFilter.values);
 
   static final List<MapPlace> _places = [
     MapPlace(
@@ -83,6 +104,7 @@ class _MapScreenState extends State<MapScreen> {
       .toList();
 
   String get _filterLabel {
+    if (_areAllFiltersSelected) return '전체';
     if (_selectedFilters.isEmpty) return '기록 필터';
     if (_selectedFilters.length == 1) return _selectedFilters.single.label;
     return '선택 ${_selectedFilters.length}개';
@@ -139,21 +161,17 @@ class _MapScreenState extends State<MapScreen> {
     _showMessage("'${selectedPlace.name}'를 선택했어요.");
   }
 
-  Future<void> _openAiRecommendations() async {
-    final selectedPlace = await Navigator.of(context).push<Place>(
-      MaterialPageRoute<Place>(builder: (_) => const AiRecommendationScreen()),
-    );
-    if (!mounted || selectedPlace == null) return;
-    _showMessage("'${selectedPlace.name}'을 추천 장소로 선택했어요.");
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gpsBottom = constraints.maxHeight * _aiSheetExtent + 14;
+        final shouldHideGps = _aiSheetExtent >= 0.75;
+        return Stack(
       fit: StackFit.expand,
       children: [
         MapView(
-          isSatellite: _isSatellite,
+          isSatellite: false,
           places: _visiblePlaces,
           selectedPlaceId: _selectedPlace?.id,
           onPlaceTap: _openPlacePreview,
@@ -179,16 +197,18 @@ class _MapScreenState extends State<MapScreen> {
           left: AppSpacing.md,
           child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
         ),
-        Positioned(
+        /*
+        if (false)
+          Positioned(
           right: AppSpacing.md,
           bottom: AppSpacing.lg,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               _RoundIconButton(
-                icon: _isSatellite ? Icons.satellite_alt : Icons.map_outlined,
+                icon: Icons.map_outlined,
                 tooltip: '지도 유형 전환',
-                onTap: () => setState(() => _isSatellite = !_isSatellite),
+                onTap: () {},
               ),
               const SizedBox(height: AppSpacing.xs),
               _RoundIconButton(
@@ -196,17 +216,52 @@ class _MapScreenState extends State<MapScreen> {
                 tooltip: '현재 위치',
                 onTap: () => _showMessage('현재 위치 기능은 추후 연결됩니다.'),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              _RoundIconButton(
-                icon: Icons.auto_awesome,
-                tooltip: 'AI 추천',
-                isPrimary: true,
-                onTap: _openAiRecommendations,
-              ),
             ],
           ),
         ),
+        */
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 120),
+          right: AppSpacing.md,
+          bottom: gpsBottom,
+          child: IgnorePointer(
+            ignoring: shouldHideGps,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 120),
+              opacity: shouldHideGps ? 0 : 1,
+              child: _RoundIconButton(
+                icon: Icons.my_location,
+                tooltip: '현재 위치',
+                onTap: () => _showMessage('현재 위치 기능은 추후 연결됩니다.'),
+              ),
+            ),
+          ),
+        ),
+        NotificationListener<DraggableScrollableNotification>(
+          onNotification: (notification) {
+            if (notification.extent != _aiSheetExtent) {
+              setState(() => _aiSheetExtent = notification.extent);
+            }
+            return false;
+          },
+          child: DraggableScrollableSheet(
+          minChildSize: 0.12,
+          initialChildSize: 0.22,
+          maxChildSize: 0.90,
+          snap: true,
+          snapSizes: const [0.12, 0.50, 0.90],
+          builder: (context, scrollController) => AiRecommendationContent(
+            scrollController: scrollController,
+            showSheetHeader: true,
+            onPlaceSelected: (place) => _showMessage(
+              "'${place.name}'을 추천 장소로 선택했어요.",
+            ),
+          ),
+          ),
+        ),
       ],
+        );
+      },
     );
   }
 }
