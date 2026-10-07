@@ -8,6 +8,88 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../services/kakao_map_local_server.dart';
 import '../models/map_place.dart';
 
+class KakaoPlaceSelection {
+  const KakaoPlaceSelection({
+    required this.latitude,
+    required this.longitude,
+    required this.placeName,
+    required this.buildingName,
+    required this.roadAddress,
+    required this.lotAddress,
+  });
+
+  final double latitude;
+  final double longitude;
+  final String placeName;
+  final String buildingName;
+  final String roadAddress;
+  final String lotAddress;
+}
+
+class KakaoPlaceSearchRequest {
+  const KakaoPlaceSearchRequest({
+    required this.id,
+    required this.keyword,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final int id;
+  final String keyword;
+  final double latitude;
+  final double longitude;
+}
+
+class KakaoPlaceSearchResult {
+  const KakaoPlaceSearchResult({
+    required this.id,
+    required this.placeName,
+    required this.categoryName,
+    required this.phone,
+    required this.roadAddress,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+    required this.distance,
+  });
+
+  final String id;
+  final String placeName;
+  final String categoryName;
+  final String phone;
+  final String roadAddress;
+  final String address;
+  final double latitude;
+  final double longitude;
+  final double? distance;
+}
+
+class KakaoPlaceSearchResults {
+  const KakaoPlaceSearchResults({
+    required this.keyword,
+    required this.places,
+    required this.isError,
+  });
+
+  final String keyword;
+  final List<KakaoPlaceSearchResult> places;
+  final bool isError;
+}
+
+class KakaoMapSelectionRequest {
+  const KakaoMapSelectionRequest({
+    required this.id,
+    required this.latitude,
+    required this.longitude,
+    required this.placeName,
+  });
+
+  final int id;
+  final double latitude;
+  final double longitude;
+  final String placeName;
+}
+
 class KakaoMapWebView extends StatefulWidget {
   const KakaoMapWebView({
     super.key,
@@ -17,6 +99,10 @@ class KakaoMapWebView extends StatefulWidget {
     this.initialLatitude = 37.5663,
     this.initialLongitude = 126.9779,
     this.onLocationChanged,
+    this.onPlaceResolved,
+    this.placeSearchRequest,
+    this.onPlaceSearchResults,
+    this.selectionRequest,
   });
 
   final List<MapPlace> places;
@@ -25,6 +111,10 @@ class KakaoMapWebView extends StatefulWidget {
   final double initialLatitude;
   final double initialLongitude;
   final void Function(double latitude, double longitude)? onLocationChanged;
+  final ValueChanged<KakaoPlaceSelection>? onPlaceResolved;
+  final KakaoPlaceSearchRequest? placeSearchRequest;
+  final ValueChanged<KakaoPlaceSearchResults>? onPlaceSearchResults;
+  final KakaoMapSelectionRequest? selectionRequest;
 
   @override
   State<KakaoMapWebView> createState() => _KakaoMapWebViewState();
@@ -38,6 +128,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   String? _errorMessage;
   var _isLoading = true;
   var _pageFinished = false;
+  KakaoPlaceSearchRequest? _pendingPlaceSearchRequest;
 
   @override
   void initState() {
@@ -55,6 +146,17 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         (oldWidget.initialLatitude != widget.initialLatitude ||
             oldWidget.initialLongitude != widget.initialLongitude)) {
       _pushSelectionLocationToMap();
+    }
+    final placeSearchRequest = widget.placeSearchRequest;
+    if (placeSearchRequest != null &&
+        placeSearchRequest.id != oldWidget.placeSearchRequest?.id) {
+      _pendingPlaceSearchRequest = placeSearchRequest;
+      _pushPlaceSearch();
+    }
+    final selectionRequest = widget.selectionRequest;
+    if (selectionRequest != null &&
+        selectionRequest.id != oldWidget.selectionRequest?.id) {
+      _pushSelectionLocationToMap(selectionRequest);
     }
   }
 
@@ -84,6 +186,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
               }
               _pushPlacesToMap();
               _pushSelectionLocationToMap();
+              _pushPlaceSearch();
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error '
@@ -122,6 +225,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         if (_pageFinished) {
           _pushPlacesToMap();
           _pushSelectionLocationToMap();
+          _pushPlaceSearch();
         }
       }
     } on PlatformException {
@@ -132,7 +236,106 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   }
 
   void _handleMapMessage(String rawMessage) {
+    if (widget.selectionMode) {
+      debugPrint('[PLACE_DEBUG] rawMessage: $rawMessage');
+      debugPrint('[SEARCH_DEBUG] raw message = $rawMessage');
+    }
     final decodedMessage = _decodeMessage(rawMessage);
+    if (decodedMessage case {
+      'type': 'searchDebug',
+      'message': final String message,
+    }) {
+      debugPrint('[SEARCH_DEBUG] JS: $message');
+      return;
+    }
+    if (decodedMessage case {
+      'type': 'placeSearchResults',
+      'keyword': final String keyword,
+      'places': final List places,
+    }) {
+      if (widget.selectionMode) {
+        debugPrint('[SEARCH_DEBUG] Flutter received results: ${places.length}');
+      }
+      final searchResults = <KakaoPlaceSearchResult>[];
+      for (final place in places) {
+        if (place is! Map<String, dynamic>) continue;
+        final latitude = _asDouble(place['latitude']);
+        final longitude = _asDouble(place['longitude']);
+        final placeName = place['placeName'];
+        final id = place['id'];
+        if (latitude == null ||
+            longitude == null ||
+            placeName is! String ||
+            id is! String) {
+          continue;
+        }
+        searchResults.add(
+          KakaoPlaceSearchResult(
+            id: id,
+            placeName: placeName,
+            categoryName: place['categoryName'] is String
+                ? place['categoryName'] as String
+                : '',
+            phone: place['phone'] is String ? place['phone'] as String : '',
+            roadAddress: place['roadAddress'] is String
+                ? place['roadAddress'] as String
+                : '',
+            address: place['address'] is String ? place['address'] as String : '',
+            latitude: latitude,
+            longitude: longitude,
+            distance: _asDouble(place['distance']),
+          ),
+        );
+      }
+      widget.onPlaceSearchResults?.call(
+        KakaoPlaceSearchResults(
+          keyword: keyword,
+          places: searchResults,
+          isError: false,
+        ),
+      );
+      if (widget.selectionMode) {
+        debugPrint('[SEARCH_DEBUG] parsed result count = ${searchResults.length}');
+      }
+      return;
+    }
+    if (decodedMessage case {
+      'type': 'placeSearchError',
+      'keyword': final String keyword,
+    }) {
+      widget.onPlaceSearchResults?.call(
+        KakaoPlaceSearchResults(
+          keyword: keyword,
+          places: const [],
+          isError: true,
+        ),
+      );
+      return;
+    }
+    if (decodedMessage case {
+      'type': 'placeResolved',
+      'latitude': final num latitude,
+      'longitude': final num longitude,
+    }) {
+      final placeName = decodedMessage['placeName'];
+      final buildingName = decodedMessage['buildingName'];
+      final roadAddress = decodedMessage['roadAddress'];
+      final lotAddress = decodedMessage['lotAddress'];
+      final selection = KakaoPlaceSelection(
+        latitude: latitude.toDouble(),
+        longitude: longitude.toDouble(),
+        placeName: placeName is String ? placeName : '',
+        buildingName: buildingName is String ? buildingName : '',
+        roadAddress: roadAddress is String ? roadAddress : '',
+        lotAddress: lotAddress is String ? lotAddress : '',
+      );
+      if (widget.selectionMode) {
+        debugPrint('[PLACE_DEBUG] parsed placeName: ${selection.placeName}');
+      }
+      widget.onPlaceResolved?.call(selection);
+      return;
+    }
+
     if (decodedMessage case {
       'type': 'locationChanged',
       'latitude': final num latitude,
@@ -160,6 +363,11 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
   Future<void> _pushPlacesToMap() async {
     final controller = _controller;
     if (!_pageFinished || controller == null) {
@@ -184,7 +392,9 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
-  Future<void> _pushSelectionLocationToMap() async {
+  Future<void> _pushSelectionLocationToMap(
+    [KakaoMapSelectionRequest? selectionRequest]
+  ) async {
     if (!widget.selectionMode) {
       return;
     }
@@ -195,13 +405,46 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
 
     try {
+      final latitude = selectionRequest?.latitude ?? widget.initialLatitude;
+      final longitude = selectionRequest?.longitude ?? widget.initialLongitude;
+      final selectedPlaceName = selectionRequest?.placeName;
       await controller.runJavaScript(
         'setSelectionLocation('
-        '${widget.initialLatitude}, ${widget.initialLongitude}'
+        '$latitude, $longitude, ${jsonEncode(selectedPlaceName)}'
         ');',
       );
     } on PlatformException {
       _showError('지도를 불러오지 못했습니다.');
+    }
+  }
+
+  Future<void> _pushPlaceSearch() async {
+    final searchRequest = _pendingPlaceSearchRequest;
+    final controller = _controller;
+    if (!_pageFinished || controller == null || searchRequest == null) {
+      return;
+    }
+
+    try {
+      debugPrint('[SEARCH_DEBUG] sending search request to WebView');
+      await controller.runJavaScript(
+        'searchPlaces('
+        '${jsonEncode(searchRequest.keyword)}, '
+        '${searchRequest.latitude}, ${searchRequest.longitude}'
+        ');',
+      );
+      debugPrint('[SEARCH_DEBUG] JS search request sent');
+      if (identical(searchRequest, _pendingPlaceSearchRequest)) {
+        _pendingPlaceSearchRequest = null;
+      }
+    } on PlatformException {
+      widget.onPlaceSearchResults?.call(
+        KakaoPlaceSearchResults(
+          keyword: searchRequest.keyword,
+          places: const [],
+          isError: true,
+        ),
+      );
     }
   }
 

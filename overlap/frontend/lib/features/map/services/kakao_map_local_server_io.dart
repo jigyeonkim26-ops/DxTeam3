@@ -99,6 +99,19 @@ class KakaoMapLocalServer {
     var overlays = [];
     var pendingPlaces = [];
     var selectionMarker;
+    var geocoder;
+    var places;
+    var placesService;
+    var pendingPlaceSearch;
+    var selectionRequestId = 0;
+    var searchRequestId = 0;
+    var selectedSearchPlace;
+    var poiSearchRadius = 200;
+    var maximumPoiDistance = 30;
+    var poiCategoryCodes = [
+      'MT1', 'CS2', 'PS3', 'SC4', 'AC5', 'PK6', 'OL7', 'SW8', 'BK9',
+      'CT1', 'AG2', 'PO3', 'AT4', 'AD5', 'FD6', 'CE7', 'HP8', 'PM9'
+    ];
     var selectionMode = $selectionModeLiteral;
     var initialSelection = { latitude: $latitude, longitude: $longitude };
 
@@ -153,6 +166,230 @@ class KakaoMapLocalServer {
       }));
     }
 
+    function textOrEmpty(value) {
+      return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function resolvePlaceName(position, preferredPlaceName) {
+      if (!selectionMode || !geocoder) return;
+
+      var requestId = ++selectionRequestId;
+      var buildingName = '';
+      var roadAddress = '';
+      var lotAddress = '';
+      var addressFinished = false;
+      var pendingCategorySearches = places ? poiCategoryCodes.length : 0;
+      var nearestPlace;
+
+      function emitResolvedPlace() {
+        if (requestId !== selectionRequestId ||
+            !addressFinished ||
+            pendingCategorySearches > 0) {
+          return;
+        }
+
+        var poiName = nearestPlace && nearestPlace.distance <= maximumPoiDistance
+            ? textOrEmpty(nearestPlace.place_name)
+            : '';
+        var finalPlaceName = preferredPlaceName || poiName || buildingName || roadAddress || lotAddress || '';
+        var payload = {
+          type: 'placeResolved',
+          latitude: position.getLat(),
+          longitude: position.getLng(),
+          placeName: finalPlaceName,
+          buildingName: buildingName,
+          roadAddress: roadAddress,
+          lotAddress: lotAddress
+        };
+        console.log('[PLACE_DEBUG] buildingName:', buildingName);
+        console.log('[PLACE_DEBUG] roadAddress:', roadAddress);
+        console.log('[PLACE_DEBUG] lotAddress:', lotAddress);
+        console.log(
+          '[PLACE_DEBUG] nearestPoi:',
+          nearestPlace || null
+        );
+        console.log('[PLACE_DEBUG] finalPlaceName:', finalPlaceName);
+        console.log('[PLACE_DEBUG] postMessage:', payload);
+        OverlapMap.postMessage(JSON.stringify(payload));
+      }
+
+      geocoder.coord2Address(
+        position.getLng(),
+        position.getLat(),
+        function(result, status) {
+          if (requestId !== selectionRequestId) return;
+
+          if (status === kakao.maps.services.Status.OK && result && result.length) {
+            var item = result[0] || {};
+            var roadAddressData = item.road_address || {};
+            var addressData = item.address || {};
+            buildingName = textOrEmpty(roadAddressData.building_name);
+            roadAddress = textOrEmpty(roadAddressData.address_name);
+            lotAddress = textOrEmpty(addressData.address_name);
+          }
+          addressFinished = true;
+          emitResolvedPlace();
+        }
+      );
+
+      poiCategoryCodes.forEach(function(categoryCode) {
+        if (!places) return;
+
+        console.log('[PLACE_DEBUG] search start', categoryCode);
+        places.categorySearch(
+          categoryCode,
+          function(result, status) {
+            if (requestId !== selectionRequestId) return;
+
+            console.log(
+              '[PLACE_DEBUG] category result',
+              categoryCode,
+              status,
+              result ? result.length : 0
+            );
+            if (status === kakao.maps.services.Status.OK && result && result.length) {
+              result.forEach(function(place) {
+                var placeName = textOrEmpty(place.place_name);
+                var distance = Number.parseFloat(place.distance);
+                if (!placeName || !Number.isFinite(distance)) return;
+                if (!nearestPlace || distance < nearestPlace.distance) {
+                  nearestPlace = { place_name: placeName, distance: distance };
+                }
+              });
+            }
+            pendingCategorySearches -= 1;
+            emitResolvedPlace();
+          },
+          {
+            location: position,
+            radius: poiSearchRadius,
+            size: 15,
+            sort: kakao.maps.services.SortBy.DISTANCE
+          }
+        );
+      });
+    }
+
+    function updateSelectionPosition(position, preferredPlaceName) {
+      if (selectionMarker) {
+        selectionMarker.setPosition(position);
+      }
+      if (selectionMode) {
+        console.log(
+          '[PLACE_DEBUG] selected:',
+          position.getLat(),
+          position.getLng()
+        );
+      }
+      postSelectedLocation(position);
+      resolvePlaceName(position, preferredPlaceName);
+    }
+
+    function postPlaceSearchResults(keyword, searchResults) {
+      console.log('[SEARCH_DEBUG] postMessage =', searchResults.length);
+      OverlapMap.postMessage(JSON.stringify({
+        type: 'placeSearchResults',
+        keyword: keyword,
+        places: searchResults
+      }));
+    }
+
+    function postSearchDebug(message) {
+      if (!selectionMode) return;
+      OverlapMap.postMessage(JSON.stringify({
+        type: 'searchDebug',
+        message: message
+      }));
+    }
+
+    function postPlaceSearchError(keyword) {
+      console.log('[SEARCH_DEBUG] postMessage = error');
+      OverlapMap.postMessage(JSON.stringify({
+        type: 'placeSearchError',
+        keyword: keyword
+      }));
+    }
+
+    function searchPlaces(keyword, latitude, longitude) {
+      var query = textOrEmpty(keyword);
+      if (!selectionMode || !query) {
+        postPlaceSearchResults(query, []);
+        return;
+      }
+
+      console.log('[SEARCH_DEBUG] keyword =', query);
+      console.log('[SEARCH_DEBUG] placesService ready =', Boolean(placesService));
+      console.log('[SEARCH_DEBUG] latitude =', latitude);
+      console.log('[SEARCH_DEBUG] longitude =', longitude);
+      postSearchDebug('keywordSearch start: ' + query);
+      postSearchDebug(
+        'services=' + Boolean(window.kakao && window.kakao.maps &&
+          window.kakao.maps.services) +
+        ' placesService=' + Boolean(placesService)
+      );
+      postSearchDebug('latitude=' + latitude + ' longitude=' + longitude);
+      if (!placesService) {
+        pendingPlaceSearch = {
+          keyword: query,
+          latitude: latitude,
+          longitude: longitude
+        };
+        postSearchDebug('placesService not ready; search queued');
+        return;
+      }
+
+      var requestId = ++searchRequestId;
+      var options = { size: 15 };
+      var parsedLatitude = Number(latitude);
+      var parsedLongitude = Number(longitude);
+      if (Number.isFinite(parsedLatitude) && Number.isFinite(parsedLongitude)) {
+        options.location = new kakao.maps.LatLng(parsedLatitude, parsedLongitude);
+        options.sort = kakao.maps.services.SortBy.DISTANCE;
+      }
+      placesService.keywordSearch(
+        query,
+        function(result, status) {
+          if (requestId !== searchRequestId) return;
+
+          console.log('[SEARCH_DEBUG] status =', status);
+          console.log('[SEARCH_DEBUG] result count =', result ? result.length : 0);
+          console.log(
+            '[SEARCH_DEBUG] first place =',
+            result && result.length ? result[0].place_name : ''
+          );
+          postSearchDebug(
+            'status=' + status + ' resultCount=' + (result ? result.length : 0)
+          );
+          postSearchDebug(
+            'firstPlace=' + (result && result.length ? result[0].place_name : '')
+          );
+          if (status === kakao.maps.services.Status.OK && result) {
+            var searchResults = result.slice(0, 15).map(function(place) {
+                return {
+                  id: place.id,
+                  placeName: textOrEmpty(place.place_name),
+                  categoryName: textOrEmpty(place.category_name),
+                  phone: textOrEmpty(place.phone),
+                  roadAddress: textOrEmpty(place.road_address_name),
+                  address: textOrEmpty(place.address_name),
+                  latitude: Number.parseFloat(place.y),
+                  longitude: Number.parseFloat(place.x),
+                  distance: Number.parseFloat(place.distance)
+                };
+              });
+            postPlaceSearchResults(query, searchResults);
+            return;
+          }
+          if (status === kakao.maps.services.Status.ZERO_RESULT) {
+            postPlaceSearchResults(query, []);
+            return;
+          }
+          postPlaceSearchError(query);
+        },
+        options
+      );
+    }
+
     function initializeSelectionMarker() {
       var position = new kakao.maps.LatLng(
         initialSelection.latitude,
@@ -165,16 +402,21 @@ class KakaoMapLocalServer {
       });
       map.setCenter(position);
       kakao.maps.event.addListener(map, 'click', function (event) {
-        selectionMarker.setPosition(event.latLng);
-        postSelectedLocation(event.latLng);
+        selectedSearchPlace = null;
+        updateSelectionPosition(event.latLng);
+      });
+      kakao.maps.event.addListener(map, 'dragend', function () {
+        selectedSearchPlace = null;
+        updateSelectionPosition(map.getCenter());
       });
       kakao.maps.event.addListener(selectionMarker, 'dragend', function () {
-        postSelectedLocation(selectionMarker.getPosition());
+        selectedSearchPlace = null;
+        updateSelectionPosition(selectionMarker.getPosition());
       });
-      postSelectedLocation(position);
+      updateSelectionPosition(position);
     }
 
-    function setSelectionLocation(latitude, longitude) {
+    function setSelectionLocation(latitude, longitude, selectedPlaceName) {
       if (!selectionMode) return;
 
       initialSelection = {
@@ -187,15 +429,26 @@ class KakaoMapLocalServer {
         initialSelection.latitude,
         initialSelection.longitude
       );
-      if (selectionMarker) {
-        selectionMarker.setPosition(position);
+      var placeName = textOrEmpty(selectedPlaceName);
+      selectedSearchPlace = placeName ? {
+        latitude: initialSelection.latitude,
+        longitude: initialSelection.longitude,
+        placeName: placeName
+      } : null;
+      if (selectedSearchPlace) {
+        console.log('[SEARCH_DEBUG] selected place', selectedSearchPlace.placeName);
+        console.log(
+          '[SEARCH_DEBUG] selected lat/lng',
+          selectedSearchPlace.latitude,
+          selectedSearchPlace.longitude
+        );
       }
       map.setCenter(position);
-      postSelectedLocation(position);
+      updateSelectionPosition(position, placeName);
     }
 
     var sdkScript = document.createElement('script');
-    sdkScript.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=$encodedKey&autoload=false';
+    sdkScript.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=$encodedKey&libraries=services&autoload=false';
     sdkScript.onload = function () {
       if (!window.kakao || !window.kakao.maps) {
         mapElement.textContent = '지도를 불러오지 못했습니다.';
@@ -209,6 +462,20 @@ class KakaoMapLocalServer {
               center: new kakao.maps.LatLng(initialSelection.latitude, initialSelection.longitude),
               level: 5
             });
+            if (selectionMode && kakao.maps.services) {
+              geocoder = new kakao.maps.services.Geocoder();
+              places = new kakao.maps.services.Places();
+              placesService = new kakao.maps.services.Places();
+              if (pendingPlaceSearch) {
+                var queuedSearch = pendingPlaceSearch;
+                pendingPlaceSearch = null;
+                searchPlaces(
+                  queuedSearch.keyword,
+                  queuedSearch.latitude,
+                  queuedSearch.longitude
+                );
+              }
+            }
             if (selectionMode) {
               initializeSelectionMarker();
             } else {
