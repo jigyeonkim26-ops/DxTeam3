@@ -7,15 +7,18 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/kakao_map_local_server.dart';
 import '../models/map_place.dart';
+import '../models/map_search_place.dart';
 
 class KakaoMapWebView extends StatefulWidget {
   const KakaoMapWebView({
     super.key,
     required this.places,
+    required this.searchPlace,
     required this.onPlaceTap,
   });
 
   final List<MapPlace> places;
+  final MapSearchPlace? searchPlace;
   final ValueChanged<MapPlace> onPlaceTap;
 
   @override
@@ -40,8 +43,13 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   @override
   void didUpdateWidget(covariant KakaoMapWebView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!listEquals(oldWidget.places, widget.places)) {
-      _pushPlacesToMap();
+    final placesChanged = !listEquals(oldWidget.places, widget.places);
+    final searchPlaceChanged = oldWidget.searchPlace != widget.searchPlace;
+    if (placesChanged || searchPlaceChanged) {
+      _syncMapState(
+        placesChanged: placesChanged,
+        searchPlaceChanged: searchPlaceChanged,
+      );
     }
   }
 
@@ -50,12 +58,17 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       final javascriptKey = await _configChannel.invokeMethod<String>(
         'getJavaScriptKey',
       );
+      if (!mounted) return;
       if (javascriptKey == null || javascriptKey.trim().isEmpty) {
         _showError('카카오맵 설정이 필요합니다.');
         return;
       }
 
       await _localServer.start(javascriptKey: javascriptKey);
+      if (!mounted) {
+        await _localServer.close();
+        return;
+      }
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..addJavaScriptChannel(
@@ -69,7 +82,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
               if (mounted) {
                 setState(() => _isLoading = false);
               }
-              _pushPlacesToMap();
+              _syncMapState(placesChanged: true, searchPlaceChanged: true);
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error '
@@ -95,7 +108,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       if (mounted) {
         setState(() => _controller = controller);
         if (_pageFinished) {
-          _pushPlacesToMap();
+          _syncMapState(placesChanged: true, searchPlaceChanged: true);
         }
       }
     } on PlatformException {
@@ -114,27 +127,42 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
-  Future<void> _pushPlacesToMap() async {
+  Future<void> _syncMapState({
+    required bool placesChanged,
+    required bool searchPlaceChanged,
+  }) async {
     final controller = _controller;
-    if (!_pageFinished || controller == null) {
+    if (!mounted || !_pageFinished || controller == null) {
       return;
     }
 
-    final places = widget.places
-        .map(
-          (place) => {
-            'id': place.id,
-            'name': place.name,
-            'recordCount': place.recordCount,
-            'latitude': place.latitude,
-            'longitude': place.longitude,
-          },
-        )
-        .toList();
     try {
-      await controller.runJavaScript('setPlaces(${jsonEncode(places)});');
+      if (placesChanged) {
+        final places = widget.places
+            .map(
+              (place) => {
+                'id': place.id,
+                'name': place.name,
+                'recordCount': place.recordCount,
+                'latitude': place.latitude,
+                'longitude': place.longitude,
+              },
+            )
+            .toList();
+        await controller.runJavaScript('setPlaces(${jsonEncode(places)});');
+      }
+      if (!mounted) return;
+      if (searchPlaceChanged) {
+        final searchPlace = widget.searchPlace;
+        final command = searchPlace == null
+            ? 'clearSearchPlace();'
+            : 'setSearchPlace(${searchPlace.toJsonString()});';
+        await controller.runJavaScript(command);
+      }
     } on PlatformException {
-      _showError('지도를 불러오지 못했습니다.');
+      if (mounted) _showError('지도를 불러오지 못했습니다.');
+    } on Exception {
+      if (mounted) _showError('지도를 불러오지 못했습니다.');
     }
   }
 
