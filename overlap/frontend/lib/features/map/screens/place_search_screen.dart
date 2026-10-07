@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/place.dart';
+import '../models/kakao_place_search_result.dart';
+import '../services/place_search_api.dart';
 import '../widgets/place_search_result_tile.dart';
 
 class PlaceSearchScreen extends StatefulWidget {
@@ -14,91 +18,98 @@ class PlaceSearchScreen extends StatefulWidget {
 
 class _PlaceSearchScreenState extends State<PlaceSearchScreen> {
   final _searchController = TextEditingController();
+  final _searchApi = PlaceSearchApi();
+  Timer? _debounce;
+  List<KakaoPlaceSearchResult> _results = const [];
+  PlaceSearchException? _error;
+  var _isLoading = false;
+  var _hasCompletedSearch = false;
+  var _requestGeneration = 0;
 
-  static const List<Place> _places = [
-    Place(
-      id: 'search-yeonnam-cafe',
-      name: '연남동 작은 카페',
-      latitude: 37.5665,
-      longitude: 126.9250,
-      address: '서울 마포구 연남동',
-      recordCount: 4,
-    ),
-    Place(
-      id: 'search-seongsu-cafe-street',
-      name: '성수 카페거리',
-      latitude: 37.5446,
-      longitude: 127.0559,
-      address: '서울 성동구 성수동',
-    ),
-    Place(
-      id: 'search-seoul-forest',
-      name: '서울숲',
-      latitude: 37.5444,
-      longitude: 127.0374,
-      address: '서울 성동구 성수동',
-    ),
-    Place(
-      id: 'search-hangang-park',
-      name: '한강공원',
-      latitude: 37.5287,
-      longitude: 126.9325,
-      address: '서울 영등포구 여의도동',
-    ),
-    Place(
-      id: 'search-bukchon',
-      name: '북촌한옥마을',
-      latitude: 37.5826,
-      longitude: 126.9830,
-      address: '서울 종로구 북촌',
-    ),
-    Place(
-      id: 'search-gwangalli',
-      name: '광안리해수욕장',
-      latitude: 35.1532,
-      longitude: 129.1186,
-      address: '부산 수영구 광안동',
-    ),
-    Place(
-      id: 'search-dongjin-market',
-      name: '동진시장',
-      latitude: 37.5625,
-      longitude: 126.9237,
-      address: '서울 마포구 연남동',
-      recordCount: 2,
-    ),
-  ];
-
-  String get _query => _searchController.text;
-
-  List<Place> get _results {
-    final normalizedQuery = _normalize(_query);
-    if (normalizedQuery.isEmpty) return const [];
-    return _places
-        .where(
-          (place) =>
-              _normalize(place.name).contains(normalizedQuery) ||
-              _normalize(place.address ?? '').contains(normalizedQuery),
-        )
-        .toList();
-  }
+  String get _query => _searchController.text.trim();
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _requestGeneration++;
     _searchController.dispose();
     super.dispose();
   }
 
-  String _normalize(String value) =>
-      value.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  void _onQueryChanged(String _) {
+    _debounce?.cancel();
+    final generation = ++_requestGeneration;
+    final query = _query;
+    setState(() {
+      _results = const [];
+      _error = null;
+      _isLoading = false;
+      _hasCompletedSearch = false;
+    });
+    if (query.isEmpty) return;
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _runSearch(query, generation);
+    });
+  }
 
-  void _clearQuery() => _searchController.clear();
+  Future<void> _retrySearch() {
+    _debounce?.cancel();
+    final generation = ++_requestGeneration;
+    return _runSearch(_query, generation);
+  }
+
+  Future<void> _runSearch(String query, int generation) async {
+    if (query.isEmpty || !mounted) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _results = const [];
+      _hasCompletedSearch = false;
+    });
+    try {
+      final results = await _searchApi.search(query);
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        _results = results;
+        _isLoading = false;
+        _hasCompletedSearch = true;
+      });
+    } on PlaceSearchException catch (error) {
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+        _hasCompletedSearch = true;
+      });
+    } catch (_) {
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() {
+        _error = const PlaceSearchException(
+          PlaceSearchErrorKind.invalidResponse,
+          '장소 검색 응답을 처리하지 못했습니다.',
+        );
+        _isLoading = false;
+        _hasCompletedSearch = true;
+      });
+    }
+  }
+
+  void _clearQuery() {
+    _searchController.clear();
+    _onQueryChanged('');
+  }
+
+  Place _toPlace(KakaoPlaceSearchResult result) => Place(
+    id: result.kakaoPlaceId,
+    name: result.name,
+    latitude: result.latitude,
+    longitude: result.longitude,
+    address: result.address,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final hasQuery = _query.trim().isNotEmpty;
-    final results = _results;
-    final recentPlaces = _places.take(2).toList();
+    final hasQuery = _query.isNotEmpty;
     return Scaffold(
       backgroundColor: AppColors.paper,
       resizeToAvoidBottomInset: true,
@@ -124,7 +135,7 @@ class _PlaceSearchScreenState extends State<PlaceSearchScreen> {
                     child: TextField(
                       controller: _searchController,
                       autofocus: true,
-                      onChanged: (_) => setState(() {}),
+                      onChanged: _onQueryChanged,
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
                         hintText: '장소 또는 주소 검색',
@@ -174,36 +185,37 @@ class _PlaceSearchScreenState extends State<PlaceSearchScreen> {
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    hasQuery
-                        ? '장소명 또는 주소와 일치하는 장소예요.'
-                        : '찾고 싶은 장소나 주소를 검색해보세요.',
+                    hasQuery ? '장소명 또는 주소 검색 결과예요.' : '찾고 싶은 장소나 주소를 검색해보세요.',
                     style: const TextStyle(color: AppColors.muted),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  if (!hasQuery) ...[
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(AppSpacing.xl),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (_error != null)
+                    _SearchErrorState(
+                      message: _error!.message,
+                      onRetry: _retrySearch,
+                    )
+                  else if (hasQuery && _hasCompletedSearch && _results.isEmpty)
+                    const _SearchEmptyState()
+                  else if (hasQuery)
                     const Text(
-                      '최근 찾은 장소',
-                      style: TextStyle(
-                        color: AppColors.deepNavy,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    for (final place in recentPlaces) ...[
+                      '검색 결과를 불러올 준비 중이에요.',
+                      style: TextStyle(color: AppColors.muted),
+                    )
+                  else if (!hasQuery)
+                    const Text(
+                      '검색어를 입력하면 장소 검색 결과를 보여드려요.',
+                      style: TextStyle(color: AppColors.muted),
+                    )
+                  else
+                    for (final result in _results) ...[
                       PlaceSearchResultTile(
-                        place: place,
-                        onTap: () => Navigator.pop(context, place),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
-                  ] else if (results.isEmpty) ...[
-                    const SizedBox(height: AppSpacing.xl),
-                    const _SearchEmptyState(),
-                  ] else
-                    for (final place in results) ...[
-                      PlaceSearchResultTile(
-                        place: place,
-                        onTap: () => Navigator.pop(context, place),
+                        place: _toPlace(result),
+                        onTap: () => Navigator.pop(context, _toPlace(result)),
                       ),
                       const SizedBox(height: AppSpacing.sm),
                     ],
@@ -221,27 +233,49 @@ class _SearchEmptyState extends StatelessWidget {
   const _SearchEmptyState();
 
   @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        children: [
-          Icon(Icons.search_off_outlined, color: AppColors.muted, size: 40),
-          SizedBox(height: AppSpacing.sm),
-          Text(
-            '검색 결과가 없어요.',
-            style: TextStyle(
-              color: AppColors.deepNavy,
-              fontWeight: FontWeight.w700,
-            ),
+  Widget build(BuildContext context) => const Center(
+    child: Column(
+      children: [
+        Icon(Icons.search_off_outlined, color: AppColors.muted, size: 40),
+        SizedBox(height: AppSpacing.sm),
+        Text(
+          '검색 결과가 없어요.',
+          style: TextStyle(
+            color: AppColors.deepNavy,
+            fontWeight: FontWeight.w700,
           ),
-          SizedBox(height: AppSpacing.xxs),
-          Text(
-            '다른 장소명이나 주소로 검색해보세요.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.muted),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+        SizedBox(height: AppSpacing.xxs),
+        Text(
+          '다른 장소명이나 주소로 검색해보세요.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppColors.muted),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SearchErrorState extends StatelessWidget {
+  const _SearchErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      children: [
+        const Icon(Icons.wifi_off_rounded, color: AppColors.muted, size: 40),
+        const SizedBox(height: AppSpacing.sm),
+        Text(message, textAlign: TextAlign.center),
+        const SizedBox(height: AppSpacing.sm),
+        OutlinedButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
+        ),
+      ],
+    ),
+  );
 }

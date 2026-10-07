@@ -81,6 +81,31 @@ class ApiClient {
     return _decodeObject(response);
   }
 
+  static Future<http.Response> searchPlaces(String query) async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('로그인이 필요합니다.', statusCode: 401);
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/places/search')
+        .replace(queryParameters: {'query': query});
+    try {
+      final response = await http
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return response;
+      }
+      throw ApiException(
+        '장소 검색 요청을 처리하지 못했습니다.',
+        statusCode: response.statusCode,
+      );
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException('네트워크에 연결할 수 없습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
+    }
+  }
+
   static void clearSession() => _accessToken = null;
 
   static Future<http.Response> _send(
