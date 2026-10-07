@@ -51,20 +51,7 @@ class NotificationsScreen extends StatelessWidget {
             style: Theme.of(context).textTheme.bodyMedium
                 ?.copyWith(height: 1.65),
           ),
-          const SizedBox(height: AppSpacing.md),
-          Row(
-            children: [
-              const Expanded(child: _Tab(label: '알림함', active: true)),
-              const SizedBox(width: AppSpacing.xs),
-              Expanded(
-                child: InkWell(
-                  onTap: () => _settings(context),
-                  child: const _Tab(label: '알림 설정', active: false),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
+          const SizedBox(height: AppSpacing.sm),
           ...MockNotificationRepository.items.map(
             (item) => NotificationListItem(
               item: item,
@@ -79,28 +66,6 @@ class NotificationsScreen extends StatelessWidget {
             child: const Text('샘플 알림 보내기'),
           ),
         ],
-      ),
-    ),
-  );
-}
-
-class _Tab extends StatelessWidget {
-  const _Tab({required this.label, required this.active});
-  final String label;
-  final bool active;
-  @override
-  Widget build(BuildContext c) => Container(
-    alignment: Alignment.center,
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    decoration: BoxDecoration(
-      color: active ? AppColors.deepNavy : AppColors.paleMint,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-        color: active ? Colors.white : AppColors.deepNavy,
-        fontWeight: FontWeight.w700,
       ),
     ),
   );

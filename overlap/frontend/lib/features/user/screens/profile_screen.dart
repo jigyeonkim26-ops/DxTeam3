@@ -15,7 +15,9 @@ import 'profile_edit_screen.dart';
 enum _ProfileContentTab { feed, savedPlaces }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.onShowMyMap});
+
+  final VoidCallback? onShowMyMap;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -98,6 +100,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               _ProfileContentTabs(
                 selectedTab: _selectedContentTab,
                 onSelected: (tab) => setState(() => _selectedContentTab = tab),
+                onShowMyMap: widget.onShowMyMap ?? () {},
               ),
               const SizedBox(height: AppSpacing.sm),
               if (_selectedContentTab == _ProfileContentTab.feed) ...[
@@ -141,10 +144,12 @@ class _ProfileContentTabs extends StatelessWidget {
   const _ProfileContentTabs({
     required this.selectedTab,
     required this.onSelected,
+    required this.onShowMyMap,
   });
 
   final _ProfileContentTab selectedTab;
   final ValueChanged<_ProfileContentTab> onSelected;
+  final VoidCallback onShowMyMap;
 
   @override
   Widget build(BuildContext context) {
@@ -156,6 +161,14 @@ class _ProfileContentTabs extends StatelessWidget {
             label: '내 피드',
             isSelected: selectedTab == _ProfileContentTab.feed,
             onTap: () => onSelected(_ProfileContentTab.feed),
+          ),
+        ),
+        Expanded(
+          child: _ProfileContentTabButton(
+            icon: Icons.map_outlined,
+            label: '내 지도',
+            isSelected: false,
+            onTap: onShowMyMap,
           ),
         ),
         Expanded(

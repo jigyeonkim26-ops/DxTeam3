@@ -119,6 +119,10 @@ class _GroupDetailManagementScreenState
         final isNotificationsEnabled = group.notificationsEnabled ?? true;
         final pinColorValue = group.pinColorValue ?? AppColors.coral.toARGB32();
         final recordCount = group.recordCount ?? 0;
+        final members = MockGroupRepository.membersFor(group);
+        final memberCount = members.isEmpty
+            ? group.memberCount
+            : members.length;
 
         return Scaffold(
           backgroundColor: AppColors.paper,
@@ -158,7 +162,7 @@ class _GroupDetailManagementScreenState
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  '멤버 ${group.memberCount}명  ·  장소 ${group.placeCount}곳  ·  기록 $recordCount개',
+                  '멤버 $memberCount명  ·  장소 ${group.placeCount}곳  ·  기록 $recordCount개',
                   style: const TextStyle(color: AppColors.muted),
                 ),
                 const SizedBox(height: AppSpacing.xl),
@@ -191,17 +195,15 @@ class _GroupDetailManagementScreenState
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('멤버 보기'),
-                  subtitle: Text('현재 ${group.memberCount}명이 참여하고 있어요.'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('${group.memberCount}명의 멤버가 참여 중입니다.'),
+                for (final member in members) _GroupMemberRow(member: member),
+                if (members.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    child: Text(
+                      '현재 표시할 멤버 정보가 없어요.',
+                      style: TextStyle(color: AppColors.muted),
                     ),
                   ),
-                ),
                 const SizedBox(height: AppSpacing.lg),
                 const Divider(),
                 const SizedBox(height: AppSpacing.sm),
@@ -221,6 +223,63 @@ class _GroupDetailManagementScreenState
         );
       },
     );
+  }
+}
+
+class _GroupMemberRow extends StatelessWidget {
+  const _GroupMemberRow({required this.member});
+
+  final GroupMemberData member;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = member.nickname.isEmpty
+        ? '?'
+        : member.nickname.substring(0, 1);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: AppColors.paleMint,
+            foregroundColor: AppColors.deepNavy,
+            child: member.profileImagePath == null
+                ? _MemberInitial(initial: initial)
+                : ClipOval(
+                    child: SizedBox.expand(
+                      child: Image.asset(
+                        member.profileImagePath!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            _MemberInitial(initial: initial),
+                      ),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            member.nickname,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: AppColors.deepNavy,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MemberInitial extends StatelessWidget {
+  const _MemberInitial({required this.initial});
+
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(initial, style: const TextStyle(fontWeight: FontWeight.w700));
   }
 }
 

@@ -11,12 +11,20 @@ import '../models/map_place.dart';
 class KakaoMapWebView extends StatefulWidget {
   const KakaoMapWebView({
     super.key,
-    required this.places,
-    required this.onPlaceTap,
+    this.places = const [],
+    this.onPlaceTap,
+    this.selectionMode = false,
+    this.initialLatitude = 37.5663,
+    this.initialLongitude = 126.9779,
+    this.onLocationChanged,
   });
 
   final List<MapPlace> places;
-  final ValueChanged<MapPlace> onPlaceTap;
+  final ValueChanged<MapPlace>? onPlaceTap;
+  final bool selectionMode;
+  final double initialLatitude;
+  final double initialLongitude;
+  final void Function(double latitude, double longitude)? onLocationChanged;
 
   @override
   State<KakaoMapWebView> createState() => _KakaoMapWebViewState();
@@ -43,6 +51,11 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     if (!listEquals(oldWidget.places, widget.places)) {
       _pushPlacesToMap();
     }
+    if (widget.selectionMode &&
+        (oldWidget.initialLatitude != widget.initialLatitude ||
+            oldWidget.initialLongitude != widget.initialLongitude)) {
+      _pushSelectionLocationToMap();
+    }
   }
 
   Future<void> _initialize() async {
@@ -60,7 +73,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..addJavaScriptChannel(
           'OverlapMap',
-          onMessageReceived: (message) => _handlePlaceTap(message.message),
+          onMessageReceived: (message) => _handleMapMessage(message.message),
         )
         ..setNavigationDelegate(
           NavigationDelegate(
@@ -70,6 +83,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
                 setState(() => _isLoading = false);
               }
               _pushPlacesToMap();
+              _pushSelectionLocationToMap();
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error '
@@ -90,12 +104,24 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
             },
           ),
         )
-        ..loadRequest(Uri.parse('http://localhost:8080/'));
+        ..loadRequest(
+          Uri(
+            scheme: 'http',
+            host: 'localhost',
+            port: 8080,
+            queryParameters: {
+              'selectionMode': widget.selectionMode.toString(),
+              'latitude': widget.initialLatitude.toString(),
+              'longitude': widget.initialLongitude.toString(),
+            },
+          ),
+        );
 
       if (mounted) {
         setState(() => _controller = controller);
         if (_pageFinished) {
           _pushPlacesToMap();
+          _pushSelectionLocationToMap();
         }
       }
     } on PlatformException {
@@ -105,12 +131,32 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
-  void _handlePlaceTap(String placeId) {
+  void _handleMapMessage(String rawMessage) {
+    final decodedMessage = _decodeMessage(rawMessage);
+    if (decodedMessage case {
+      'type': 'locationChanged',
+      'latitude': final num latitude,
+      'longitude': final num longitude,
+    }) {
+      widget.onLocationChanged?.call(latitude.toDouble(), longitude.toDouble());
+      return;
+    }
+
+    final placeId = rawMessage;
     for (final place in widget.places) {
       if (place.id == placeId) {
-        widget.onPlaceTap(place);
+        widget.onPlaceTap?.call(place);
         return;
       }
+    }
+  }
+
+  Map<String, dynamic>? _decodeMessage(String rawMessage) {
+    try {
+      final decoded = jsonDecode(rawMessage);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
     }
   }
 
@@ -133,6 +179,27 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         .toList();
     try {
       await controller.runJavaScript('setPlaces(${jsonEncode(places)});');
+    } on PlatformException {
+      _showError('지도를 불러오지 못했습니다.');
+    }
+  }
+
+  Future<void> _pushSelectionLocationToMap() async {
+    if (!widget.selectionMode) {
+      return;
+    }
+
+    final controller = _controller;
+    if (!_pageFinished || controller == null) {
+      return;
+    }
+
+    try {
+      await controller.runJavaScript(
+        'setSelectionLocation('
+        '${widget.initialLatitude}, ${widget.initialLongitude}'
+        ');',
+      );
     } on PlatformException {
       _showError('지도를 불러오지 못했습니다.');
     }
