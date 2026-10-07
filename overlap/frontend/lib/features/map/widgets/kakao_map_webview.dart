@@ -51,6 +51,11 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     if (!listEquals(oldWidget.places, widget.places)) {
       _pushPlacesToMap();
     }
+    if (widget.selectionMode &&
+        (oldWidget.initialLatitude != widget.initialLatitude ||
+            oldWidget.initialLongitude != widget.initialLongitude)) {
+      _pushSelectionLocationToMap();
+    }
   }
 
   Future<void> _initialize() async {
@@ -78,6 +83,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
                 setState(() => _isLoading = false);
               }
               _pushPlacesToMap();
+              _pushSelectionLocationToMap();
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error '
@@ -115,6 +121,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         setState(() => _controller = controller);
         if (_pageFinished) {
           _pushPlacesToMap();
+          _pushSelectionLocationToMap();
         }
       }
     } on PlatformException {
@@ -172,6 +179,27 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         .toList();
     try {
       await controller.runJavaScript('setPlaces(${jsonEncode(places)});');
+    } on PlatformException {
+      _showError('지도를 불러오지 못했습니다.');
+    }
+  }
+
+  Future<void> _pushSelectionLocationToMap() async {
+    if (!widget.selectionMode) {
+      return;
+    }
+
+    final controller = _controller;
+    if (!_pageFinished || controller == null) {
+      return;
+    }
+
+    try {
+      await controller.runJavaScript(
+        'setSelectionLocation('
+        '${widget.initialLatitude}, ${widget.initialLongitude}'
+        ');',
+      );
     } on PlatformException {
       _showError('지도를 불러오지 못했습니다.');
     }

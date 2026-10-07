@@ -4,11 +4,10 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/emotion.dart';
 import '../../../shared/models/group.dart';
-import '../../../shared/models/place.dart';
+import '../../map/widgets/kakao_map_webview.dart';
 import '../widgets/emotion_picker.dart';
 import '../widgets/group_picker.dart';
 import '../widgets/photo_placeholder_picker.dart';
-import 'place_picker_screen.dart';
 
 class RecordComposeScreen extends StatefulWidget {
   const RecordComposeScreen({super.key, required this.onExitToMap});
@@ -21,10 +20,12 @@ class RecordComposeScreen extends StatefulWidget {
 
 class _RecordComposeScreenState extends State<RecordComposeScreen> {
   final _storyController = TextEditingController();
+  final _placeNameController = TextEditingController();
   final List<String> _photoPlaceholders = [];
   final Set<String> _selectedGroupIds = {};
   Emotion? _selectedEmotion;
-  Place? _selectedPlace;
+  double? _selectedLatitude;
+  double? _selectedLongitude;
   bool _isPrivate = false;
   int _photoSequence = 0;
 
@@ -39,6 +40,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   @override
   void dispose() {
     _storyController.dispose();
+    _placeNameController.dispose();
     super.dispose();
   }
 
@@ -55,13 +57,15 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     });
   }
 
-  Future<void> _selectPlace() async {
-    final place = await Navigator.of(context).push<Place>(
-      MaterialPageRoute(
-        builder: (_) => PlacePickerScreen(initialPlace: _selectedPlace),
-      ),
-    );
-    if (place != null) setState(() => _selectedPlace = place);
+  void _onLocationChanged(double latitude, double longitude) {
+    setState(() {
+      _selectedLatitude = latitude;
+      _selectedLongitude = longitude;
+    });
+  }
+
+  void _showCurrentLocationUnavailable() {
+    _showMessage('현재 위치 기능은 추후 연결됩니다.');
   }
 
   void _togglePrivate(bool value) {
@@ -99,7 +103,9 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _showMessage('이곳의 느낌을 하나 선택해 주세요.');
       return;
     }
-    if (_selectedPlace == null) {
+    if (_selectedLatitude == null ||
+        _selectedLongitude == null ||
+        _placeNameController.text.trim().isEmpty) {
       _showMessage('기록할 장소를 선택해 주세요.');
       return;
     }
@@ -112,7 +118,9 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _photoPlaceholders.clear();
       _selectedGroupIds.clear();
       _selectedEmotion = null;
-      _selectedPlace = null;
+      _selectedLatitude = null;
+      _selectedLongitude = null;
+      _placeNameController.clear();
       _isPrivate = false;
       _storyController.clear();
     });
@@ -165,7 +173,59 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           const SizedBox(height: AppSpacing.lg),
           const _SectionTitle(title: '어디에서 보냈나요?', isRequired: true),
           const SizedBox(height: AppSpacing.xs),
-          _PlaceSelector(place: _selectedPlace, onTap: _selectPlace),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+            child: SizedBox(
+              height: 230,
+              child: KakaoMapWebView(
+                selectionMode: true,
+                initialLatitude: 35.110791,
+                initialLongitude: 126.877343,
+                onLocationChanged: _onLocationChanged,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          const Text(
+            '핀을 드래그하거나 지도를 탭해 정확한 위치를 정해요.',
+            style: TextStyle(color: AppColors.muted),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _selectedLatitude == null || _selectedLongitude == null
+                      ? '선택 위치를 불러오는 중이에요.'
+                      : '선택 위치  '
+                            '${_selectedLatitude!.toStringAsFixed(6)}, '
+                            '${_selectedLongitude!.toStringAsFixed(6)}',
+                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _showCurrentLocationUnavailable,
+                icon: const Icon(Icons.my_location_outlined, size: 18),
+                label: const Text('현재 위치 다시 찾기'),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          const Text(
+            '장소 이름',
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          TextField(
+            controller: _placeNameController,
+            maxLength: 50,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(hintText: '장소 이름을 입력해 주세요.'),
+          ),
           const SizedBox(height: AppSpacing.lg),
           const _SectionTitle(title: '이 순간을 한 줄로'),
           const SizedBox(height: AppSpacing.xs),
@@ -260,41 +320,6 @@ class _SectionTitle extends StatelessWidget {
               style: TextStyle(color: AppColors.coral),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _PlaceSelector extends StatelessWidget {
-  const _PlaceSelector({required this.place, required this.onTap});
-
-  final Place? place;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: const CircleAvatar(
-          backgroundColor: AppColors.paleMint,
-          foregroundColor: AppColors.deepNavy,
-          child: Icon(Icons.location_on_outlined),
-        ),
-        title: Text(
-          place?.name ?? '장소를 선택해 주세요',
-          style: TextStyle(
-            color: place == null ? AppColors.muted : AppColors.ink,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        subtitle: place == null
-            ? null
-            : Text(
-                '${place!.latitude.toStringAsFixed(6)}, '
-                '${place!.longitude.toStringAsFixed(6)}',
-              ),
-        trailing: const Icon(Icons.chevron_right),
       ),
     );
   }

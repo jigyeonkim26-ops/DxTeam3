@@ -155,6 +155,26 @@ class KakaoMapLocalServer {
       postSelectedLocation(position);
     }
 
+    function setSelectionLocation(latitude, longitude) {
+      if (!selectionMode) return;
+
+      initialSelection = {
+        latitude: Number(latitude),
+        longitude: Number(longitude)
+      };
+      if (!map) return;
+
+      var position = new kakao.maps.LatLng(
+        initialSelection.latitude,
+        initialSelection.longitude
+      );
+      if (selectionMarker) {
+        selectionMarker.setPosition(position);
+      }
+      map.setCenter(position);
+      postSelectedLocation(position);
+    }
+
     var sdkScript = document.createElement('script');
     sdkScript.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=$encodedKey&autoload=false';
     sdkScript.onload = function () {
