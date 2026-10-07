@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_client.dart';
 import '../../../shared/models/emotion.dart';
 import '../../../shared/models/group.dart';
 import '../../../shared/models/place.dart';
+import '../../map/screens/place_search_screen.dart';
+import '../models/memory_create_request.dart';
+import '../models/place_public.dart';
 import '../widgets/emotion_picker.dart';
 import '../widgets/group_picker.dart';
 import '../widgets/photo_placeholder_picker.dart';
-import '../widgets/place_picker_sheet.dart';
 
 class RecordComposeScreen extends StatefulWidget {
   const RecordComposeScreen({super.key, required this.onExitToMap});
@@ -24,48 +27,40 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   final List<String> _photoPlaceholders = [];
   final Set<String> _selectedGroupIds = {};
   Emotion? _selectedEmotion;
-  Place? _selectedPlace;
+  _SelectedKakaoPlace? _selectedPlace;
   bool _isPrivate = false;
+  bool _isPublishing = false;
   int _photoSequence = 0;
 
-  static const _places = [
-    Place(
-      id: 'place-yeonnam-cafe',
-      name: '연남동 작은 카페',
-      latitude: 37.5665,
-      longitude: 126.9250,
-      address: '서울 마포구 연남동',
-    ),
-    Place(
-      id: 'place-hangang',
-      name: '한강공원',
-      latitude: 37.5283,
-      longitude: 126.9328,
-      address: '서울 영등포구 여의도동',
-    ),
-    Place(
-      id: 'place-seongsu',
-      name: '성수동',
-      latitude: 37.5446,
-      longitude: 127.0557,
-      address: '서울 성동구 성수동',
-    ),
-    Place(
-      id: 'place-jeju-coast',
-      name: '제주 해안 산책로',
-      latitude: 33.4996,
-      longitude: 126.5312,
-      address: '제주특별자치도 제주시',
-    ),
-  ];
+  List<Group> _groups = const [];
+  bool _isLoadingGroups = true;
+  bool _groupLoadFailed = false;
 
-  static const _groups = [
-    Group(id: 'group-yeonnam', name: '연남 산책단', memberCount: 3),
-    Group(id: 'group-neighborhood', name: '동네 친구들', memberCount: 5),
-    Group(id: 'group-travel', name: '여행팟', memberCount: 4),
-    Group(id: 'group-bookclub', name: '독서모임', memberCount: 4),
-    Group(id: 'group-running', name: '러닝크루', memberCount: 6),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    try {
+      final groups = await ApiClient.getGroups();
+      if (!mounted) return;
+      setState(() {
+        _groups = groups;
+        _groupLoadFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _groups = const [];
+        _groupLoadFailed = true;
+      });
+      _showMessage('\uBAA8\uC784 \uBAA9\uB85D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694.');
+    } finally {
+      if (mounted) setState(() => _isLoadingGroups = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -87,12 +82,12 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   }
 
   Future<void> _selectPlace() async {
-    final place = await showModalBottomSheet<Place>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const PlacePickerSheet(places: _places),
+    final place = await Navigator.of(context).push<Place>(
+      MaterialPageRoute<Place>(builder: (_) => const PlaceSearchScreen()),
     );
-    if (place != null) setState(() => _selectedPlace = place);
+    if (place != null) {
+      setState(() => _selectedPlace = _SelectedKakaoPlace.fromPlace(place));
+    }
   }
 
   void _togglePrivate(bool value) {
@@ -121,34 +116,117 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     });
   }
 
-  void _publish() {
+  String _normalizePlaceText(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  PlacePublic? _findMatchingPlace(
+    List<PlacePublic> serverPlaces,
+    _SelectedKakaoPlace selectedPlace,
+  ) {
+    final selectedName = _normalizePlaceText(selectedPlace.name);
+    final selectedAddress = _normalizePlaceText(selectedPlace.address);
+    for (final serverPlace in serverPlaces) {
+      if (_normalizePlaceText(serverPlace.name) == selectedName &&
+          _normalizePlaceText(serverPlace.address) == selectedAddress) {
+        return serverPlace;
+      }
+    }
+    return null;
+  }
+
+  Future<PlacePublic> _ensureServerPlace(
+    int groupId,
+    _SelectedKakaoPlace selectedPlace,
+  ) async {
+    final existing = _findMatchingPlace(
+      await ApiClient.getGroupPlaces(groupId: groupId),
+      selectedPlace,
+    );
+    if (existing != null) return existing;
+
+    try {
+      return await ApiClient.createGroupPlace(
+        groupId: groupId,
+        name: selectedPlace.name,
+        address: selectedPlace.address,
+        latitude: selectedPlace.latitude,
+        longitude: selectedPlace.longitude,
+      );
+    } on ApiException catch (error) {
+      if (error.statusCode != 409) rethrow;
+      final afterConflict = await ApiClient.getGroupPlaces(groupId: groupId);
+      final existingAfterConflict =
+          _findMatchingPlace(afterConflict, selectedPlace);
+      if (existingAfterConflict != null) return existingAfterConflict;
+      rethrow;
+    }
+  }
+
+  DateTime _visitedOnForSubmission() => DateTime.now();
+
+  Future<void> _publish() async {
+    if (_isPublishing) return;
+
     if (_photoPlaceholders.isEmpty) {
-      _showMessage('사진을 한 장 이상 추가해 주세요.');
+      _showMessage('\uC0AC\uC9C4\uC744 \uD55C \uC7A5 \uC774\uC0C1 \uCD94\uAC00\uD574 \uC8FC\uC138\uC694.');
       return;
     }
     if (_selectedEmotion == null) {
-      _showMessage('이곳의 느낌을 하나 선택해 주세요.');
+      _showMessage('\uAC10\uC815\uC744 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.');
       return;
     }
     if (_selectedPlace == null) {
-      _showMessage('기록할 장소를 선택해 주세요.');
+      _showMessage('\uAE30\uB85D\uD560 \uC7A5\uC18C\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.');
       return;
     }
     if (!_isPrivate && _selectedGroupIds.isEmpty) {
-      _showMessage('공유할 모임을 하나 이상 선택해 주세요.');
+      _showMessage('\uACF5\uC720\uD560 \uBAA8\uC784\uC744 \uD558\uB098 \uC774\uC0C1 \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.');
+      return;
+    }
+    if (_storyController.text.trim().isEmpty) {
+      _showMessage('\uCF54\uBA58\uD2B8\uB97C \uC785\uB825\uD574 \uC8FC\uC138\uC694.');
+      return;
+    }
+    if (_isPrivate) {
+      _showMessage('\uD604\uC7AC API\uB294 \uBAA8\uC784\uC5D0 \uACF5\uC720\uD558\uB294 \uAE30\uB85D\uB9CC \uC9C0\uC6D0\uD569\uB2C8\uB2E4.');
       return;
     }
 
-    setState(() {
-      _photoPlaceholders.clear();
-      _selectedGroupIds.clear();
-      _selectedEmotion = null;
-      _selectedPlace = null;
-      _isPrivate = false;
-      _storyController.clear();
-    });
-    _showMessage('기록이 작성되었습니다.');
-    widget.onExitToMap();
+    // FastAPI accepts one group ID. Use the first selected group in selection order.
+    final groupId = int.tryParse(_selectedGroupIds.first);
+    if (groupId == null || groupId <= 0) {
+      _showMessage('\uC120\uD0DD\uD55C \uBAA8\uC784\uC774 \uC11C\uBC84 ID\uC640 \uC5F0\uACB0\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.');
+      return;
+    }
+
+    final selectedPlace = _selectedPlace!;
+    setState(() => _isPublishing = true);
+    try {
+      final serverPlace = await _ensureServerPlace(groupId, selectedPlace);
+      final request = MemoryCreateRequest(
+        placeId: serverPlace.id,
+        content: _storyController.text.trim(),
+        visitedOn: _visitedOnForSubmission(),
+        emotionCode: _selectedEmotion!.apiCode,
+      );
+      await ApiClient.createMemory(groupId: groupId, request: request);
+
+      if (!mounted) return;
+      setState(() {
+        _photoPlaceholders.clear();
+        _selectedGroupIds.clear();
+        _selectedEmotion = null;
+        _selectedPlace = null;
+        _isPrivate = false;
+        _storyController.clear();
+      });
+      _showMessage('\uAE30\uB85D\uC774 \uC800\uC7A5\uB418\uC5C8\uC5B4\uC694.');
+      widget.onExitToMap();
+    } catch (error) {
+      if (mounted) _showMessage(error.toString());
+    } finally {
+      if (mounted) setState(() => _isPublishing = false);
+    }
   }
 
   @override
@@ -204,7 +282,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           const SizedBox(height: AppSpacing.lg),
           const _SectionTitle(title: '어디에서 보냈나요?', isRequired: true),
           const SizedBox(height: AppSpacing.xs),
-          _PlaceSelector(place: _selectedPlace, onTap: _selectPlace),
+          _PlaceSelector(place: _selectedPlace?.asPlace(), onTap: _selectPlace),
           const SizedBox(height: AppSpacing.lg),
           const _SectionTitle(title: '이 순간을 한 줄로'),
           const SizedBox(height: AppSpacing.xs),
@@ -254,20 +332,43 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
                 style: TextStyle(color: AppColors.muted),
               ),
             ),
-          GroupPicker(
-            groups: _groups,
-            selectedGroupIds: _selectedGroupIds,
-            isDisabled: _isPrivate,
-            areAllSelected: _areAllGroupsSelected,
-            onChanged: _toggleGroup,
-            onSelectAll: _toggleAllGroups,
-          ),
+          if (_isLoadingGroups)
+            const Padding(
+              padding: EdgeInsets.all(AppSpacing.md),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_groups.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Text(
+                _groupLoadFailed
+                    ? '\uBAA8\uC784 \uBAA9\uB85D\uC744 \uB2E4\uC2DC \uBD88\uB7EC\uC640 \uC8FC\uC138\uC694.'
+                    : '\uAC00\uC785\uB41C \uBAA8\uC784\uC774 \uC5C6\uC5B4\uC694.',
+                style: const TextStyle(color: AppColors.muted),
+                textAlign: TextAlign.center,
+              ),
+            )
+          else
+            GroupPicker(
+              groups: _groups,
+              selectedGroupIds: _selectedGroupIds,
+              isDisabled: _isPrivate,
+              areAllSelected: _areAllGroupsSelected,
+              onChanged: _toggleGroup,
+              onSelectAll: _toggleAllGroups,
+            ),
           const SizedBox(height: AppSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _publish,
-              child: const Text('기록 남기기'),
+              onPressed: _isPublishing ? null : _publish,
+              child: _isPublishing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('기록 남기기'),
             ),
           ),
         ],
@@ -332,4 +433,39 @@ class _PlaceSelector extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// PlaceSearchScreen returns Place.id as Kakao's external place ID.
+/// Keep it separate from the integer ID returned by FastAPI PlacePublic.
+class _SelectedKakaoPlace {
+  const _SelectedKakaoPlace({
+    required this.kakaoPlaceId,
+    required this.name,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String kakaoPlaceId;
+  final String name;
+  final String address;
+  final double latitude;
+  final double longitude;
+
+  factory _SelectedKakaoPlace.fromPlace(Place place) => _SelectedKakaoPlace(
+        kakaoPlaceId: place.id,
+        name: place.name,
+        address: place.address ?? '',
+        latitude: place.latitude,
+        longitude: place.longitude,
+      );
+
+  Place asPlace() => Place(
+        id: kakaoPlaceId,
+        name: name,
+        address: address,
+        latitude: latitude,
+        longitude: longitude,
+      );
 }

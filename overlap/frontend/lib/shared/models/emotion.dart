@@ -13,3 +13,14 @@ enum Emotion {
   final String emoji;
   final int score;
 }
+
+extension EmotionApiCode on Emotion {
+  String get apiCode => switch (this) {
+        Emotion.excellent => 'LOVE',
+        Emotion.good => 'LIKE',
+        Emotion.okay => 'GOOD',
+        Emotion.neutral => 'NEUTRAL',
+        Emotion.disappointed => 'DISAPPOINTED',
+        Emotion.poor => 'BAD',
+      };
+}

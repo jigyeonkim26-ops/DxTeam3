@@ -1,8 +1,11 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import '../../features/ai/models/ai_place_recommendation.dart';
 
+import '../../features/ai/models/ai_place_recommendation.dart';
+import '../../features/memory/models/memory_create_request.dart';
+import '../../features/memory/models/place_public.dart';
+import '../../shared/models/group.dart';
 import 'api_config.dart';
 
 class ApiException implements Exception {
@@ -82,6 +85,33 @@ class ApiClient {
     return _decodeObject(response);
   }
 
+  static Future<List<Group>> getGroups() async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Login is required.', statusCode: 401);
+    }
+    final response = await _send(
+      'GET',
+      '/groups',
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) throw const FormatException();
+      return decoded
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException();
+            }
+            return Group.fromJson(item);
+          })
+          .toList(growable: false);
+    } on FormatException {
+      throw const ApiException('The group list response could not be read.');
+    }
+  }
+
   static Future<AiPlaceRecommendationResponse> getAiRecommendations() async {
     final token = _accessToken;
     if (token == null || token.isEmpty) {
@@ -91,11 +121,100 @@ class ApiClient {
       'GET',
       '/ai/recommendations',
       headers: {'Authorization': 'Bearer $token'},
+      timeout: const Duration(seconds: 120),
     );
     try {
       return AiPlaceRecommendationResponse.fromJson(_decodeObject(response));
     } on FormatException {
       throw const ApiException('The AI recommendation response could not be read.');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createMemory({
+    required int groupId,
+    required MemoryCreateRequest request,
+  }) async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Login is required.', statusCode: 401);
+    }
+    final response = await _send(
+      'POST',
+      '/groups/$groupId/memories',
+      headers: {'Authorization': 'Bearer $token'},
+      body: request.toJson(),
+    );
+    return _decodeObject(response);
+  }
+
+  static Future<List<PlacePublic>> getGroupPlaces({
+    required int groupId,
+  }) async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Login is required.', statusCode: 401);
+    }
+
+    const pageSize = 100;
+    var offset = 0;
+    final places = <PlacePublic>[];
+    while (true) {
+      final response = await _send(
+        'GET',
+        '/groups/$groupId/places?offset=$offset&limit=$pageSize',
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic> || decoded['items'] is! List) {
+          throw const FormatException();
+        }
+        final items = decoded['items'] as List;
+        final parsed = items.map((item) {
+          if (item is! Map<String, dynamic>) throw const FormatException();
+          return PlacePublic.fromJson(item);
+        }).toList(growable: false);
+        places.addAll(parsed);
+
+        final total = decoded['total'];
+        if (items.isEmpty ||
+            (total is int && places.length >= total) ||
+            items.length < pageSize) {
+          return places;
+        }
+        offset += items.length;
+      } on FormatException {
+        throw const ApiException('The group places response could not be read.');
+      }
+    }
+  }
+
+  static Future<PlacePublic> createGroupPlace({
+    required int groupId,
+    required String name,
+    required String address,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Login is required.', statusCode: 401);
+    }
+    final response = await _send(
+      'POST',
+      '/groups/$groupId/places',
+      headers: {'Authorization': 'Bearer $token'},
+      body: {
+        'name': name,
+        'address': address,
+        'latitude': latitude,
+        'longitude': longitude,
+      },
+    );
+    try {
+      return PlacePublic.fromJson(_decodeObject(response));
+    } on FormatException {
+      throw const ApiException('The registered place response could not be read.');
     }
   }
 
@@ -131,6 +250,7 @@ class ApiClient {
     String path, {
     Map<String, String>? headers,
     Map<String, Object?>? body,
+    Duration? timeout,
   }) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}$path');
     try {
@@ -141,12 +261,12 @@ class ApiClient {
       final response = switch (method) {
         'GET' =>
           await http
-              .get(uri, headers: requestHeaders)
-              .timeout(const Duration(seconds: 10)),
+            .get(uri, headers: requestHeaders)
+            .timeout(timeout ?? const Duration(seconds: 10)),
         'POST' =>
           await http
-              .post(uri, headers: requestHeaders, body: jsonEncode(body))
-              .timeout(const Duration(seconds: 10)),
+            .post(uri, headers: requestHeaders, body: jsonEncode(body))
+            .timeout(timeout ?? const Duration(seconds: 10)),
         _ => throw const ApiException('지원하지 않는 요청입니다.'),
       };
       if (response.statusCode >= 200 && response.statusCode < 300) {
