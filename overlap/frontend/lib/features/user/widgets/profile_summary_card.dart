@@ -11,11 +11,13 @@ class ProfileSummaryCard extends StatelessWidget {
     super.key,
     required this.profile,
     this.onProfileTap,
+    this.onRecordsTap,
     this.profileImagePath,
   });
 
   final ProfileSummaryData profile;
   final VoidCallback? onProfileTap;
+  final VoidCallback? onRecordsTap;
   final String? profileImagePath;
   @override
   Widget build(BuildContext context) => Container(
@@ -80,7 +82,7 @@ class ProfileSummaryCard extends StatelessWidget {
         const SizedBox(height: AppSpacing.lg),
         Row(
           children: [
-            _Stat(profile.recordCount, '내 기록'),
+            _Stat(profile.recordCount, '내 기록', onTap: onRecordsTap),
             _Stat(profile.visitedPlaceCount, '방문 장소'),
             _Stat(profile.groupCount, '내 모임'),
           ],
@@ -91,12 +93,15 @@ class ProfileSummaryCard extends StatelessWidget {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat(this.value, this.label);
+  const _Stat(this.value, this.label, {this.onTap});
+
   final int value;
   final String label;
+  final VoidCallback? onTap;
+
   @override
-  Widget build(BuildContext context) => Expanded(
-    child: Column(
+  Widget build(BuildContext context) {
+    final content = Column(
       children: [
         Text(
           '$value',
@@ -112,6 +117,19 @@ class _Stat extends StatelessWidget {
           style: const TextStyle(color: AppColors.paleMint, fontSize: 10),
         ),
       ],
-    ),
-  );
+    );
+
+    return Expanded(
+      child: onTap == null
+          ? content
+          : Semantics(
+              button: true,
+              label: label,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(onTap: onTap, child: content),
+              ),
+            ),
+    );
+  }
 }

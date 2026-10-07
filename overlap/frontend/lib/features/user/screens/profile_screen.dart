@@ -4,6 +4,8 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../group/models/group_list_item_data.dart';
 import '../../group/services/mock_group_repository.dart';
+import '../../memory/models/feed_filter.dart';
+import '../../memory/screens/feed_screen.dart';
 import '../../notification/screens/notification_settings_screen.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../services/mock_profile_repository.dart';
@@ -36,6 +38,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!mounted || result == null) return;
     setState(() => _profileImagePath = result.profileImagePath);
     _show(context, '프로필이 수정되었어요.');
+  }
+
+  void _openMyRecords() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(
+          body: SafeArea(
+            child: FeedScreen(
+              initialFilter: FeedFilter.mine,
+              showBackButton: true,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -92,21 +109,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 profile: profile,
                 profileImagePath: _profileImagePath,
                 onProfileTap: _openProfileEdit,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Text(
-                '내 기록',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: AppColors.ink,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              ProfileMenuItem(
-                title: profile.recentRecordTitle,
-                description: profile.recentRecordPlace,
-                icon: Icons.coffee_outlined,
-                onTap: () => _show(context, '기록 상세 기능은 다음 단계에서 연결됩니다.'),
+                onRecordsTap: _openMyRecords,
               ),
               const SizedBox(height: AppSpacing.lg),
               ProfileMenuItem(

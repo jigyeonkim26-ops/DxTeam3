@@ -16,6 +16,11 @@ class NotificationSettingsScreen extends StatefulWidget {
 class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   late NotificationSettingsData _settings;
+  final _quietHourOptions = List.generate(
+    24,
+    (hour) => '${hour.toString().padLeft(2, '0')}:00',
+  );
+
   @override
   void initState() {
     super.initState();
@@ -30,7 +35,16 @@ class _NotificationSettingsScreenState
 
   @override
   Widget build(BuildContext c) => Scaffold(
-    appBar: AppBar(title: const Text('NOTIFICATION SETTINGS')),
+    appBar: AppBar(
+      centerTitle: true,
+      title: const Text(
+        '알림 설정',
+        style: TextStyle(
+          color: AppColors.deepNavy,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
     body: SafeArea(
       top: false,
       child: ListView(
@@ -41,11 +55,6 @@ class _NotificationSettingsScreenState
           AppSpacing.xl,
         ),
         children: [
-          Text(
-            '알림 설정',
-            style: Theme.of(c).textTheme.headlineSmall?.copyWith(fontSize: 27),
-          ),
-          const SizedBox(height: AppSpacing.xs),
           Text(
             '원하는 소식만 받을 수 있도록 유형별로 조절하세요.',
             style: Theme.of(c).textTheme.bodyMedium?.copyWith(height: 1.65),
@@ -136,7 +145,8 @@ class _NotificationSettingsScreenState
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _settings.quietStartTime,
-                      items: ['22:00', '23:00']
+                      menuMaxHeight: 300,
+                      items: _quietHourOptions
                           .map(
                             (v) => DropdownMenuItem(value: v, child: Text(v)),
                           )
@@ -151,7 +161,8 @@ class _NotificationSettingsScreenState
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _settings.quietEndTime,
-                      items: ['08:00', '09:00']
+                      menuMaxHeight: 300,
+                      items: _quietHourOptions
                           .map(
                             (v) => DropdownMenuItem(value: v, child: Text(v)),
                           )

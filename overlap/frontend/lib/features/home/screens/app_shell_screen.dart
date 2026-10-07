@@ -166,14 +166,17 @@ class _BottomNavigationItem extends StatelessWidget {
                   size: 22,
                 ),
               SizedBox(height: isCompose ? 0 : 2),
-              Text(
-                isCompose ? '+' : item.label,
-                style: TextStyle(
-                  color: isCompose ? AppColors.coral : color,
-                  fontSize: 10,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              if (isCompose)
+                const SizedBox(height: 12)
+              else
+                Text(
+                  item.label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

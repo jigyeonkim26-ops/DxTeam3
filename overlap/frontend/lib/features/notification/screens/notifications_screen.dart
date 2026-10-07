@@ -21,7 +21,14 @@ class NotificationsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('NOTIFICATIONS'),
+      centerTitle: true,
+      title: const Text(
+        '실시간 알림',
+        style: TextStyle(
+          color: AppColors.deepNavy,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
       actions: [
         IconButton(
           onPressed: () => _settings(context),
@@ -39,12 +46,6 @@ class NotificationsScreen extends StatelessWidget {
           AppSpacing.xl,
         ),
         children: [
-          Text(
-            '실시간 알림',
-            style: Theme.of(context).textTheme.headlineSmall
-                ?.copyWith(fontSize: 27),
-          ),
-          const SizedBox(height: AppSpacing.xs),
           Text(
             '내 모임에서 일어난 기록 활동을 모아 보여줘요.',
             style: Theme.of(context).textTheme.bodyMedium

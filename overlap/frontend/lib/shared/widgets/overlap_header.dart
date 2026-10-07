@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_spacing.dart';
 
 class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
   const OverlapHeader({
@@ -30,7 +31,7 @@ class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
           child: Row(
             children: [
               SizedBox(
-                width: 56,
+                width: showBackButton ? 56 : AppSpacing.md,
                 child: showBackButton
                     ? IconButton(
                         onPressed: onBack ?? () => Navigator.maybePop(context),
@@ -39,18 +40,26 @@ class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
                       )
                     : null,
               ),
-              const Expanded(
-                child: Text(
-                  'OVERLAP',
-                  textAlign: TextAlign.center,
+              RichText(
+                text: const TextSpan(
                   style: TextStyle(
-                    color: AppColors.deepNavy,
-                    fontSize: 17,
+                    fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 1.4,
+                    letterSpacing: 0,
                   ),
+                  children: [
+                    TextSpan(
+                      text: 'OVER',
+                      style: TextStyle(color: AppColors.deepNavy),
+                    ),
+                    TextSpan(
+                      text: 'LAP',
+                      style: TextStyle(color: AppColors.coral),
+                    ),
+                  ],
                 ),
               ),
+              const Spacer(),
               SizedBox(
                 width: 112,
                 child: Row(
