@@ -3,49 +3,108 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/record.dart';
-import '../data/mock_feed_data.dart';
-import '../models/feed_filter.dart';
+import '../services/record_api.dart';
+import '../../../core/network/api_client.dart';
+import '../../../shared/models/group.dart';
 import 'record_detail_screen.dart';
 import '../widgets/feed_filter_sheet.dart';
 import '../widgets/record_card.dart';
 
 class FeedScreen extends StatefulWidget {
-  const FeedScreen({super.key});
+  const FeedScreen({super.key, this.recordApi, this.isActive = true});
+  final RecordApi? recordApi;
+  final bool isActive;
 
   @override
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
 class _FeedScreenState extends State<FeedScreen> {
-  FeedFilter _selectedFilter = FeedFilter.all;
-  final Set<String> _likedRecordIds = {};
+  String _selectedFilter = 'all';
+  List<Record> _records = [];
+  List<Group> _groups = [];
+  bool _isLoading = true;
+  String? _error;
+  int _generation = 0;
+  late final RecordApi _api;
 
-  List<Record> get _visibleRecords {
-    final records = switch (_selectedFilter) {
-      FeedFilter.all => mockFeedRecords,
-      FeedFilter.mine =>
-        mockFeedRecords
-            .where((record) => record.author.id == currentFeedUser.id)
-            .toList(),
-      final filter =>
-        mockFeedRecords
-            .where(
-              (record) => record.sharedGroups.any(
-                (group) => group.id == _groupIdForFilter(filter),
-              ),
-            )
-            .toList(),
-    };
-    return [...records]
-      ..sort((first, second) => second.createdAt.compareTo(first.createdAt));
+  @override
+  void initState() {
+    super.initState();
+    _api = widget.recordApi ?? RecordApi();
+    RecordApi.revision.addListener(_reload);
+    _reload();
   }
 
-  String _groupIdForFilter(FeedFilter filter) => switch (filter) {
-    FeedFilter.yeonnam => yeonnamGroup.id,
-    FeedFilter.neighborhood => neighborhoodGroup.id,
-    FeedFilter.travel => travelGroup.id,
-    FeedFilter.all || FeedFilter.mine => '',
-  };
+  @override
+  void didUpdateWidget(covariant FeedScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) _reload();
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    RecordApi.revision.removeListener(_reload);
+    if (widget.recordApi == null) _api.close();
+    super.dispose();
+  }
+
+  String get _filterLabel => _selectedFilter == 'all'
+      ? '내 맞춤 피드'
+      : _selectedFilter == 'mine'
+      ? '내 기록만 보기'
+      : _groups.where((g) => g.id == _selectedFilter).firstOrNull?.name ??
+            '내 맞춤 피드';
+
+  Future<void> _reload() async {
+    final generation = ++_generation;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final groups = await _api.groups();
+      if (!mounted || generation != _generation) return;
+      if (_selectedFilter != 'all' &&
+          _selectedFilter != 'mine' &&
+          !groups.any((g) => g.id == _selectedFilter)) {
+        _selectedFilter = 'all';
+      }
+      final records = await _api.feed(
+        mine: _selectedFilter == 'mine',
+        groupId: _selectedFilter == 'all' || _selectedFilter == 'mine'
+            ? null
+            : _selectedFilter,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _records = records;
+        _groups = groups;
+      });
+    } on ApiException catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _records = [];
+          _groups = [];
+          _error = error.message;
+        });
+      }
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _records = [];
+          _groups = [];
+          _error = '피드 응답을 읽지 못했습니다.';
+        });
+      }
+    } finally {
+      // Only the latest request may finish the visible loading state.
+      if (mounted && generation == _generation) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
@@ -54,18 +113,16 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _selectFilter() async {
-    final filter = await showModalBottomSheet<FeedFilter>(
+    final filter = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => FeedFilterSheet(selectedFilter: _selectedFilter),
+      builder: (_) =>
+          FeedFilterSheet(selectedFilter: _selectedFilter, groups: _groups),
     );
-    if (filter != null) setState(() => _selectedFilter = filter);
-  }
-
-  void _toggleLike(String recordId) {
-    setState(() {
-      if (!_likedRecordIds.add(recordId)) _likedRecordIds.remove(recordId);
-    });
+    if (filter != null && mounted) {
+      setState(() => _selectedFilter = filter);
+      await _reload();
+    }
   }
 
   void _openRecordDetail(Record record) {
@@ -78,55 +135,63 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final records = _visibleRecords;
+    final records = _records;
     return ColoredBox(
       color: AppColors.paper,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.lg,
-          AppSpacing.md,
-          AppSpacing.lg,
-        ),
-        children: [
-          const Text(
-            '피드',
-            style: TextStyle(
-              color: AppColors.ink,
-              fontSize: 28,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1,
-            ),
+      child: RefreshIndicator(
+        onRefresh: _reload,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.lg,
+            AppSpacing.md,
+            AppSpacing.lg,
           ),
-          const SizedBox(height: AppSpacing.xxs),
-          const Text(
-            '함께 남긴 장소의 기억을 모아 봐요.',
-            style: TextStyle(color: AppColors.muted),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _FeedFilterButton(
-              label: _selectedFilter.label,
-              onTap: _selectFilter,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          if (records.isEmpty)
-            const _EmptyFeed()
-          else
-            for (final record in records) ...[
-              RecordCard(
-                record: record,
-                isLiked: _likedRecordIds.contains(record.id),
-                onTap: () => _openRecordDetail(record),
-                onLikeTap: () => _toggleLike(record.id),
-                onCommentTap: () => _openRecordDetail(record),
-                onPlaceTap: () => _showMessage('장소 상세는 추후 연결됩니다.'),
+          children: [
+            const Text(
+              '피드',
+              style: TextStyle(
+                color: AppColors.ink,
+                fontSize: 28,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -1,
               ),
-              const SizedBox(height: AppSpacing.md),
-            ],
-        ],
+            ),
+            const SizedBox(height: AppSpacing.xxs),
+            const Text(
+              '함께 남긴 장소의 기억을 모아 봐요.',
+              style: TextStyle(color: AppColors.muted),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _FeedFilterButton(
+                label: _filterLabel,
+                onTap: _selectFilter,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (_isLoading)
+              const Center(child: CircularProgressIndicator())
+            else if (_error != null)
+              TextButton(onPressed: _reload, child: Text('$_error 다시 시도'))
+            else if (records.isEmpty)
+              const _EmptyFeed()
+            else
+              for (final record in records) ...[
+                RecordCard(
+                  record: record,
+                  isLiked: false,
+                  onTap: () => _openRecordDetail(record),
+                  onLikeTap: () => _showMessage('공감 기능은 준비 중입니다.'),
+                  onCommentTap: () => _showMessage('댓글 기능은 준비 중입니다.'),
+                  onPlaceTap: () => _showMessage('장소 상세는 추후 연결됩니다.'),
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
+          ],
+        ),
       ),
     );
   }

@@ -12,4 +12,16 @@ enum Emotion {
   final String displayName;
   final String emoji;
   final int score;
+
+  static Emotion fromApi(Object? value) {
+    return switch (value is String ? value.trim().toUpperCase() : null) {
+      'EXCELLENT' => Emotion.excellent,
+      'GOOD' => Emotion.good,
+      'OKAY' => Emotion.okay,
+      'NEUTRAL' => Emotion.neutral,
+      'DISAPPOINTED' => Emotion.disappointed,
+      'POOR' => Emotion.poor,
+      _ => Emotion.neutral,
+    };
+  }
 }

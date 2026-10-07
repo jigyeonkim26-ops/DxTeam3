@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/kakao_map_local_server.dart';
+import '../models/current_location.dart';
 import '../models/map_place.dart';
 import '../models/map_search_place.dart';
 
@@ -14,12 +15,20 @@ class KakaoMapWebView extends StatefulWidget {
     super.key,
     required this.places,
     required this.searchPlace,
+    required this.currentLocation,
+    required this.currentLocationRequestId,
     required this.onPlaceTap,
+    this.localServer,
   });
 
   final List<MapPlace> places;
   final MapSearchPlace? searchPlace;
+  final CurrentLocation? currentLocation;
+  // A successful button request must recenter even when GPS hasn't changed.
+  final int currentLocationRequestId;
   final ValueChanged<MapPlace> onPlaceTap;
+  @visibleForTesting
+  final KakaoMapLocalServer? localServer;
 
   @override
   State<KakaoMapWebView> createState() => _KakaoMapWebViewState();
@@ -28,7 +37,7 @@ class KakaoMapWebView extends StatefulWidget {
 class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   static const _configChannel = MethodChannel('overlap/kakao_config');
 
-  final _localServer = KakaoMapLocalServer();
+  late final _localServer = widget.localServer ?? KakaoMapLocalServer();
   WebViewController? _controller;
   String? _errorMessage;
   var _isLoading = true;
@@ -45,10 +54,14 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     super.didUpdateWidget(oldWidget);
     final placesChanged = !listEquals(oldWidget.places, widget.places);
     final searchPlaceChanged = oldWidget.searchPlace != widget.searchPlace;
-    if (placesChanged || searchPlaceChanged) {
+    final currentLocationChanged =
+        oldWidget.currentLocation != widget.currentLocation ||
+        oldWidget.currentLocationRequestId != widget.currentLocationRequestId;
+    if (placesChanged || searchPlaceChanged || currentLocationChanged) {
       _syncMapState(
         placesChanged: placesChanged,
         searchPlaceChanged: searchPlaceChanged,
+        currentLocationChanged: currentLocationChanged,
       );
     }
   }
@@ -82,7 +95,11 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
               if (mounted) {
                 setState(() => _isLoading = false);
               }
-              _syncMapState(placesChanged: true, searchPlaceChanged: true);
+              _syncMapState(
+                placesChanged: true,
+                searchPlaceChanged: true,
+                currentLocationChanged: true,
+              );
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error '
@@ -108,7 +125,11 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       if (mounted) {
         setState(() => _controller = controller);
         if (_pageFinished) {
-          _syncMapState(placesChanged: true, searchPlaceChanged: true);
+          _syncMapState(
+            placesChanged: true,
+            searchPlaceChanged: true,
+            currentLocationChanged: true,
+          );
         }
       }
     } on PlatformException {
@@ -130,6 +151,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   Future<void> _syncMapState({
     required bool placesChanged,
     required bool searchPlaceChanged,
+    required bool currentLocationChanged,
   }) async {
     final controller = _controller;
     if (!mounted || !_pageFinished || controller == null) {
@@ -158,6 +180,13 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
             ? 'clearSearchPlace();'
             : 'setSearchPlace(${searchPlace.toJsonString()});';
         await controller.runJavaScript(command);
+      }
+      if (!mounted) return;
+      if (currentLocationChanged && widget.currentLocation != null) {
+        final location = widget.currentLocation!;
+        await controller.runJavaScript(
+          'setCurrentLocation(${jsonEncode({'latitude': location.latitude, 'longitude': location.longitude})});',
+        );
       }
     } on PlatformException {
       if (mounted) _showError('지도를 불러오지 못했습니다.');

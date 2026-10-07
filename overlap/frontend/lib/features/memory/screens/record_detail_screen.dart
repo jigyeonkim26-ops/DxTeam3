@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/record.dart';
-import '../../../shared/models/user.dart';
+import '../widgets/record_photo.dart';
 import '../../comment/models/comment_item.dart';
 import '../../comment/widgets/comment_input.dart';
 import '../../comment/widgets/comment_thread.dart';
@@ -22,7 +22,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   final _commentFocusNode = FocusNode();
   late int _likeCount;
   late List<CommentItem> _comments;
-  bool _isLiked = false;
+  final bool _isLiked = false;
   CommentItem? _replyTarget;
 
   @override
@@ -39,39 +39,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     super.dispose();
   }
 
-  List<CommentItem> _initialComments() {
-    const seoyeon = User(id: 'comment-seoyeon', name: '서연');
-    const doyoon = User(id: 'comment-doyoon', name: '도윤');
-    const minji = User(id: 'comment-minji', name: '민지');
-    return [
-      CommentItem(
-        id: 'comment-1',
-        author: seoyeon,
-        createdAt: DateTime(2026, 10, 2, 15, 24),
-        content: '비 온 뒤 분위기가 정말 좋았겠다. 다음엔 같이 가자!',
-        replies: [
-          CommentItem(
-            id: 'reply-1',
-            author: widget.record.author,
-            createdAt: DateTime(2026, 10, 2, 15, 28),
-            content: '좋아, 맑은 날에도 꼭 다시 가자!',
-          ),
-        ],
-      ),
-      CommentItem(
-        id: 'comment-2',
-        author: doyoon,
-        createdAt: DateTime(2026, 10, 2, 15, 32),
-        content: '사진 색감이 너무 좋아. 나도 이곳 저장해둘게.',
-      ),
-      CommentItem(
-        id: 'comment-3',
-        author: minji,
-        createdAt: DateTime(2026, 10, 2, 15, 41),
-        content: '다음 산책은 여기서 시작해도 좋겠다.',
-      ),
-    ];
-  }
+  List<CommentItem> _initialComments() => [];
 
   int get _commentCount => _comments.fold<int>(
     0,
@@ -79,37 +47,13 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   );
 
   void _toggleLike() {
-    setState(() {
-      _isLiked = !_isLiked;
-      _likeCount += _isLiked ? 1 : -1;
-    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('공감 기능은 준비 중입니다.')));
   }
 
   void _submitComment() {
-    final content = _commentController.text.trim();
-    if (content.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('댓글 내용을 입력해 주세요.')));
-      return;
-    }
-
-    const currentUser = User(id: 'current-user', name: '서연');
-    final item = CommentItem(
-      id: 'comment-${DateTime.now().microsecondsSinceEpoch}',
-      author: currentUser,
-      createdAt: DateTime.now(),
-      content: content,
-    );
-    setState(() {
-      if (_replyTarget == null) {
-        _comments.add(item);
-      } else {
-        _replyTarget!.replies.add(item);
-      }
-      _replyTarget = null;
-      _commentController.clear();
-    });
-    FocusScope.of(context).unfocus();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('댓글 기능은 준비 중입니다.')));
   }
 
   void _selectReply(CommentItem comment) {
@@ -177,7 +121,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                       },
                     ),
                     const SizedBox(height: AppSpacing.md),
-                    _RecordPhoto(record: record),
+                    RecordPhoto(paths: record.imagePaths, height: 240),
                     const SizedBox(height: AppSpacing.md),
                     Text(
                       record.content,
@@ -329,52 +273,6 @@ class _RecordAuthor extends StatelessWidget {
         ),
         Text(record.emotion.emoji, style: const TextStyle(fontSize: 28)),
       ],
-    );
-  }
-}
-
-class _RecordPhoto extends StatelessWidget {
-  const _RecordPhoto({required this.record});
-
-  final Record record;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = switch (record.id) {
-      'place-record-sun' => const [Color(0xFFE9B67A), Color(0xFFFF7058)],
-      'place-record-rain' => const [Color(0xFF86A7B6), AppColors.deepNavy],
-      _ when record.id.contains('coast') => const [
-        Color(0xFF5E8EA8),
-        Color(0xFFFFB26B),
-      ],
-      _ when record.id.contains('park') => const [
-        Color(0xFF86B88C),
-        Color(0xFFDCEFE5),
-      ],
-      _ when record.id.contains('bakery') => const [
-        Color(0xFFE6B07A),
-        Color(0xFF9B6A57),
-      ],
-      _ => const [Color(0xFF9FC4B2), Color(0xFF5C8474)],
-    };
-    return Container(
-      height: 220,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-      ),
-      child: const Align(
-        alignment: Alignment.bottomLeft,
-        child: Padding(
-          padding: EdgeInsets.all(AppSpacing.md),
-          child: Icon(Icons.image_outlined, color: Colors.white70, size: 28),
-        ),
-      ),
     );
   }
 }

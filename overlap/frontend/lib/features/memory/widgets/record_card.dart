@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/record.dart';
+import 'record_photo.dart';
 
 class RecordCard extends StatelessWidget {
   const RecordCard({
@@ -80,13 +81,14 @@ class RecordCard extends StatelessWidget {
               const SizedBox(height: AppSpacing.xs),
               Text(record.content, style: const TextStyle(height: 1.5)),
               const SizedBox(height: AppSpacing.sm),
-              _PhotoPlaceholder(record: record),
+              RecordPhoto(paths: record.imagePaths),
               const SizedBox(height: AppSpacing.sm),
               Wrap(
                 spacing: AppSpacing.xs,
                 runSpacing: AppSpacing.xs,
                 children: [
                   _EmotionChip(record: record),
+                  if (record.isPrivate) const _GroupChip(label: '나만 보기'),
                   for (final group in record.sharedGroups)
                     _GroupChip(label: group.name),
                 ],
@@ -137,52 +139,8 @@ class _Avatar extends StatelessWidget {
       backgroundColor: AppColors.softMint,
       foregroundColor: AppColors.deepNavy,
       child: Text(
-        name.substring(0, 1),
+        name.isEmpty ? '?' : name.substring(0, 1),
         style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-}
-
-class _PhotoPlaceholder extends StatelessWidget {
-  const _PhotoPlaceholder({required this.record});
-
-  final Record record;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = switch (record.emotion) {
-      _ when record.id.contains('coast') => const [
-        Color(0xFF5E8EA8),
-        Color(0xFFFFB26B),
-      ],
-      _ when record.id.contains('park') => const [
-        Color(0xFF86B88C),
-        Color(0xFFDCEFE5),
-      ],
-      _ when record.id.contains('bakery') => const [
-        Color(0xFFE6B07A),
-        Color(0xFF9B6A57),
-      ],
-      _ => const [Color(0xFF9FC4B2), AppColors.deepNavy],
-    };
-    return Container(
-      height: 176,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: const Align(
-        alignment: Alignment.bottomLeft,
-        child: Padding(
-          padding: EdgeInsets.all(AppSpacing.sm),
-          child: Icon(Icons.image_outlined, color: Colors.white70),
-        ),
       ),
     );
   }

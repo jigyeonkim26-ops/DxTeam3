@@ -5,8 +5,13 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var currentLocationChannel: CurrentLocationChannel? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        currentLocationChannel = CurrentLocationChannel(
+            this, flutterEngine.dartExecutor.binaryMessenger,
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -17,5 +22,11 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        currentLocationChannel?.close()
+        currentLocationChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }

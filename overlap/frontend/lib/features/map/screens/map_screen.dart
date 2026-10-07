@@ -4,19 +4,22 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/place.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
+import '../models/current_location.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
 import '../models/map_search_place.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
+import '../services/current_location_service.dart';
 import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.selectedGroupId});
+  const MapScreen({super.key, this.selectedGroupId, this.locationService});
 
   final String? selectedGroupId;
+  final CurrentLocationService? locationService;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -26,7 +29,45 @@ class _MapScreenState extends State<MapScreen> {
   Set<MapFilter> _selectedFilters = {MapFilter.mine};
   MapPlace? _selectedPlace;
   MapSearchPlace? _selectedSearchPlace;
+  CurrentLocation? _currentLocation;
+  var _currentLocationRequestId = 0;
+  var _isLocating = false;
   bool _isSatellite = false;
+
+  Future<void> _goToCurrentLocation() async {
+    if (_isLocating) return;
+    setState(() => _isLocating = true);
+    try {
+      final location =
+          await (widget.locationService ??
+                  const GeolocatorCurrentLocationService())
+              .getCurrentLocation();
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = location;
+        _currentLocationRequestId++;
+      });
+    } on CurrentLocationFailure catch (failure) {
+      if (!mounted) return;
+      final message = switch (failure.reason) {
+        CurrentLocationFailureReason.serviceDisabled => '위치 서비스를 켜주세요.',
+        CurrentLocationFailureReason.permissionDenied =>
+          '현재 위치를 사용하려면 위치 권한이 필요합니다.',
+        CurrentLocationFailureReason.permissionPermanentlyDenied =>
+          '위치 권한이 영구적으로 거부되었습니다. 설정에서 허용해주세요.',
+        CurrentLocationFailureReason.timeout ||
+        CurrentLocationFailureReason.unavailable =>
+          '현재 위치를 확인하지 못했습니다. 다시 시도해주세요.',
+      };
+      _showMessage(message);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('현재 위치를 확인하지 못했습니다. 다시 시도해주세요.');
+      }
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
 
   @override
   void didUpdateWidget(covariant MapScreen oldWidget) {
@@ -41,41 +82,15 @@ class _MapScreenState extends State<MapScreen> {
 
   Set<MapFilter> _filtersForGroupId(String? groupId) {
     if (groupId == null) return {MapFilter.mine};
-    return {MapFilter.values.firstWhere((filter) => filter.name == groupId)};
+    return {
+      MapFilter.values.firstWhere(
+        (filter) => filter.name == groupId,
+        orElse: () => MapFilter.mine,
+      ),
+    };
   }
 
-  static final List<MapPlace> _places = [
-    MapPlace(
-      id: 'yeonnam-cafe',
-      name: '연남동 카페',
-      recordCount: 3,
-      author: '민지 · 서연',
-      summary: '비가 그친 뒤, 창가 자리에 남긴 따뜻한 기억',
-      latitude: 37.5638,
-      longitude: 126.9250,
-      filters: {MapFilter.yeonnam},
-    ),
-    MapPlace(
-      id: 'hangang-park',
-      name: '한강공원',
-      recordCount: 5,
-      author: '하늘 · 도윤',
-      summary: '노을이 지는 시간에 함께 걸었던 산책길',
-      latitude: 37.5286,
-      longitude: 126.9345,
-      filters: {MapFilter.travel},
-    ),
-    MapPlace(
-      id: 'seongsu',
-      name: '성수동',
-      recordCount: 2,
-      author: '나',
-      summary: '새로 발견한 골목의 조용한 오후',
-      latitude: 37.5446,
-      longitude: 127.0557,
-      filters: {MapFilter.mine, MapFilter.neighborhood},
-    ),
-  ];
+  static const List<MapPlace> _places = [];
 
   List<MapPlace> get _visiblePlaces => _places
       .where((place) => place.filters.any(_selectedFilters.contains))
@@ -161,6 +176,8 @@ class _MapScreenState extends State<MapScreen> {
           places: _visiblePlaces,
           selectedPlaceId: _selectedPlace?.id,
           searchPlace: _selectedSearchPlace,
+          currentLocation: _currentLocation,
+          currentLocationRequestId: _currentLocationRequestId,
           onPlaceTap: _openPlacePreview,
         ),
         Positioned(
@@ -199,7 +216,7 @@ class _MapScreenState extends State<MapScreen> {
               _RoundIconButton(
                 icon: Icons.my_location,
                 tooltip: '현재 위치',
-                onTap: () => _showMessage('현재 위치 기능은 추후 연결됩니다.'),
+                onTap: _goToCurrentLocation,
               ),
               const SizedBox(height: AppSpacing.xs),
               _RoundIconButton(

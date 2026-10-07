@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Serves the Kakao map page from the exact localhost origin registered in
 /// Kakao Developers. It never listens on an external network interface.
 class KakaoMapLocalServer {
@@ -31,6 +33,9 @@ class KakaoMapLocalServer {
     await server?.close(force: true);
   }
 
+  @visibleForTesting
+  String debugMapPage(String javascriptKey) => _mapHtml(javascriptKey);
+
   String _mapHtml(String javascriptKey) {
     final encodedKey = Uri.encodeQueryComponent(javascriptKey);
     return '''<!doctype html>
@@ -53,6 +58,8 @@ class KakaoMapLocalServer {
       color: #fff; display: block; font: 700 13px/1.3 sans-serif; max-width: 220px; padding: 9px 12px; text-align: center;
     }
     .search-marker__pointer { border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 9px solid #173f73; height: 0; margin: 0 auto; width: 0; }
+    .current-location-marker { align-items: center; background: rgba(52, 120, 246, .2); border-radius: 50%; display: flex; height: 34px; justify-content: center; width: 34px; }
+    .current-location-marker__dot { background: #3478f6; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(20, 50, 74, .4); height: 16px; width: 16px; }
   </style>
 </head>
 <body>
@@ -64,6 +71,8 @@ class KakaoMapLocalServer {
     var pendingPlaces = [];
     var searchOverlay = null;
     var pendingSearchPlace = null;
+    var currentLocationOverlay = null;
+    var pendingCurrentLocation = null;
 
     function escapeHtml(value) {
       return String(value).replace(/[&<>'"]/g, function (character) {
@@ -136,6 +145,27 @@ class KakaoMapLocalServer {
       map.setLevel(3);
     }
 
+    function setCurrentLocation(location) {
+      if (!location || !Number.isFinite(Number(location.latitude)) || !Number.isFinite(Number(location.longitude))) {
+        return;
+      }
+      pendingCurrentLocation = location;
+      if (!map) return;
+
+      if (currentLocationOverlay) {
+        currentLocationOverlay.setMap(null);
+      }
+      var position = new kakao.maps.LatLng(Number(location.latitude), Number(location.longitude));
+      var content = document.createElement('div');
+      content.className = 'current-location-marker';
+      var dot = document.createElement('span');
+      dot.className = 'current-location-marker__dot';
+      content.appendChild(dot);
+      currentLocationOverlay = new kakao.maps.CustomOverlay({ content: content, map: map, position: position, yAnchor: 0.5 });
+      map.setCenter(position);
+      map.setLevel(3);
+    }
+
     var sdkScript = document.createElement('script');
     sdkScript.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=$encodedKey&autoload=false';
     sdkScript.onload = function () {
@@ -152,6 +182,7 @@ class KakaoMapLocalServer {
               level: 5
             });
             setPlaces(pendingPlaces);
+            if (pendingCurrentLocation) setCurrentLocation(pendingCurrentLocation);
           } catch (error) {
             mapElement.textContent = '지도를 불러오지 못했습니다.';
           }

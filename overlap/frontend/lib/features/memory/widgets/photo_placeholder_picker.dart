@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
@@ -12,10 +13,10 @@ class PhotoPlaceholderPicker extends StatelessWidget {
     required this.onRemove,
   });
 
-  final List<String> photos;
+  final List<XFile> photos;
   final VoidCallback onAddCamera;
   final VoidCallback onAddGallery;
-  final ValueChanged<String> onRemove;
+  final ValueChanged<XFile> onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -87,15 +88,12 @@ class _PhotoPreview extends StatelessWidget {
     required this.onRemove,
   });
 
-  final String id;
+  final XFile id;
   final int index;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    final colors = id.startsWith('camera')
-        ? const [Color(0xFF9FC4B2), AppColors.deepNavy]
-        : const [Color(0xFFE7B17F), Color(0xFFB5726A)];
     return SizedBox(
       width: 112,
       child: Stack(
@@ -104,21 +102,20 @@ class _PhotoPreview extends StatelessWidget {
             width: 104,
             height: 104,
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: colors),
               borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
             ),
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.xs),
-                child: Text(
-                  '사진 ${index + 1}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
+              child: FutureBuilder(
+                future: id.readAsBytes(),
+                builder: (context, snapshot) => snapshot.hasData
+                    ? Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                        width: 104,
+                        height: 104,
+                      )
+                    : const Center(child: CircularProgressIndicator()),
               ),
             ),
           ),

@@ -62,11 +62,13 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
             ),
             const SizedBox(height: AppSpacing.sm),
             CheckboxListTile(
-              value: _filters.length == MapFilter.values.length,
+              value: _filters.contains(MapFilter.mine),
               onChanged: (selected) => setState(() {
                 _filters
                   ..clear()
-                  ..addAll(selected ?? false ? MapFilter.values : const []);
+                  ..addAll(
+                    selected ?? false ? const [MapFilter.mine] : const [],
+                  );
               }),
               activeColor: AppColors.deepNavy,
               contentPadding: EdgeInsets.zero,
@@ -76,7 +78,9 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
-            for (final filter in MapFilter.values)
+            for (final filter in MapFilter.values.where(
+              (filter) => filter == MapFilter.mine,
+            ))
               CheckboxListTile(
                 value: _filters.contains(filter),
                 onChanged: (selected) => setState(() {

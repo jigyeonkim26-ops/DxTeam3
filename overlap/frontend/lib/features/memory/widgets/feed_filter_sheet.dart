@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../models/feed_filter.dart';
+import '../../../shared/models/group.dart';
 
 class FeedFilterSheet extends StatelessWidget {
-  const FeedFilterSheet({super.key, required this.selectedFilter});
+  const FeedFilterSheet({
+    super.key,
+    required this.selectedFilter,
+    required this.groups,
+  });
 
-  final FeedFilter selectedFilter;
+  final String selectedFilter;
+  final List<Group> groups;
 
   @override
   Widget build(BuildContext context) {
@@ -56,18 +61,22 @@ class FeedFilterSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
-              RadioGroup<FeedFilter>(
+              RadioGroup<String>(
                 groupValue: selectedFilter,
                 onChanged: (value) => Navigator.pop(context, value),
                 child: Column(
                   children: [
-                    for (final filter in FeedFilter.values)
-                      RadioListTile<FeedFilter>(
-                        value: filter,
+                    for (final filter in {
+                      'all': '내 맞춤 피드',
+                      'mine': '내 기록만 보기',
+                      for (final group in groups) group.id: group.name,
+                    }.entries)
+                      RadioListTile<String>(
+                        value: filter.key,
                         activeColor: AppColors.deepNavy,
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          filter.label,
+                          filter.value,
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),

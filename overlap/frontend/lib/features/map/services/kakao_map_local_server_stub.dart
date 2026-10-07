@@ -4,4 +4,8 @@ class KakaoMapLocalServer {
   }
 
   Future<void> close() async {}
+
+  String debugMapPage(String javascriptKey) {
+    throw UnsupportedError('Kakao Map WebView is available on Android only.');
+  }
 }

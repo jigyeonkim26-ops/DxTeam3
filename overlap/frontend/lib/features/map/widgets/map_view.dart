@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
+import '../models/current_location.dart';
 import '../models/map_place.dart';
 import '../models/map_search_place.dart';
 import 'kakao_map_webview.dart';
@@ -14,6 +15,8 @@ class MapView extends StatelessWidget {
     required this.places,
     required this.selectedPlaceId,
     required this.searchPlace,
+    required this.currentLocation,
+    required this.currentLocationRequestId,
     required this.onPlaceTap,
   });
 
@@ -21,6 +24,8 @@ class MapView extends StatelessWidget {
   final List<MapPlace> places;
   final String? selectedPlaceId;
   final MapSearchPlace? searchPlace;
+  final CurrentLocation? currentLocation;
+  final int currentLocationRequestId;
   final ValueChanged<MapPlace> onPlaceTap;
 
   @override
@@ -33,6 +38,8 @@ class MapView extends StatelessWidget {
               ? KakaoMapWebView(
                   places: places,
                   searchPlace: searchPlace,
+                  currentLocation: currentLocation,
+                  currentLocationRequestId: currentLocationRequestId,
                   onPlaceTap: onPlaceTap,
                 )
               : CustomPaint(

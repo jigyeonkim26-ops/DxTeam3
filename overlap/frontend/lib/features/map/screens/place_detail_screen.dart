@@ -2,11 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../shared/models/emotion.dart';
-import '../../../shared/models/group.dart';
 import '../../../shared/models/place.dart';
 import '../../../shared/models/record.dart';
-import '../../../shared/models/user.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../widgets/place_record_preview_card.dart';
 
@@ -30,54 +27,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
     recordCount: 3,
   );
 
-  static const _yeonnam = Group(
-    id: 'group-yeonnam',
-    name: '연남 산책단',
-    memberCount: 3,
-  );
-
-  static const _minji = User(id: 'user-minji', name: '민지');
-  static const _seoyeon = User(id: 'user-seoyeon', name: '서연');
-  static const _doyoon = User(id: 'user-doyoon', name: '도윤');
-
-  static final List<Record> _records = [
-    Record(
-      id: 'place-record-rain',
-      author: _minji,
-      place: _place,
-      createdAt: DateTime(2026, 10, 2, 15, 10),
-      content: '비가 그친 뒤 창가 자리에 앉아 잠깐 쉬어갔어. 다음에는 같이 와서 더 오래 이야기하자.',
-      emotion: Emotion.good,
-      imagePaths: const ['place-rain'],
-      sharedGroups: const [_yeonnam],
-      likeCount: 4,
-      commentCount: 2,
-    ),
-    Record(
-      id: 'place-record-sun',
-      author: _seoyeon,
-      place: _place,
-      createdAt: DateTime(2026, 10, 2, 15, 0),
-      content: '같은 장소지만 오후 빛이 더 따뜻했다. 오늘의 기억도 천천히 남겨두고 싶어.',
-      emotion: Emotion.excellent,
-      imagePaths: const ['place-sun'],
-      sharedGroups: const [_yeonnam],
-      likeCount: 3,
-      commentCount: 2,
-    ),
-    Record(
-      id: 'place-record-calm',
-      author: _doyoon,
-      place: _place,
-      createdAt: DateTime(2026, 10, 1, 18, 20),
-      content: '창밖을 보면서 오늘 걸었던 길을 다시 이야기했다. 조용해서 더 좋았던 오후.',
-      emotion: Emotion.okay,
-      imagePaths: const ['place-calm'],
-      sharedGroups: const [_yeonnam],
-      likeCount: 1,
-      commentCount: 0,
-    ),
-  ];
+  static const List<Record> _records = [];
 
   @override
   Widget build(BuildContext context) {
