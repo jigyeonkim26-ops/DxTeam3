@@ -242,12 +242,21 @@ class MemoryService:
             self.invites[invite_code] = group_id
             return GroupCreated(**self._group_public(group).model_dump(), invite_code=invite_code)
 
+    def validate_invite(self, user_id: int, invite_code: str) -> GroupPublic:
+        with self.lock:
+            group_id = self.invites.get(invite_code.strip())
+            if group_id is None:
+                raise HTTPException(404, "초대 코드를 확인해 주세요.")
+            return self._group_public(self.groups[group_id])
+
     def join_group(self, user_id: int, invite_code: str) -> GroupPublic:
         with self.lock:
-            group_id = self.invites.get(invite_code)
+            group_id = self.invites.get(invite_code.strip())
             if group_id is None:
                 raise HTTPException(404, "초대 코드를 확인해 주세요.")
             group = self.groups[group_id]
+            if user_id in group.member_ids:
+                raise HTTPException(409, "이미 가입한 모임입니다.")
             group.member_ids.add(user_id)
             return self._group_public(group)
 

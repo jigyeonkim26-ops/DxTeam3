@@ -222,8 +222,28 @@ class _FakeGroupSession:
             return self.group if key == 10 else None
         return None
 
-    def scalar(self, _statement):
+    def scalar(self, statement):
+        if statement.column_descriptions[0].get("entity") is MemoryGroup:
+            return self.group
         return len([key for key in self.members if key[0] == 10])
+
+    def scalars(self, statement):
+        params = statement.compile().params
+        return [member.user_id for member in self.members.values()
+                if member.group_id in params["group_id_1"]
+                and member.user_id != params["user_id_1"]
+                and member.notifications_enabled]
+
+    def add(self, instance):
+        if not hasattr(self, "notifications"):
+            self.notifications = []
+        self.notifications.append(instance)
+
+    def flush(self):
+        pass
+
+    def rollback(self):
+        pass
 
     def commit(self):
         pass

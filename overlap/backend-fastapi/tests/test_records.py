@@ -195,12 +195,63 @@ def test_nonmember_cannot_see_shared_record(world):
     assert feed_ids(world, 3) == set()
 
 
+def test_author_loses_shared_record_access_after_leaving_group(world):
+    record = create(world).json()
+    client, _, _, headers = world
+    assert client.delete("/groups/10/members/me", headers=headers[1]).status_code == 204
+    assert feed_ids(world, 1) == set()
+    assert client.get(record["photo_urls"][0], headers=headers[1]).status_code == 404
+    assert client.get("/map/places", headers=headers[1]).json() == []
+    assert feed_ids(world, 2) == {record["id"]}
+
+
+def test_invite_generation_validation_join_and_duplicate_prevention(world):
+    client, engine, _, headers = world
+    created = client.post("/groups", headers=headers[1], json={"name": "Invitation test"})
+    assert created.status_code == 201
+    group = created.json()
+    code = group["invite_code"]
+    assert len(code) == 12 and code.isalnum() and code == code.upper()
+    assert client.get(f"/groups/{group['id']}/invite", headers=headers[3]).status_code == 404
+    payload = {"invite_code": " " + code.lower() + " "}
+    preview = client.post("/groups/invite/validate?user_id=1", headers=headers[3], json=payload)
+    assert preview.status_code == 200
+    assert preview.json()["id"] == group["id"]
+    with Session(engine) as db:
+        assert db.get(GroupMember, (group["id"], 3)) is None
+    joined = client.post("/groups/join?user_id=1", headers=headers[3], json=payload)
+    assert joined.status_code == 200
+    assert joined.json()["member_count"] == 2
+    assert client.post("/groups/join", headers=headers[3], json=payload).status_code == 409
+    with Session(engine) as db:
+        assert db.get(GroupMember, (group["id"], 3)) is not None
+        assert db.scalar(select(func.count()).select_from(GroupMember).where(
+            GroupMember.group_id == group["id"])) == 2
+
+
+@pytest.mark.parametrize("path", ["/groups/invite/validate", "/groups/join"])
+def test_invalid_disabled_and_unauthenticated_invites(world, path):
+    client, engine, _, headers = world
+    assert client.post(path, headers=headers[3], json={"invite_code": "INVALIDCODE123"}).status_code == 404
+    created = client.post("/groups", headers=headers[1], json={"name": "Disabled invitation"}).json()
+    payload = {"invite_code": created["invite_code"]}
+    assert client.post(path, json=payload).status_code == 401
+    assert client.post(path, headers={"Authorization": "Bearer invalid"}, json=payload).status_code == 401
+    with Session(engine) as db:
+        db.get(MemoryGroup, created["id"]).invite_enabled = False
+        db.commit()
+    assert client.post(path, headers=headers[3], json=payload).status_code == 403
+    assert client.get(f"/groups/{created['id']}/invite", headers=headers[1]).status_code == 403
+    with Session(engine) as db:
+        assert db.get(GroupMember, (created["id"], 3)) is None
+
+
 def test_unshared_nonprivate_record_is_not_public(world):
     record = create(world, user=1).json()
     with Session(world[1]) as db:
         db.delete(db.get(RecordGroup, (record["id"], 10)))
         db.commit()
-    assert feed_ids(world, 1) == {record["id"]}
+    assert feed_ids(world, 1) == set()
     assert feed_ids(world, 2) == set()
 
 

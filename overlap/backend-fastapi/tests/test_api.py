@@ -151,7 +151,7 @@ def test_invites_and_duplicate_membership(world):
     assert owner_invite["invite_code"] == world["group"]["invite_code"]
     for _ in range(2):
         result = client.post("/groups/join", headers=world["b"], json=owner_invite)
-        assert result.json()["member_count"] == 2
+        assert result.status_code == 409
     public_groups = client.get("/groups", headers=world["b"]).json()
     assert "invite_code" not in public_groups[0]
     assert client.post("/groups/join", headers=world["c"], json={"invite_code": "invalid-invite-code"}).status_code == 404
