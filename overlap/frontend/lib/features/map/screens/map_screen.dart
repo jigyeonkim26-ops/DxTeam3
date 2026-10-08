@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/place.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
+import '../../memory/services/record_api.dart';
 import '../models/current_location.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
@@ -90,6 +91,17 @@ class _MapScreenState extends State<MapScreen> {
     } else if (widget.selectedGroupId != null) {
       _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
     }
+    RecordApi.revision.addListener(_onRecordRevision);
+    _loadMapPlaces();
+  }
+
+  @override
+  void dispose() {
+    RecordApi.revision.removeListener(_onRecordRevision);
+    super.dispose();
+  }
+
+  void _onRecordRevision() {
     _loadMapPlaces();
   }
 
