@@ -94,15 +94,6 @@ class RecordCard extends StatelessWidget {
               ],
               const SizedBox(height: AppSpacing.xs),
               Text(record.content, style: const TextStyle(height: 1.5)),
-              Wrap(
-                spacing: AppSpacing.xs,
-                runSpacing: AppSpacing.xs,
-                children: [
-                  if (record.isPrivate) const _GroupChip(label: '나만 보기'),
-                  for (final group in record.sharedGroups)
-                    _GroupChip(label: group.name),
-                ],
-              ),
               const Divider(height: AppSpacing.lg),
               Row(
                 children: [
@@ -186,30 +177,6 @@ class _AvatarInitial extends StatelessWidget {
     initial,
     style: const TextStyle(fontWeight: FontWeight.w700),
   );
-}
-
-class _GroupChip extends StatelessWidget {
-  const _GroupChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        border: Border.all(color: AppColors.divider),
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: AppColors.muted, fontSize: 12),
-      ),
-    );
-  }
 }
 
 class _ActionButton extends StatelessWidget {

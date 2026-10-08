@@ -66,11 +66,11 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   String get _filterLabel {
-    if (_selectedFilters.contains('all')) return '내 맞춤 피드';
+    if (_selectedFilters.contains('all')) return '내 피드';
     if (_selectedFilters.length != 1) return '${_selectedFilters.length}개 선택';
     final filter = _selectedFilters.single;
     if (filter == 'mine') return '내 기록만 보기';
-    return _groups.where((g) => g.id == filter).firstOrNull?.name ?? '내 맞춤 피드';
+    return _groups.where((g) => g.id == filter).firstOrNull?.name ?? '내 피드';
   }
 
   Future<void> _reload() async {
