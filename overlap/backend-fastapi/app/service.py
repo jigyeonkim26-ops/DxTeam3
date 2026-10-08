@@ -13,12 +13,13 @@ from typing import Literal
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .models import (
     GroupCreated, GroupPublic, MapPin, MemoryInput, MemoryPublic,
-    Page, PlaceInput, PlacePublic, RegisterInput, TokenOutput, UserPublic,
+    Page, PlaceInput, PlacePublic, ProfileUpdateInput, RegisterInput,
+    TokenOutput, UserPublic,
 )
 from .db_models import User as DBUser
 from .security import hash_password, new_token, token_digest, verify_password
@@ -200,6 +201,59 @@ class MemoryService:
         public = self._public_user(row)
         self._remember_account(public, row.password_hash)
         return self._issue_token(row.id)
+
+    def update_profile_db(
+        self,
+        user_id: int,
+        data: ProfileUpdateInput,
+        db: Session,
+    ) -> UserPublic:
+        row = db.get(DBUser, user_id)
+        if row is None:
+            raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+
+        for field, value in data.model_dump(exclude_unset=True).items():
+            setattr(row, field, value)
+
+        try:
+            db.commit()
+            db.refresh(row)
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "프로필 정보를 저장하지 못했습니다. 다시 시도해 주세요.") from None
+
+        public = self._public_user(row)
+        self._remember_account(public, row.password_hash)
+        return public
+
+    def update_profile_image_key_db(
+        self,
+        user_id: int,
+        image_key: str | None,
+        db: Session,
+    ) -> str | None:
+        row = db.get(DBUser, user_id)
+        if row is None:
+            raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+
+        previous_key = row.profile_image_key
+        row.profile_image_key = image_key
+        try:
+            db.commit()
+            db.refresh(row)
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "프로필 사진 정보를 저장하지 못했습니다. 다시 시도해 주세요.") from None
+        return previous_key
+
+    def profile_image_key_db(self, user_id: int, db: Session) -> str | None:
+        row = db.get(DBUser, user_id)
+        if row is None:
+            raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+        return row.profile_image_key
 
     def authenticate(self, token: str) -> UserPublic:
         with self.lock:

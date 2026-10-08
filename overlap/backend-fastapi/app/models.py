@@ -3,7 +3,15 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 
 def today_in_korea() -> date:
@@ -40,9 +48,7 @@ class RegisterInput(InputModel):
     @field_validator("birth_date")
     @classmethod
     def validate_birth_date(cls, value: date) -> date:
-        if value > today_in_korea():
-            raise ValueError("생년월일은 미래 날짜일 수 없습니다.")
-        return value
+        return validate_birth_date(value)
 
     @field_validator("terms_accepted")
     @classmethod
@@ -50,6 +56,31 @@ class RegisterInput(InputModel):
         if not value:
             raise ValueError("필수 약관에 동의해 주세요.")
         return value
+
+
+def validate_birth_date(value: date) -> date:
+    if value > today_in_korea():
+        raise ValueError("생년월일은 미래 날짜일 수 없습니다.")
+    return value
+
+
+class ProfileUpdateInput(InputModel):
+    nickname: Nickname | None = None
+    birth_date: date | None = None
+    gender: Literal["female", "male"] | None = None
+
+    @field_validator("birth_date")
+    @classmethod
+    def validate_updated_birth_date(cls, value: date | None) -> date | None:
+        return validate_birth_date(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def require_changed_fields(self):
+        if not self.model_fields_set:
+            raise ValueError("수정할 프로필 정보를 하나 이상 보내 주세요.")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("프로필 정보는 비워 둘 수 없습니다.")
+        return self
 
 
 class LoginInput(InputModel):

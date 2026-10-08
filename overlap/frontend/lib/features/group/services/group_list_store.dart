@@ -17,29 +17,47 @@ abstract final class GroupListStore {
 
   static int _generation = 0;
 
-  static Future<void> refreshGroups() async {
+  static Future<void> refreshGroups({
+    bool includeRecordStatistics = false,
+  }) async {
     final generation = ++_generation;
     final token = ApiTransport.accessToken;
     final response = await GroupApiService.listGroups();
     if (generation != _generation || token != ApiTransport.accessToken) return;
     final previous = {for (final group in groups) group.id: group};
+    final statistics = includeRecordStatistics
+        ? await Future.wait(response.map(_loadRecordStatistics))
+        : List<GroupRecordStatistics?>.filled(response.length, null);
+    if (generation != _generation || token != ApiTransport.accessToken) return;
     replaceGroups([
-      for (final group in response)
+      for (var index = 0; index < response.length; index++)
         GroupListItemData(
-          id: group.id.toString(),
-          name: group.displayName ?? group.name,
-          memberCount: group.memberCount,
-          placeCount: previous['${group.id}']?.placeCount ?? 0,
-          newRecordCount: previous['${group.id}']?.newRecordCount ?? 0,
-          recordCount: previous['${group.id}']?.recordCount ?? 0,
-          inviteCode: previous['${group.id}']?.inviteCode ?? '',
-          members: previous['${group.id}']?.members ?? const [],
-          description: group.description,
-          visibility: group.visibility,
-          notificationsEnabled: group.notificationsEnabled,
-          pinColorValue: group.pinColorValue,
+          id: response[index].id.toString(),
+          name: response[index].displayName ?? response[index].name,
+          memberCount: response[index].memberCount,
+          placeCount: statistics[index]?.placeCount,
+          newRecordCount: null,
+          recordCount: statistics[index]?.recordCount,
+          inviteCode: previous['${response[index].id}']?.inviteCode ?? '',
+          members: previous['${response[index].id}']?.members ?? const [],
+          description: response[index].description,
+          visibility: response[index].visibility,
+          notificationsEnabled: response[index].notificationsEnabled,
+          pinColorValue: response[index].pinColorValue,
         ),
     ]);
+  }
+
+  static Future<GroupRecordStatistics?> _loadRecordStatistics(
+    GroupApiItem group,
+  ) async {
+    try {
+      return await GroupApiService.getRecordStatistics(group.id);
+    } on ApiException {
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   static void clear() {

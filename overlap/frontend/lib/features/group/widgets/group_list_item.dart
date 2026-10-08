@@ -22,7 +22,7 @@ class GroupListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = isSelected ? '${group.name} · 현재 선택됨' : group.name;
     final summary =
-        '멤버 ${group.memberCount}명 · 장소 ${group.placeCount}곳 · ${group.newRecordDescription}';
+        '멤버 ${group.memberCount}명 · ${group.placeCountDescription} · ${group.newRecordDescription}';
 
     return Semantics(
       button: true,

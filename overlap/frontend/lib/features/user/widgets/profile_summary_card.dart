@@ -1,10 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../models/profile_summary_data.dart';
+import 'profile_photo_avatar.dart';
 
 class ProfileSummaryCard extends StatelessWidget {
   const ProfileSummaryCard({
@@ -12,13 +11,13 @@ class ProfileSummaryCard extends StatelessWidget {
     required this.profile,
     this.onProfileTap,
     this.onRecordsTap,
-    this.profileImagePath,
+    this.photoRevision = 0,
   });
 
   final ProfileSummaryData profile;
   final VoidCallback? onProfileTap;
   final VoidCallback? onRecordsTap;
-  final String? profileImagePath;
+  final int photoRevision;
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -36,19 +35,10 @@ class ProfileSummaryCard extends StatelessWidget {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    CircleAvatar(
+                    ProfilePhotoAvatar(
                       radius: 50,
-                      backgroundColor: AppColors.softMint,
-                      backgroundImage: profileImagePath == null
-                          ? null
-                          : FileImage(File(profileImagePath!)),
-                      child: profileImagePath == null
-                          ? const Icon(
-                              Icons.person,
-                              color: AppColors.deepNavy,
-                              size: 36,
-                            )
-                          : null,
+                      iconSize: 36,
+                      revision: photoRevision,
                     ),
                     Positioned(
                       right: -1,

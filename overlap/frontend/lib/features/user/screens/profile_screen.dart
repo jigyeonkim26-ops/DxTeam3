@@ -2,17 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_client.dart';
+import '../../auth/services/auth_api_service.dart';
 import '../../group/models/group_list_item_data.dart';
 import '../../group/services/group_list_store.dart';
-import '../../memory/services/record_api.dart';
 import '../../memory/screens/record_detail_screen.dart';
-import '../../../shared/models/record.dart';
-import '../../../core/network/api_client.dart';
+import '../../memory/services/record_api.dart';
 import '../../memory/widgets/record_card.dart';
-import '../services/mock_profile_repository.dart';
-import '../services/mock_saved_repository.dart';
+import '../../../shared/models/record.dart';
+import '../models/profile_summary_data.dart';
+import '../models/user_profile.dart';
 import '../widgets/profile_summary_card.dart';
-import '../widgets/saved_item_row.dart';
 import 'profile_edit_screen.dart';
 
 enum _ProfileContentTab { feed, savedPlaces }
@@ -24,9 +24,9 @@ class ProfileScreen extends StatefulWidget {
     this.recordApi,
     this.isActive = true,
   });
+
   final RecordApi? recordApi;
   final bool isActive;
-
   final VoidCallback? onShowMyMap;
 
   @override
@@ -35,10 +35,18 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late final RecordApi _api;
+  UserProfile? _currentUser;
   List<Record> _myRecords = [];
-  bool _isLoading = true;
-  String? _error;
+  bool _isProfileLoading = true;
+  bool _isRecordsLoading = true;
+  bool _isGroupsLoading = true;
+  String? _profileError;
+  String? _recordsError;
+  String? _groupsError;
   int _generation = 0;
+  int _photoRevision = 0;
+  _ProfileContentTab _selectedContentTab = _ProfileContentTab.feed;
+  final Set<String> _likedRecordIds = {};
 
   @override
   void initState() {
@@ -57,25 +65,77 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _reload() async {
     final generation = ++_generation;
     setState(() {
-      _isLoading = true;
-      _error = null;
+      _isProfileLoading = true;
+      _isRecordsLoading = true;
+      _isGroupsLoading = true;
+      _profileError = null;
+      _recordsError = null;
+      _groupsError = null;
     });
+    await Future.wait([
+      _loadProfile(generation),
+      _loadRecords(generation),
+      _loadGroups(generation),
+    ]);
+  }
+
+  Future<void> _loadProfile(int generation) async {
     try {
-      final records = await _api.feed(mine: true);
-      records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      if (!mounted || generation != _generation) return;
-      setState(() => _myRecords = records);
+      final user = await AuthApiService.currentUser();
+      if (mounted && generation == _generation) {
+        setState(() => _currentUser = user);
+      }
     } on ApiException catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = error.message);
+        setState(() => _profileError = error.message);
       }
     } catch (_) {
       if (mounted && generation == _generation) {
-        setState(() => _error = '피드 응답을 읽지 못했습니다.');
+        setState(() => _profileError = '프로필 정보를 불러오지 못했습니다.');
       }
     } finally {
       if (mounted && generation == _generation) {
-        setState(() => _isLoading = false);
+        setState(() => _isProfileLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadRecords(int generation) async {
+    try {
+      final records = await _api.feed(mine: true);
+      records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (mounted && generation == _generation) {
+        setState(() => _myRecords = records);
+      }
+    } on ApiException catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _recordsError = error.message);
+      }
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() => _recordsError = '내 기록을 불러오지 못했습니다.');
+      }
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _isRecordsLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadGroups(int generation) async {
+    try {
+      await GroupListStore.refreshGroups();
+    } on ApiException catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _groupsError = error.message);
+      }
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() => _groupsError = '내 모임을 불러오지 못했습니다.');
+      }
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _isGroupsLoading = false);
       }
     }
   }
@@ -88,39 +148,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  void _openRecord(Record record) => Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => RecordDetailScreen(record: record)),
-  );
-
-  String? _profileImagePath;
-  _ProfileContentTab _selectedContentTab = _ProfileContentTab.feed;
-  final Set<String> _likedRecordIds = {};
-
-  void _show(BuildContext context, String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-
-  Future<void> _openProfileEdit() async {
-    final result = await Navigator.of(context).push<ProfileEditResult>(
-      MaterialPageRoute<ProfileEditResult>(
-        builder: (_) =>
-            ProfileEditScreen(initialProfileImagePath: _profileImagePath),
+  Future<void> _openRecord(Record record) async {
+    final result = await Navigator.of(context).push<RecordDetailResult>(
+      MaterialPageRoute<RecordDetailResult>(
+        builder: (_) => RecordDetailScreen(
+          record: record,
+          recordApi: _api,
+          canManage: true,
+        ),
       ),
     );
     if (!mounted || result == null) return;
-    setState(() => _profileImagePath = result.profileImagePath);
-    _show(context, '프로필이 수정되었어요.');
+    if (result.updatedRecord case final Record updated) {
+      setState(() {
+        _myRecords = [
+          for (final item in _myRecords)
+            if (item.id == updated.id) updated else item,
+        ];
+      });
+    } else if (result.deletedRecordId case final String deletedId) {
+      setState(() {
+        _myRecords = _myRecords.where((item) => item.id != deletedId).toList();
+      });
+    }
   }
 
-  void _showMyFeed() {
-    setState(() => _selectedContentTab = _ProfileContentTab.feed);
+  Future<void> _openProfileEdit() async {
+    final user = _currentUser;
+    if (user == null) return;
+    final updated = await Navigator.of(context).push<ProfileEditResult>(
+      MaterialPageRoute<ProfileEditResult>(
+        builder: (_) =>
+            ProfileEditScreen(profile: user, photoRevision: _photoRevision),
+      ),
+    );
+    if (!mounted || updated == null) return;
+    setState(() {
+      _currentUser = updated.profile;
+      if (updated.photoChanged) _photoRevision++;
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('프로필이 수정되었습니다.')));
   }
 
   void _toggleLike(String recordId) {
     setState(() {
-      if (!_likedRecordIds.add(recordId)) {
-        _likedRecordIds.remove(recordId);
-      }
+      if (!_likedRecordIds.add(recordId)) _likedRecordIds.remove(recordId);
     });
+  }
+
+  ProfileSummaryData _summaryFor(UserProfile user, int groupCount) {
+    return ProfileSummaryData(
+      userName: user.nickname,
+      statusText: '',
+      recordCount: _myRecords.length,
+      visitedPlaceCount: _myRecords
+          .map((record) => record.place.id)
+          .toSet()
+          .length,
+      groupCount: groupCount,
+      recentRecordTitle: '',
+      recentRecordPlace: '',
+    );
+  }
+
+  Widget _buildProfileSummary(List<GroupListItemData> groups) {
+    if (_isProfileLoading || _isGroupsLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_profileError != null || _groupsError != null) {
+      final message = _profileError ?? _groupsError!;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+        child: TextButton(onPressed: _reload, child: Text('$message 다시 시도')),
+      );
+    }
+    final user = _currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return ProfileSummaryCard(
+      profile: _summaryFor(user, groups.length),
+      photoRevision: _photoRevision,
+      onProfileTap: _openProfileEdit,
+      onRecordsTap: () => setState(() {
+        _selectedContentTab = _ProfileContentTab.feed;
+      }),
+    );
   }
 
   @override
@@ -128,10 +245,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return ValueListenableBuilder<List<GroupListItemData>>(
       valueListenable: GroupListStore.groupsListenable,
       builder: (context, groups, _) {
-        final profile = MockProfileRepository.profile.copyWith(
-          groupCount: groups.length,
-        );
-        final myRecords = _myRecords;
         return ColoredBox(
           color: AppColors.paper,
           child: ListView(
@@ -152,12 +265,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
-              ProfileSummaryCard(
-                profile: profile,
-                profileImagePath: _profileImagePath,
-                onProfileTap: _openProfileEdit,
-                onRecordsTap: _showMyFeed,
-              ),
+              _buildProfileSummary(groups),
               const SizedBox(height: AppSpacing.md),
               _ProfileContentTabs(
                 selectedTab: _selectedContentTab,
@@ -165,43 +273,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onShowMyMap: widget.onShowMyMap ?? () {},
               ),
               const SizedBox(height: AppSpacing.sm),
-              if (_selectedContentTab == _ProfileContentTab.feed) ...[
-                if (_isLoading)
-                  const Center(child: CircularProgressIndicator())
-                else if (_error != null)
-                  TextButton(onPressed: _reload, child: Text('$_error 다시 시도'))
-                else if (myRecords.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-                    child: Center(
-                      child: Text(
-                        '아직 남긴 기록이 없어요.',
-                        style: TextStyle(color: AppColors.muted),
-                      ),
-                    ),
-                  )
-                else
-                  for (final record in myRecords) ...[
-                    RecordCard(
-                      record: record,
-                      isLiked: _likedRecordIds.contains(record.id),
-                      onTap: () => _openRecord(record),
-                      onLikeTap: () => _toggleLike(record.id),
-                      onCommentTap: () => _openRecord(record),
-                      onPlaceTap: () => _show(context, '장소 상세 연결은 추후 적용됩니다.'),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                  ],
-              ] else
-                for (final item in MockSavedRepository.wishPlaces)
-                  SavedItemRow(
-                    item: item,
-                    onTap: () => _show(context, '장소 상세 연결은 추후 적용됩니다.'),
-                  ),
+              if (_selectedContentTab == _ProfileContentTab.feed)
+                _buildRecords()
+              else
+                const _SavedPlacesUnavailable(),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildRecords() {
+    if (_isRecordsLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_recordsError != null) {
+      return TextButton(
+        onPressed: _reload,
+        child: Text('$_recordsError 다시 시도'),
+      );
+    }
+    if (_myRecords.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+        child: Center(
+          child: Text(
+            '아직 작성한 기록이 없어요.',
+            style: TextStyle(color: AppColors.muted),
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (final record in _myRecords) ...[
+          RecordCard(
+            record: record,
+            isLiked: _likedRecordIds.contains(record.id),
+            onTap: () => _openRecord(record),
+            onLikeTap: () => _toggleLike(record.id),
+            onCommentTap: () => _openRecord(record),
+            onPlaceTap: () {},
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+      ],
+    );
+  }
+}
+
+class _SavedPlacesUnavailable extends StatelessWidget {
+  const _SavedPlacesUnavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+      child: Center(
+        child: Text(
+          '저장한 장소 조회 API가 아직 제공되지 않습니다.',
+          style: TextStyle(color: AppColors.muted),
+        ),
+      ),
     );
   }
 }
@@ -224,7 +361,7 @@ class _ProfileContentTabs extends StatelessWidget {
         Expanded(
           child: _ProfileContentTabButton(
             icon: Icons.grid_view_rounded,
-            label: '내 피드',
+            label: '내 기록',
             isSelected: selectedTab == _ProfileContentTab.feed,
             onTap: () => onSelected(_ProfileContentTab.feed),
           ),

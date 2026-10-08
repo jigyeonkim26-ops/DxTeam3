@@ -29,8 +29,11 @@ class RecordApi {
   }
 
   dynamic _decode(http.Response response) {
-    final payload = jsonDecode(utf8.decode(response.bodyBytes));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    final isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+    final payload = response.bodyBytes.isEmpty
+        ? null
+        : jsonDecode(utf8.decode(response.bodyBytes));
+    if (!isSuccess) {
       final detail = payload is Map ? payload['detail'] : null;
       throw ApiException(
         detail is String ? detail : '요청을 처리하지 못했습니다. 다시 시도해 주세요.',
@@ -133,6 +136,57 @@ class RecordApi {
       rethrow;
     } catch (_) {
       throw const ApiException('기록을 저장하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
+    }
+  }
+
+  Future<Record> update({
+    required String recordId,
+    required String content,
+    required Emotion emotion,
+    required bool isPrivate,
+    required Set<String> groupIds,
+  }) async {
+    try {
+      final response = await _client
+          .patch(
+            Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
+            headers: {..._headers, 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'content': content.trim(),
+              'emotion': emotion.name,
+              'is_private': isPrivate,
+              'group_ids': isPrivate
+                  ? <int>[]
+                  : groupIds.map(int.parse).toList(),
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      final record = Record.fromJson(
+        Map<String, dynamic>.from(_decode(response) as Map),
+      );
+      revision.value++;
+      return record;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException('기록을 수정하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
+    }
+  }
+
+  Future<void> delete(String recordId) async {
+    try {
+      final response = await _client
+          .delete(
+            Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 30));
+      _decode(response);
+      revision.value++;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException('기록을 삭제하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
     }
   }
 

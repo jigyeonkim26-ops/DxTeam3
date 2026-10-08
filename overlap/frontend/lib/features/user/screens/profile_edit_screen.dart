@@ -1,51 +1,68 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_transport.dart';
 import '../../auth/screens/login_screen.dart';
+import '../../auth/services/auth_api_service.dart';
+import '../models/user_profile.dart';
+import '../widgets/profile_photo_avatar.dart';
+
+class ProfileEditResult {
+  const ProfileEditResult({required this.profile, required this.photoChanged});
+
+  final UserProfile profile;
+  final bool photoChanged;
+}
 
 class ProfileEditScreen extends StatefulWidget {
-  const ProfileEditScreen({super.key, this.initialProfileImagePath});
+  const ProfileEditScreen({
+    super.key,
+    required this.profile,
+    this.photoRevision = 0,
+  });
 
-  final String? initialProfileImagePath;
+  final UserProfile profile;
+  final int photoRevision;
 
   @override
   State<ProfileEditScreen> createState() => _ProfileEditScreenState();
 }
 
-class ProfileEditResult {
-  const ProfileEditResult({required this.profileImagePath});
-
-  final String? profileImagePath;
-}
-
 class _ProfileEditScreenState extends State<ProfileEditScreen> {
-  final _emailController = TextEditingController(text: 'example@overlap.com');
-  final _nicknameController = TextEditingController(text: '서연');
-  int? _birthYear = 1997;
-  int? _birthMonth = 4;
-  int? _birthDay = 18;
-  String? _gender = 'female';
-  late String? _profileImagePath;
-
-  List<int> get _years =>
-      List.generate(100, (index) => DateTime.now().year - index);
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nicknameController;
+  late final TextEditingController _birthDateController;
+  late UserProfile _profile;
+  late DateTime _birthDate;
+  late String _gender;
+  XFile? _selectedPhoto;
+  bool _removePhoto = false;
+  bool _isSaving = false;
+  bool _isLoggingOut = false;
 
   @override
   void initState() {
     super.initState();
-    _profileImagePath = widget.initialProfileImagePath;
+    _profile = widget.profile;
+    _nicknameController = TextEditingController(text: _profile.nickname);
+    _birthDate = _profile.birthDate;
+    _birthDateController = TextEditingController(text: _formatDate(_birthDate));
+    _gender = _profile.gender;
   }
 
   @override
   void dispose() {
-    _emailController.dispose();
     _nicknameController.dispose();
+    _birthDateController.dispose();
     super.dispose();
   }
+
+  String _formatDate(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
@@ -53,107 +70,94 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _saveProfile() {
-    if (_nicknameController.text.trim().isEmpty) {
-      _showMessage('닉네임을 입력해 주세요.');
-      return;
-    }
-    if (_birthYear == null) {
-      _showMessage('출생연도를 선택해 주세요.');
-      return;
-    }
-    if (_birthMonth == null || _birthDay == null) {
-      _showMessage('생일 월과 일을 선택해 주세요.');
-      return;
-    }
-    if (_gender == null) {
-      _showMessage('성별을 선택해 주세요.');
-      return;
-    }
-    // 향후 프로필 사진 업로드 및 사용자 정보 저장 API를 이 위치에 연결합니다.
-    Navigator.pop(
-      context,
-      ProfileEditResult(profileImagePath: _profileImagePath),
-    );
-  }
-
-  Future<void> _showPhotoActionSheet() async {
-    await showModalBottomSheet<void>(
+  Future<void> _pickBirthDate() async {
+    if (_isSaving) return;
+    final today = DateTime.now();
+    final selected = await showDatePicker(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Material(
-        color: AppColors.surface,
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(AppSpacing.cardRadius),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              AppSpacing.sm,
-              AppSpacing.md,
-              AppSpacing.md,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                const Text(
-                  '프로필 사진 변경',
-                  style: TextStyle(
-                    color: AppColors.deepNavy,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                ListTile(
-                  leading: const Icon(Icons.photo_library_outlined),
-                  title: const Text('갤러리에서 사진 선택'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _pickImage();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('기본 이미지로 변경'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    setState(() => _profileImagePath = null);
-                  },
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(sheetContext),
-                  child: const Text('취소'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      initialDate: _birthDate.isAfter(today) ? today : _birthDate,
+      firstDate: DateTime(1900),
+      lastDate: today,
     );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _birthDate = selected;
+      _birthDateController.text = _formatDate(selected);
+    });
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickPhoto() async {
+    if (_isSaving || _isLoggingOut) return;
+    final photo = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
+    if (photo == null || !mounted) return;
+    setState(() {
+      _selectedPhoto = photo;
+      _removePhoto = false;
+    });
+  }
+
+  void _markPhotoForRemoval() {
+    if (_isSaving || _isLoggingOut) return;
+    setState(() {
+      _selectedPhoto = null;
+      _removePhoto = true;
+    });
+  }
+
+  Future<void> _saveProfile() async {
+    if (_isSaving || _isLoggingOut) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final nickname = _nicknameController.text.trim();
+    final birthDate = _formatDate(_birthDate);
+    final nicknameChanged = nickname != _profile.nickname;
+    final birthDateChanged = birthDate != _profile.birthDateText;
+    final genderChanged = _gender != _profile.gender;
+    final photoChanged = _selectedPhoto != null || _removePhoto;
+    if (!nicknameChanged &&
+        !birthDateChanged &&
+        !genderChanged &&
+        !photoChanged) {
+      _showMessage('변경된 프로필 정보가 없습니다.');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    var updated = _profile;
+    var detailsSaved = false;
     try {
-      final image = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 85,
-      );
-      if (!mounted || image == null) return;
-      setState(() => _profileImagePath = image.path);
+      if (nicknameChanged || birthDateChanged || genderChanged) {
+        updated = await AuthApiService.updateCurrentUser(
+          nickname: nicknameChanged ? nickname : null,
+          birthDate: birthDateChanged ? birthDate : null,
+          gender: genderChanged ? _gender : null,
+        );
+        detailsSaved = true;
+      }
+      if (_selectedPhoto != null) {
+        await AuthApiService.uploadProfilePhoto(_selectedPhoto!);
+      } else if (_removePhoto) {
+        await AuthApiService.deleteProfilePhoto();
+      }
+      if (!mounted) return;
+      Navigator.of(context)
+          .pop(ProfileEditResult(profile: updated, photoChanged: photoChanged));
+    } on ApiException catch (error) {
+      if (mounted) {
+        if (detailsSaved) {
+          setState(() => _profile = updated);
+          _showMessage('기본 정보는 저장됐지만 사진 저장에 실패했습니다. 다시 시도해 주세요.');
+        } else {
+          _showMessage(error.message);
+        }
+      }
     } catch (_) {
-      if (mounted) _showMessage('사진을 불러오지 못했어요. 다시 시도해 주세요.');
+      if (mounted) _showMessage('프로필 정보를 저장하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -176,9 +180,21 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         ],
       ),
     );
-    if (shouldLogout != true || !mounted) return;
+    if (shouldLogout != true || !mounted || _isLoggingOut || _isSaving) return;
 
-    // 향후 JWT/refresh token 삭제 및 logout API 호출을 이 위치에 연결합니다.
+    setState(() => _isLoggingOut = true);
+    try {
+      await AuthApiService.logout();
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+      return;
+    } catch (_) {
+      if (mounted) _showMessage('로그아웃 요청을 처리하지 못했습니다.');
+      return;
+    } finally {
+      if (mounted) setState(() => _isLoggingOut = false);
+    }
+    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
       (route) => false,
@@ -187,158 +203,134 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final profile = _profile;
     return Scaffold(
       backgroundColor: AppColors.paper,
       appBar: AppBar(
         leading: IconButton(
-          onPressed: () => Navigator.maybePop(context),
+          onPressed: _isSaving ? null : () => Navigator.maybePop(context),
           icon: const Icon(Icons.arrow_back),
           tooltip: '뒤로가기',
         ),
-        title: const Text(
-          '프로필 수정',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
+        title: const Text('프로필', style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.lg,
-            AppSpacing.md,
-            AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: AbsorbPointer(
+          absorbing: _isSaving,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.lg,
+              AppSpacing.md,
+              AppSpacing.lg,
+            ),
             children: [
               _ProfileHeader(
-                profileImagePath: _profileImagePath,
-                onTap: _showPhotoActionSheet,
+                nickname: _nicknameController.text,
+                localImagePath: _selectedPhoto?.path,
+                showRemotePhoto: !_removePhoto,
+                photoRevision: widget.photoRevision,
+                onPhotoTap: _pickPhoto,
+                onPhotoRemove: _markPhotoForRemoval,
               ),
               const SizedBox(height: AppSpacing.lg),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const _FieldLabel('이메일'),
-                      const SizedBox(height: AppSpacing.xs),
-                      TextField(
-                        controller: _emailController,
-                        readOnly: true,
-                        maxLines: 1,
-                        decoration: const InputDecoration(
-                          suffixIcon: Icon(Icons.lock_outline, size: 20),
+              Form(
+                key: _formKey,
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const _FieldLabel('이메일'),
+                        const SizedBox(height: AppSpacing.xs),
+                        _ReadOnlyProfileField(
+                          value: profile.email,
+                          icon: Icons.lock_outline,
                         ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('닉네임 *'),
-                      const SizedBox(height: AppSpacing.xs),
-                      TextField(
-                        controller: _nicknameController,
-                        textInputAction: TextInputAction.done,
-                        decoration: const InputDecoration(
-                          hintText: '표시할 이름을 입력해 주세요',
+                        const SizedBox(height: AppSpacing.md),
+                        const _FieldLabel('닉네임'),
+                        const SizedBox(height: AppSpacing.xs),
+                        TextFormField(
+                          controller: _nicknameController,
+                          maxLength: 50,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            hintText: '닉네임을 입력해 주세요',
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return '닉네임을 입력해 주세요.';
+                            }
+                            return null;
+                          },
+                          onChanged: (_) => setState(() {}),
                         ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('출생연도 *'),
-                      const SizedBox(height: AppSpacing.xs),
-                      DropdownButtonFormField<int>(
-                        initialValue: _birthYear,
-                        isExpanded: true,
-                        items: [
-                          for (final year in _years)
+                        const SizedBox(height: AppSpacing.md),
+                        const _FieldLabel('생년월일'),
+                        const SizedBox(height: AppSpacing.xs),
+                        TextFormField(
+                          controller: _birthDateController,
+                          readOnly: true,
+                          onTap: _pickBirthDate,
+                          decoration: const InputDecoration(
+                            suffixIcon: Icon(Icons.calendar_today_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        const _FieldLabel('성별'),
+                        const SizedBox(height: AppSpacing.xs),
+                        DropdownButtonFormField<String>(
+                          initialValue: _gender,
+                          decoration: const InputDecoration(),
+                          items: const [
                             DropdownMenuItem(
-                              value: year,
-                              child: Text('$year년'),
+                              value: 'female',
+                              child: Text('여성'),
                             ),
-                        ],
-                        onChanged: (value) =>
-                            setState(() => _birthYear = value),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('생일 *'),
-                      const SizedBox(height: AppSpacing.xs),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              initialValue: _birthMonth,
-                              isExpanded: true,
-                              items: [
-                                for (var month = 1; month <= 12; month++)
-                                  DropdownMenuItem(
-                                    value: month,
-                                    child: Text(
-                                      '${month.toString().padLeft(2, '0')}월',
-                                    ),
+                            DropdownMenuItem(value: 'male', child: Text('남성')),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) setState(() => _gender = value);
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.lg),
+                        FilledButton.icon(
+                          onPressed: _saveProfile,
+                          icon: _isSaving
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
                                   ),
-                              ],
-                              onChanged: (value) =>
-                                  setState(() => _birthMonth = value),
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              initialValue: _birthDay,
-                              isExpanded: true,
-                              items: [
-                                for (var day = 1; day <= 31; day++)
-                                  DropdownMenuItem(
-                                    value: day,
-                                    child: Text(
-                                      '${day.toString().padLeft(2, '0')}일',
-                                    ),
-                                  ),
-                              ],
-                              onChanged: (value) =>
-                                  setState(() => _birthDay = value),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _FieldLabel('성별 *'),
-                      const SizedBox(height: AppSpacing.xs),
-                      DropdownButtonFormField<String>(
-                        initialValue: _gender,
-                        isExpanded: true,
-                        items: const [
-                          DropdownMenuItem(value: 'female', child: Text('여성')),
-                          DropdownMenuItem(value: 'male', child: Text('남성')),
-                        ],
-                        onChanged: (value) => setState(() => _gender = value),
-                      ),
-                    ],
+                                )
+                              : const Icon(Icons.save_outlined),
+                          label: Text(_isSaving ? '저장 중...' : '저장'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-              ElevatedButton(
-                onPressed: _saveProfile,
-                child: const Text('저장하기'),
-              ),
               const SizedBox(height: AppSpacing.xl),
               OutlinedButton.icon(
-                onPressed: _confirmLogout,
-                icon: const Icon(Icons.logout_rounded),
+                onPressed: _isLoggingOut || _isSaving ? null : _confirmLogout,
+                icon: _isLoggingOut
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.logout_rounded),
                 label: const Text('로그아웃'),
                 style: OutlinedButton.styleFrom(
                   backgroundColor: AppColors.surface,
                   foregroundColor: AppColors.coral,
                   side: const BorderSide(color: AppColors.coral),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              const Text(
-                '현재는 mock 프로필 수정 화면입니다.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.muted, fontSize: 12),
               ),
             ],
           ),
@@ -349,65 +341,100 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 }
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.profileImagePath, required this.onTap});
+  const _ProfileHeader({
+    required this.nickname,
+    required this.localImagePath,
+    required this.showRemotePhoto,
+    required this.photoRevision,
+    required this.onPhotoTap,
+    required this.onPhotoRemove,
+  });
 
-  final String? profileImagePath;
-  final VoidCallback onTap;
+  final String nickname;
+  final String? localImagePath;
+  final bool showRemotePhoto;
+  final int photoRevision;
+  final VoidCallback onPhotoTap;
+  final VoidCallback onPhotoRemove;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Material(
-          color: Colors.transparent,
-          shape: const CircleBorder(),
-          child: InkWell(
-            onTap: onTap,
-            customBorder: const CircleBorder(),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                CircleAvatar(
-                  radius: 36,
-                  backgroundColor: AppColors.softMint,
-                  foregroundColor: AppColors.deepNavy,
-                  backgroundImage: profileImagePath == null
-                      ? null
-                      : FileImage(File(profileImagePath!)),
-                  child: profileImagePath == null
-                      ? const Icon(Icons.person, size: 38)
-                      : null,
-                ),
-                Positioned(
-                  right: -2,
-                  bottom: -2,
-                  child: Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: const BoxDecoration(
-                      color: AppColors.coral,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.edit,
-                      size: 14,
-                      color: Colors.white,
+        Semantics(
+          button: true,
+          label: '프로필 사진 변경',
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              onTap: onPhotoTap,
+              customBorder: const CircleBorder(),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  ProfilePhotoAvatar(
+                    radius: 36,
+                    iconSize: 38,
+                    localImagePath: localImagePath,
+                    showRemote: showRemotePhoto,
+                    revision: photoRevision,
+                  ),
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: const BoxDecoration(
+                        color: AppColors.coral,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.photo_camera_outlined,
+                        color: Colors.white,
+                        size: 15,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        const Text(
-          '서연',
-          style: TextStyle(
+        TextButton.icon(
+          onPressed: onPhotoRemove,
+          icon: const Icon(Icons.delete_outline, size: 17),
+          label: const Text('사진 삭제'),
+          style: TextButton.styleFrom(foregroundColor: AppColors.muted),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          nickname,
+          style: const TextStyle(
             color: AppColors.deepNavy,
             fontSize: 20,
             fontWeight: FontWeight.w700,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ReadOnlyProfileField extends StatelessWidget {
+  const _ReadOnlyProfileField({required this.value, this.icon});
+
+  final String value;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      initialValue: value,
+      readOnly: true,
+      decoration: InputDecoration(
+        suffixIcon: icon == null ? null : Icon(icon, size: 20),
+      ),
     );
   }
 }

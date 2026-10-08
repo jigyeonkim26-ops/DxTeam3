@@ -2,16 +2,41 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
 import '../widgets/record_photo.dart';
+import '../services/record_api.dart';
 import '../../comment/models/comment_item.dart';
 import '../../comment/widgets/comment_input.dart';
 import '../../comment/widgets/comment_thread.dart';
+import 'record_edit_screen.dart';
+
+class RecordDetailResult {
+  const RecordDetailResult.updated(Record record)
+    : updatedRecord = record,
+      deletedRecordId = null;
+
+  const RecordDetailResult.deleted(String recordId)
+    : updatedRecord = null,
+      deletedRecordId = recordId;
+
+  final Record? updatedRecord;
+  final String? deletedRecordId;
+}
+
+enum _RecordMenuAction { edit, delete }
 
 class RecordDetailScreen extends StatefulWidget {
-  const RecordDetailScreen({super.key, required this.record});
+  const RecordDetailScreen({
+    super.key,
+    required this.record,
+    this.recordApi,
+    this.canManage = false,
+  });
 
   final Record record;
+  final RecordApi? recordApi;
+  final bool canManage;
 
   @override
   State<RecordDetailScreen> createState() => _RecordDetailScreenState();
@@ -24,6 +49,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   late List<CommentItem> _comments;
   final bool _isLiked = false;
   CommentItem? _replyTarget;
+  bool _isDeleting = false;
 
   @override
   void initState() {
@@ -59,6 +85,64 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   void _selectReply(CommentItem comment) {
     setState(() => _replyTarget = comment);
     _commentFocusNode.requestFocus();
+  }
+
+  bool get _canManage => widget.canManage && widget.recordApi != null;
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _onMenuSelected(_RecordMenuAction action) async {
+    if (_isDeleting || !_canManage) return;
+    if (action == _RecordMenuAction.edit) {
+      final updated = await Navigator.of(context).push<Record>(
+        MaterialPageRoute<Record>(
+          builder: (_) => RecordEditScreen(
+            record: widget.record,
+            recordApi: widget.recordApi!,
+          ),
+        ),
+      );
+      if (!mounted || updated == null) return;
+      Navigator.of(context).pop(RecordDetailResult.updated(updated));
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('기록을 삭제할까요?'),
+        content: const Text('삭제한 기록과 연결된 사진은 복구할 수 없습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.coral),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isDeleting = true);
+    try {
+      await widget.recordApi!.delete(widget.record.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(RecordDetailResult.deleted(widget.record.id));
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } catch (_) {
+      if (mounted) _showMessage('기록을 삭제하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
+    }
   }
 
   @override
@@ -102,6 +186,30 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                     ),
                   ),
                 ),
+                if (_canManage)
+                  _isDeleting
+                      ? const Padding(
+                          padding: EdgeInsets.all(AppSpacing.sm),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : PopupMenuButton<_RecordMenuAction>(
+                          tooltip: '기록 메뉴',
+                          onSelected: _onMenuSelected,
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: _RecordMenuAction.edit,
+                              child: Text('수정'),
+                            ),
+                            PopupMenuItem(
+                              value: _RecordMenuAction.delete,
+                              child: Text('삭제'),
+                            ),
+                          ],
+                        ),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
