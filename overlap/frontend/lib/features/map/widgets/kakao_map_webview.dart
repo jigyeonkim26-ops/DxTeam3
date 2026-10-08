@@ -18,6 +18,7 @@ class KakaoPlaceSelection {
     required this.buildingName,
     required this.roadAddress,
     required this.lotAddress,
+    this.place,
   });
 
   final double latitude;
@@ -26,6 +27,7 @@ class KakaoPlaceSelection {
   final String buildingName;
   final String roadAddress;
   final String lotAddress;
+  final KakaoPlaceSearchResult? place;
 }
 
 class KakaoPlaceSearchRequest {
@@ -86,12 +88,16 @@ class KakaoMapSelectionRequest {
     required this.latitude,
     required this.longitude,
     required this.placeName,
+    this.placeId,
+    this.address,
   });
 
   final int id;
   final double latitude;
   final double longitude;
   final String placeName;
+  final String? placeId;
+  final String? address;
 }
 
 class KakaoMapWebView extends StatefulWidget {
@@ -358,6 +364,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         buildingName: buildingName is String ? buildingName : '',
         roadAddress: roadAddress is String ? roadAddress : '',
         lotAddress: lotAddress is String ? lotAddress : '',
+        place: _parseResolvedPlace(decodedMessage['place']),
       );
       if (widget.selectionMode) {
         debugPrint('[PLACE_DEBUG] parsed placeName: ${selection.placeName}');
@@ -389,6 +396,39 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     } on FormatException {
       return null;
     }
+  }
+
+  KakaoPlaceSearchResult? _parseResolvedPlace(Object? rawPlace) {
+    if (rawPlace is! Map<String, dynamic>) return null;
+    final id = rawPlace['id'];
+    final name = rawPlace['placeName'];
+    final latitude = _asDouble(rawPlace['latitude']);
+    final longitude = _asDouble(rawPlace['longitude']);
+    if (id is! String ||
+        !RegExp(r'^\d+$').hasMatch(id) ||
+        name is! String ||
+        name.trim().isEmpty ||
+        latitude == null ||
+        longitude == null ||
+        latitude.abs() > 90 ||
+        longitude.abs() > 180) {
+      return null;
+    }
+    return KakaoPlaceSearchResult(
+      id: id,
+      placeName: name.trim(),
+      categoryName: '',
+      phone: '',
+      roadAddress: rawPlace['roadAddress'] is String
+          ? rawPlace['roadAddress'] as String
+          : '',
+      address: rawPlace['address'] is String
+          ? rawPlace['address'] as String
+          : '',
+      latitude: latitude,
+      longitude: longitude,
+      distance: _asDouble(rawPlace['distance']),
+    );
   }
 
   double? _asDouble(Object? value) {
@@ -459,9 +499,19 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       final latitude = request?.latitude ?? widget.initialLatitude;
       final longitude = request?.longitude ?? widget.initialLongitude;
       final selectedPlaceName = request?.placeName;
+      final selectedPlace = request?.placeId == null
+          ? null
+          : {
+              'id': request!.placeId,
+              'placeName': request.placeName,
+              'roadAddress': request.address ?? '',
+              'address': request.address ?? '',
+              'latitude': latitude,
+              'longitude': longitude,
+            };
       await controller.runJavaScript(
         'setSelectionLocation('
-        '$latitude, $longitude, ${jsonEncode(selectedPlaceName)}'
+        '$latitude, $longitude, ${jsonEncode(selectedPlaceName)}, ${jsonEncode(selectedPlace)}'
         ');',
       );
     } on PlatformException {
