@@ -6,6 +6,7 @@
 ## 2026-10-08 — 통합본 모임·인증 오류 수정
 
 - 작업 브랜치: `feature/fix-group-auth` (기준: `feature/fullstack-frontend-ui-test`의 `2cfb287`)
+- 구현 커밋: `44e95f1` (`fix: refresh group state and handle auth session expiration`), `origin/feature/fix-group-auth`에 non-force Push 완료
 - 모임 생성·초대코드 가입 성공 응답을 `GroupListStore`에 즉시 upsert하고, 기록 작성 화면은 해당 `ValueNotifier`를 구독한다.
 - 기록 작성 화면은 유효한 기존 공유 모임 선택을 유지하고, 탈퇴로 목록에서 제거된 ID는 선택값에서도 제거한다.
 - `GroupListStore`는 동시 새로고침을 합쳐 중복 목록 호출을 줄이며, 통계가 필요한 요청은 기존 목록 요청 이후 한 번만 추가로 수행한다.

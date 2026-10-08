@@ -29,7 +29,9 @@
 
 - 기준 브랜치 `feature/fullstack-frontend-ui-test`에서 `feature/fix-group-auth`를 생성했다. Merge/Rebase는 하지 않았다.
 - 공통 인증·모임 상태 파일은 다른 팀원 변경과 충돌 가능성이 높다. 스테이지 시 실제 수정 파일만 선택한다.
-- Commit/Push/PR/Merge: 아직 수행하지 않음.
+- Commit: `44e95f1` (`fix: refresh group state and handle auth session expiration`)
+- Push: `origin/feature/fix-group-auth`에 non-force Push 완료
+- PR/Merge: 수행하지 않음.
 
 ## 2026-10-08 — 개발 현황 문서 체계 초기화
 
