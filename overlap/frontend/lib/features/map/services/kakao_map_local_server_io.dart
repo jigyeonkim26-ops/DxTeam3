@@ -161,14 +161,7 @@ function setPlaces(places) {
     var content = document.createElement('button'); content.type = 'button'; content.className = 'place-marker';
     content.style.setProperty('--pin-color', markerColor(place.groupColorHex));
     content.innerHTML = '<span class="place-marker__pin"><svg class="place-marker__shape" viewBox="0 0 38 48" aria-hidden="true"><path d="M19 1C9.1 1 2 8.3 2 18.2C2 30.4 13.2 42 19 47C24.8 42 36 30.4 36 18.2C36 8.3 28.9 1 19 1Z"/></svg><span class="place-marker__count">' + markerCountLabel(place.recordCount) + '</span></span>';
-    var colors = Array.from(new Set((Array.isArray(place.groupColorHexes) && place.groupColorHexes.length ? place.groupColorHexes : [place.groupColorHex]).map(markerColor)));
-    var svg = content.querySelector('svg');
-    var gradientId = 'pin-gradient-' + overlays.length;
-    var stops = colors.map(function(color, index) {
-      return '<stop offset="' + (100 * index / colors.length) + '%" stop-color="' + color + '"/><stop offset="' + (100 * (index + 1) / colors.length) + '%" stop-color="' + color + '"/>';
-    }).join('');
-    svg.insertAdjacentHTML('afterbegin', '<defs><linearGradient id="' + gradientId + '">' + stops + '</linearGradient></defs>');
-    content.style.setProperty('--pin-fill', 'url(#' + gradientId + ')');
+    content.style.setProperty('--pin-fill', markerColor(place.groupColorHex));
     content.addEventListener('click', function () { OverlapMap.postMessage(String(place.id)); });
     overlays.push(new kakao.maps.CustomOverlay({ content: content, map: map, position: position, yAnchor: 1 })); bounds.extend(position);
   });

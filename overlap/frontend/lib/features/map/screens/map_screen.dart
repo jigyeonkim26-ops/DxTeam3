@@ -184,8 +184,11 @@ class _MapScreenState extends State<MapScreen> {
   List<MapPlace> get _visiblePlaces => _places
       .where((place) => place.filters.any(_selectedFilters.contains))
       .map(
-        (place) =>
-            place.forSelectedFilters(_selectedFilters, _availableFilters),
+        (place) => place.forSelectedFilters(
+          _selectedFilters,
+          _availableFilters,
+          isAll: _allFilters,
+        ),
       )
       .toList();
 
