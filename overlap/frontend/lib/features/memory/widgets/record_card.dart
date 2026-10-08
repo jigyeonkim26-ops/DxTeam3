@@ -80,9 +80,11 @@ class RecordCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(record.content, style: const TextStyle(height: 1.5)),
-              const SizedBox(height: AppSpacing.sm),
-              RecordPhoto(paths: record.imagePaths),
-              const SizedBox(height: AppSpacing.sm),
+              if (record.imagePaths.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sm),
+                RecordPhoto(paths: record.imagePaths),
+                const SizedBox(height: AppSpacing.sm),
+              ],
               Wrap(
                 spacing: AppSpacing.xs,
                 runSpacing: AppSpacing.xs,

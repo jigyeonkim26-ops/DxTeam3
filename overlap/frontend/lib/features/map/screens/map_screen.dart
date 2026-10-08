@@ -40,6 +40,8 @@ class _MapScreenState extends State<MapScreen> {
   var _isLocating = false;
   final bool _isSatellite = false;
   double _aiSheetExtent = 0.22;
+  final DraggableScrollableController _aiSheetController =
+      DraggableScrollableController();
 
   Future<void> _goToCurrentLocation() async {
     if (_isLocating) return;
@@ -84,6 +86,21 @@ class _MapScreenState extends State<MapScreen> {
     } else if (widget.selectedGroupId != null) {
       _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
     }
+  }
+
+  @override
+  void dispose() {
+    _aiSheetController.dispose();
+    super.dispose();
+  }
+
+  void _openAiRecommendations() {
+    if (!_aiSheetController.isAttached) return;
+    _aiSheetController.animateTo(
+      .5,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -201,6 +218,7 @@ class _MapScreenState extends State<MapScreen> {
       builder: (context, constraints) {
         final gpsBottom = constraints.maxHeight * _aiSheetExtent + 14;
         final shouldHideGps = _aiSheetExtent >= 0.75;
+        final isAiSheetCollapsed = _aiSheetExtent <= .04;
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -251,6 +269,22 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
             ),
+            Positioned(
+              right: AppSpacing.md,
+              bottom: gpsBottom + 52,
+              child: IgnorePointer(
+                ignoring: !isAiSheetCollapsed,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: isAiSheetCollapsed ? 1 : 0,
+                  child: _RoundIconButton(
+                    icon: Icons.auto_awesome,
+                    tooltip: 'AI 장소 추천 열기',
+                    onTap: _openAiRecommendations,
+                  ),
+                ),
+              ),
+            ),
             NotificationListener<DraggableScrollableNotification>(
               onNotification: (notification) {
                 if (notification.extent != _aiSheetExtent) {
@@ -259,11 +293,12 @@ class _MapScreenState extends State<MapScreen> {
                 return false;
               },
               child: DraggableScrollableSheet(
-                minChildSize: 0.12,
+                controller: _aiSheetController,
+                minChildSize: 0,
                 initialChildSize: 0.22,
                 maxChildSize: 0.90,
                 snap: true,
-                snapSizes: const [0.12, 0.50, 0.90],
+                snapSizes: const [0.50],
                 builder: (context, scrollController) => AiRecommendationContent(
                   scrollController: scrollController,
                   showSheetHeader: true,

@@ -75,7 +75,9 @@ abstract final class GroupApiService {
       '/groups',
       body: {
         'name': name.trim(),
-        'description': description?.trim().isEmpty == true ? null : description?.trim(),
+        'description': description?.trim().isEmpty == true
+            ? null
+            : description?.trim(),
         'visibility': visibility,
       },
     );
@@ -85,25 +87,43 @@ abstract final class GroupApiService {
     return GroupApiCreated.fromJson(response);
   }
 
-  static Future<GroupApiItem> updateGroupDetails({required int id, required String? description, required String visibility}) async {
-    final response = await ApiTransport.put('/groups/$id', body: {
-      'description': description, 'visibility': visibility,
-    });
-    if (response is! Map<String, dynamic>) throw const ApiException('모임 수정 응답을 확인할 수 없습니다.');
+  static Future<GroupApiItem> updateGroupDetails({
+    required int id,
+    required String? description,
+    required String visibility,
+  }) async {
+    final response = await ApiTransport.put(
+      '/groups/$id',
+      body: {'description': description, 'visibility': visibility},
+    );
+    if (response is! Map<String, dynamic>)
+      throw const ApiException('모임 수정 응답을 확인할 수 없습니다.');
     return GroupApiItem.fromJson(response);
   }
 
-  static Future<GroupApiItem> updatePreferences({required int id, bool updateCustomName = false, String? customName, bool? notificationsEnabled, int? pinColorValue}) async {
+  static Future<GroupApiItem> updatePreferences({
+    required int id,
+    bool updateCustomName = false,
+    String? customName,
+    bool? notificationsEnabled,
+    int? pinColorValue,
+  }) async {
     final body = <String, dynamic>{};
     if (updateCustomName) body['custom_name'] = customName;
-    if (notificationsEnabled != null) body['notifications_enabled'] = notificationsEnabled;
+    if (notificationsEnabled != null)
+      body['notifications_enabled'] = notificationsEnabled;
     if (pinColorValue != null) body['pin_color_value'] = pinColorValue;
-    final response = await ApiTransport.patch('/groups/$id/preferences', body: body);
-    if (response is! Map<String, dynamic>) throw const ApiException('모임 환경설정 응답을 확인할 수 없습니다.');
+    final response = await ApiTransport.patch(
+      '/groups/$id/preferences',
+      body: body,
+    );
+    if (response is! Map<String, dynamic>)
+      throw const ApiException('모임 환경설정 응답을 확인할 수 없습니다.');
     return GroupApiItem.fromJson(response);
   }
 
-  static Future<void> leaveGroup(int id) async => ApiTransport.delete('/groups/$id/members/me');
+  static Future<void> leaveGroup(int id) async =>
+      ApiTransport.delete('/groups/$id/members/me');
 
   static Future<GroupApiItem> joinGroup(String inviteCode) async {
     final response = await ApiTransport.post(

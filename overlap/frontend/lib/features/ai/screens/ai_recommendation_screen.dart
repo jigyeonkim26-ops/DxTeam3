@@ -94,128 +94,125 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
             ),
           ),
         ],
-            if (widget.showNavigation)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.sm,
-                AppSpacing.sm,
-                AppSpacing.md,
-                AppSpacing.sm,
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.maybePop(context),
-                    icon: const Icon(Icons.arrow_back),
-                    color: AppColors.deepNavy,
-                    tooltip: '뒤로가기',
+        if (widget.showNavigation)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.sm,
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.arrow_back),
+                  color: AppColors.deepNavy,
+                  tooltip: '뒤로가기',
+                ),
+                const SizedBox(width: AppSpacing.xxs),
+                const Expanded(
+                  child: Text(
+                    'AI 장소 추천',
+                    style: TextStyle(
+                      color: AppColors.deepNavy,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      decoration: TextDecoration.none,
+                    ),
                   ),
-                  const SizedBox(width: AppSpacing.xxs),
-                  const Expanded(
-                    child: Text(
-                      'AI 장소 추천',
+                ),
+              ],
+            ),
+          ),
+        const _AnalysisHero(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.lg,
+            AppSpacing.md,
+            0,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'FOR YOU',
                       style: TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      '새롭게 발견할 장소',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: AppColors.deepNavy,
-                        fontSize: 20,
                         fontWeight: FontWeight.w700,
                         decoration: TextDecoration.none,
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            const _AnalysisHero(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.lg,
-                AppSpacing.md,
-                0,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'FOR YOU',
-                          style: TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.xxs),
-                        Text(
-                          '새롭게 발견할 장소',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: AppColors.deepNavy,
-                                fontWeight: FontWeight.w700,
-                                decoration: TextDecoration.none,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm,
-                      vertical: AppSpacing.xs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.paleMint,
-                      borderRadius: BorderRadius.circular(
-                        AppSpacing.pillRadius,
-                      ),
-                    ),
-                    child: Text(
-                      '${_recommendations.length}곳',
-                      style: const TextStyle(
-                        color: AppColors.deepNavy,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              child: OutlinedButton.icon(
-                onPressed: _refreshRecommendations,
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('다른 장소 추천받기'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.deepNavy,
-                  side: const BorderSide(color: AppColors.softMint),
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            for (final recommendation in _recommendations) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                child: AiPlaceRecommendationCard(
-                  recommendation: recommendation,
-                  onTap: () {
-                    final onPlaceSelected = widget.onPlaceSelected;
-                    if (onPlaceSelected != null) {
-                      onPlaceSelected(recommendation.place);
-                    } else {
-                      Navigator.maybePop(context);
-                    }
-                  },
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm,
+                  vertical: AppSpacing.xs,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.paleMint,
+                  borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
+                ),
+                child: Text(
+                  '${_recommendations.length}곳',
+                  style: const TextStyle(
+                    color: AppColors.deepNavy,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
             ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: OutlinedButton.icon(
+            onPressed: _refreshRecommendations,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('다른 장소 추천받기'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.deepNavy,
+              side: const BorderSide(color: AppColors.softMint),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        for (final recommendation in _recommendations) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: AiPlaceRecommendationCard(
+              recommendation: recommendation,
+              onTap: () {
+                final onPlaceSelected = widget.onPlaceSelected;
+                if (onPlaceSelected != null) {
+                  onPlaceSelected(recommendation.place);
+                } else {
+                  Navigator.maybePop(context);
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+        ],
       ],
     );
     if (!widget.showSheetHeader) return content;

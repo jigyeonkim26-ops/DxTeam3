@@ -24,8 +24,9 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
       final group = await GroupApiService.joinGroup(widget.inviteCode);
       if (!mounted) return;
       setState(() => _joinedGroup = group);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('${group.displayName ?? group.name}에 참여했어요.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${group.displayName ?? group.name}에 참여했어요.')),
+      );
     } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)

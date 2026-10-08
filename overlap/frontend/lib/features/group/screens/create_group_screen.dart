@@ -4,9 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_transport.dart';
-import '../models/group_visibility.dart';
 import '../services/group_api_service.dart';
-import '../widgets/invite_info_card.dart';
 
 class CreateGroupScreen extends StatefulWidget {
   const CreateGroupScreen({super.key});
@@ -20,8 +18,6 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
 
-  GroupVisibility _visibility = GroupVisibility.invitedMembersOnly;
-  GroupApiCreated? _invite;
   bool _isCreating = false;
 
   @override
@@ -42,12 +38,12 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       final created = await GroupApiService.createGroup(
         name: _nameController.text.trim(),
         description: _descriptionController.text,
-        visibility: _visibility.apiValue,
+        // The create endpoint still requires visibility. This screen no longer
+        // exposes it as a user choice, so retain the existing private default.
+        visibility: 'INVITED_ONLY',
       );
       if (!mounted) return;
-      setState(() => _invite = created);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('${created.name} 모임을 만들었어요.')));
+      await _showCreatedSheet(created.inviteCode);
     } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -58,16 +54,87 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     }
   }
 
-  void _copyInviteValue(String value, String label) {
-    Clipboard.setData(ClipboardData(text: value));
+  Future<void> _copyInviteCode(String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$label 복사했어요.')));
+        .showSnackBar(const SnackBar(content: Text('초대 코드가 복사되었어요.')));
+  }
+
+  Future<void> _showCreatedSheet(String? inviteCode) async {
+    final code = inviteCode?.trim();
+    final hasCode = code?.isNotEmpty ?? false;
+    final completed = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.lg,
+            AppSpacing.lg,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '모임이 만들어졌어요!',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '초대 코드를 친구에게 보내\n모임에 함께 참여해 보세요.',
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: AppColors.muted, height: 1.55),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              const Text(
+                '초대 코드',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.paleMint,
+                  borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+                ),
+                child: Text(
+                  hasCode ? code! : '초대 코드를 불러오지 못했어요.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: hasCode ? AppColors.deepNavy : AppColors.muted,
+                    fontSize: hasCode ? 22 : 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: hasCode ? 1.4 : 0,
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              ElevatedButton.icon(
+                onPressed: hasCode ? () => _copyInviteCode(code!) : null,
+                icon: const Icon(Icons.copy_outlined),
+                label: const Text('초대코드 복사'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(true),
+                child: const Text('완료'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (completed == true && mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final invite = _invite;
-
     return Scaffold(
       appBar: AppBar(title: const Text('새 모임 만들기')),
       body: SafeArea(
@@ -119,27 +186,6 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 textInputAction: TextInputAction.newline,
                 decoration: const InputDecoration(alignLabelWithHint: true),
               ),
-              const SizedBox(height: AppSpacing.md),
-              Text('공유 범위', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: AppSpacing.xs),
-              DropdownButtonFormField<GroupVisibility>(
-                initialValue: _visibility,
-                isExpanded: true,
-                decoration: const InputDecoration(),
-                items: GroupVisibility.values
-                    .map(
-                      (visibility) => DropdownMenuItem(
-                        value: visibility,
-                        child: Text(visibility.label),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (visibility) {
-                  if (visibility != null) {
-                    setState(() => _visibility = visibility);
-                  }
-                },
-              ),
               const SizedBox(height: AppSpacing.lg),
               ElevatedButton(
                 onPressed: _isCreating ? null : _createGroup,
@@ -151,33 +197,6 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                       )
                     : const Text('모임 만들기'),
               ),
-              if (invite != null) ...[
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                  child: Divider(),
-                ),
-                Text(
-                  '${_nameController.text.trim()} 초대',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  '초대 링크를 공유하면, 친구는 링크를 열어 참여 여부를 확인할 수 있어요.',
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(height: 1.65),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                InviteInfoCard(
-                  title: '초대 코드',
-                  description: '짧은 코드를 직접 전달할 때 사용하세요.',
-                  value: invite.inviteCode,
-                  copyLabel: '코드 복사',
-                  onCopy: () => _copyInviteValue(invite.inviteCode, '초대 코드'),
-                ),
-              ],
             ],
           ),
         ),

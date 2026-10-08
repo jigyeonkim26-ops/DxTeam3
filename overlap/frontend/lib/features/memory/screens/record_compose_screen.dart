@@ -54,6 +54,9 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   double? _selectedLongitude;
   String? _selectedRoadAddress;
   var _isResolvingPlace = false;
+  // The compose flow now selects its location directly on the map. Keep the
+  // legacy search plumbing isolated until the map bridge is removed entirely.
+  final bool _showPlaceSearchUi = false;
   var _isSearchingPlace = false;
   String? _placeSearchMessage;
   List<KakaoPlaceSearchResult> _placeSearchResults = const [];
@@ -557,79 +560,84 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            const Text(
-              '장소 검색',
-              style: TextStyle(
-                color: AppColors.ink,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            TextField(
-              controller: _placeNameController,
-              maxLength: 50,
-              textInputAction: TextInputAction.search,
-              onChanged: _onPlaceSearchTextChanged,
-              onSubmitted: _submitPlaceSearch,
-              decoration: InputDecoration(
-                hintText: '장소 또는 주소를 검색해 주세요',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  tooltip: '장소 검색',
-                  onPressed: _submitPlaceSearch,
+            if (_showPlaceSearchUi) ...[
+              const SizedBox(height: AppSpacing.sm),
+              const Text(
+                '장소 검색',
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-            ),
-            if (_isSearchingPlace)
-              const Padding(
-                padding: EdgeInsets.only(top: AppSpacing.xs),
-                child: Text(
-                  '장소를 검색하고 있어요...',
-                  style: TextStyle(color: AppColors.muted, fontSize: 12),
+              const SizedBox(height: AppSpacing.xs),
+              TextField(
+                controller: _placeNameController,
+                maxLength: 50,
+                textInputAction: TextInputAction.search,
+                onChanged: _onPlaceSearchTextChanged,
+                onSubmitted: _submitPlaceSearch,
+                decoration: InputDecoration(
+                  hintText: '장소 또는 주소를 검색해 주세요',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    tooltip: '장소 검색',
+                    onPressed: _submitPlaceSearch,
+                  ),
                 ),
               ),
-            if (_placeSearchMessage case final String message)
-              Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.xs),
-                child: Text(
-                  message,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              if (_isSearchingPlace)
+                const Padding(
+                  padding: EdgeInsets.only(top: AppSpacing.xs),
+                  child: Text(
+                    '장소를 검색하고 있어요...',
+                    style: TextStyle(color: AppColors.muted, fontSize: 12),
+                  ),
                 ),
-              ),
-            if (_placeSearchResults.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 240),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _placeSearchResults.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final place = _placeSearchResults[index];
-                    final address = place.roadAddress.isNotEmpty
-                        ? place.roadAddress
-                        : place.address;
-                    final distance = _formatDistance(place.distance);
-                    final secondary = place.categoryName.isNotEmpty
-                        ? place.categoryName
-                        : place.phone;
-                    return ListTile(
-                      dense: true,
-                      title: Text(place.placeName),
-                      subtitle: Text(
-                        [
-                          address,
-                          secondary,
-                          distance,
-                        ].where((value) => value.isNotEmpty).join('\n'),
-                      ),
-                      onTap: () => _selectPlaceSearchResult(place),
-                    );
-                  },
+              if (_placeSearchMessage case final String message)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  child: Text(
+                    message,
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
-              ),
+              if (_placeSearchResults.isNotEmpty)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _placeSearchResults.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final place = _placeSearchResults[index];
+                      final address = place.roadAddress.isNotEmpty
+                          ? place.roadAddress
+                          : place.address;
+                      final distance = _formatDistance(place.distance);
+                      final secondary = place.categoryName.isNotEmpty
+                          ? place.categoryName
+                          : place.phone;
+                      return ListTile(
+                        dense: true,
+                        title: Text(place.placeName),
+                        subtitle: Text(
+                          [
+                            address,
+                            secondary,
+                            distance,
+                          ].where((value) => value.isNotEmpty).join('\n'),
+                        ),
+                        onTap: () => _selectPlaceSearchResult(place),
+                      );
+                    },
+                  ),
+                ),
+            ],
             if (_selectedRoadAddress case final String address
                 when address.isNotEmpty)
               Padding(
