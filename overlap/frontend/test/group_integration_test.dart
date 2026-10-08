@@ -87,6 +87,25 @@ void main() {
   });
 
   test(
+    'malformed member entries are reported as an API error, not an empty group',
+    () async {
+      ApiTransport.setAccessToken('group-test-token');
+      final server = _Client(
+        (_) => [
+          {'id': 10, 'nickname': '서연', 'is_current_user': true},
+          {'id': 'invalid', 'nickname': '잘못된 응답'},
+        ],
+      );
+      await HttpOverrides.runZoned(() async {
+        await expectLater(
+          GroupApiService.getGroupMembers(10),
+          throwsA(isA<ApiException>()),
+        );
+      }, createHttpClient: (_) => server);
+    },
+  );
+
+  test(
     'an authenticated 401 clears a session once, but login 401 does not',
     () async {
       ApiTransport.setAccessToken('expired-token');
@@ -136,6 +155,12 @@ void main() {
       if (request.uri.path == '/groups' && request.method == 'GET') {
         return [groupResponse()];
       }
+      if (request.uri.path == '/groups/10/members') {
+        return [
+          {'id': 10, 'nickname': '서연', 'is_current_user': true},
+          {'id': 11, 'nickname': '지연', 'is_current_user': false},
+        ];
+      }
       if (request.uri.path.endsWith('/invite')) {
         return {'invite_code': 'REAL-CODE'};
       }
@@ -155,6 +180,10 @@ void main() {
       expect(renamed.members, isEmpty);
       expect(renamed.description, '서버 소개');
       expect(renamed.visibility, 'LINK_REQUEST_ALLOWED');
+      final members = await GroupApiService.getGroupMembers(10);
+      expect(members.map((member) => member.nickname), ['서연', '지연']);
+      expect(members.singleWhere((member) => member.isCurrentUser).id, '10');
+      expect(server.requests.last.uri.path, '/groups/10/members');
       await GroupApiService.updatePreferences(
         id: 10,
         updateCustomName: true,
@@ -209,32 +238,44 @@ void main() {
     );
   });
 
-  testWidgets(
-    'server group opens HEAD management UI with member count and no invented details',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(900, 1800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      ApiTransport.setAccessToken('group-test-token');
-      final server = _Client((request) => [groupResponse()]);
-      await HttpOverrides.runZoned(() async {
-        await tester.pumpWidget(
-          const MaterialApp(home: Scaffold(body: GroupsScreen())),
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('실제 서버 모임'), findsOneWidget);
-        expect(find.text('연남 산책단'), findsNothing);
-        await tester.tap(find.text('실제 서버 모임'));
-        await tester.pumpAndSettle();
-        expect(find.text('모임 관리'), findsOneWidget);
-        expect(find.textContaining('멤버 3명'), findsOneWidget);
-        expect(find.text('멤버 상세 정보가 제공되지 않았어요.'), findsOneWidget);
-        expect(find.text('소개/공유 범위 저장'), findsOneWidget);
-        expect(find.text('서연'), findsNothing);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox());
-      }, createHttpClient: (_) => server);
-    },
-  );
+  testWidgets('server group opens management UI with actual member details', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    ApiTransport.setAccessToken('group-test-token');
+    final server = _Client((request) {
+      if (request.uri.path == '/groups' && request.method == 'GET') {
+        return [groupResponse()];
+      }
+      if (request.uri.path == '/groups/10/members') {
+        return [
+          {'id': 10, 'nickname': '서연', 'is_current_user': true},
+          {'id': 11, 'nickname': '지연', 'is_current_user': false},
+        ];
+      }
+      return null;
+    });
+    await HttpOverrides.runZoned(() async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: GroupsScreen())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('실제 서버 모임'), findsOneWidget);
+      expect(find.text('연남 산책단'), findsNothing);
+      await tester.tap(find.text('실제 서버 모임'));
+      await tester.pumpAndSettle();
+      expect(find.text('모임 관리'), findsOneWidget);
+      expect(find.textContaining('멤버 2명'), findsOneWidget);
+      expect(find.text('서연'), findsOneWidget);
+      expect(find.text('지연'), findsOneWidget);
+      expect(find.text('나'), findsOneWidget);
+      expect(find.text('멤버 상세 정보가 제공되지 않았어요.'), findsNothing);
+      expect(find.text('소개/공유 범위 저장'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    }, createHttpClient: (_) => server);
+  });
 
   testWidgets('invite sheet keeps copy and removes the unused share action', (
     tester,

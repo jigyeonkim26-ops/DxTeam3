@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .group_db_models import MemoryGroup
-from .models import GroupCreated, GroupPublic
+from .models import GroupCreated, GroupMemberPublic, GroupPublic
 from . import group_repository
 from .notification_service import notify_group_members
 
@@ -166,6 +166,34 @@ def list_groups(
     return [
         _to_group_public(db, group, user_id)
         for group in groups
+    ]
+
+
+def list_members(
+    db: Session,
+    *,
+    user_id: int,
+    group_id: int,
+) -> list[GroupMemberPublic]:
+    """List a group's members only for a viewer already in that group."""
+    if not group_repository.is_member(db, group_id=group_id, user_id=user_id):
+        # Do not reveal whether an unseen group exists to a non-member.
+        raise HTTPException(404, "가입한 모임을 찾을 수 없습니다.")
+
+    return [
+        GroupMemberPublic(
+            id=member_id,
+            nickname=(
+                nickname.strip()
+                if nickname and nickname.strip()
+                else f"사용자 {member_id}"
+            ),
+            is_current_user=member_id == user_id,
+        )
+        for member_id, nickname in group_repository.list_members_with_nickname(
+            db,
+            group_id=group_id,
+        )
     ]
 
 

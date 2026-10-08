@@ -51,6 +51,7 @@ from .object_storage import get_object_storage
 from .models import (
     GroupCreated,
     GroupInput,
+    GroupMemberPublic,
     GroupPublic,
     GroupPreferencesInput,
     GroupUpdateInput,
@@ -446,6 +447,26 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
         if db is None:
             return service.list_groups(user.id)
         return group_service.list_groups(db, user_id=user.id)
+
+    @api.get(
+        "/groups/{group_id}/members",
+        response_model=list[GroupMemberPublic],
+        tags=["2. 모임"],
+        summary="가입한 모임의 멤버 목록",
+    )
+    def list_group_members(
+        group_id: int,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        # In-memory learning mode has no database-backed public member profile
+        # projection. Do not present mock accounts as MySQL member data.
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="모임 멤버 조회는 데이터베이스 연결이 필요합니다.",
+            )
+        return group_service.list_members(db, user_id=user.id, group_id=group_id)
 
     @api.get(
         "/groups/{group_id}/invite",

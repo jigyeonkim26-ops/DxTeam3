@@ -157,4 +157,22 @@ abstract final class GroupListStore {
     groupsListenable.value = updatedGroups;
     return true;
   }
+
+  /// Applies only a successful server response to the shared group cache.
+  static bool updateMembers(
+    String groupId,
+    List<GroupMemberData> members,
+  ) {
+    final current = groupsListenable.value;
+    final index = current.indexWhere((group) => group.id == groupId);
+    if (index == -1) return false;
+
+    final updated = List<GroupListItemData>.of(current)
+      ..[index] = current[index].copyWith(
+        memberCount: members.length,
+        members: List<GroupMemberData>.unmodifiable(members),
+      );
+    groupsListenable.value = List<GroupListItemData>.unmodifiable(updated);
+    return true;
+  }
 }

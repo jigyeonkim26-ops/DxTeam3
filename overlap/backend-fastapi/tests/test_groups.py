@@ -79,6 +79,24 @@ def test_group_routes_require_authentication():
         assert client.post("/groups", json={"name": "테스트 모임"}).status_code == 401
 
 
+def test_member_list_does_not_present_memory_accounts_as_database_members():
+    with TestClient(create_app(MemoryService())) as client:
+        owner = _account(client, "member-list-owner@example.com")
+        created = client.post(
+            "/groups",
+            headers=owner,
+            json={"name": "테스트 모임"},
+        )
+        assert created.status_code == 201
+
+        response = client.get(
+            f"/groups/{created.json()['id']}/members",
+            headers=owner,
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "모임 멤버 조회는 데이터베이스 연결이 필요합니다."
+
+
 def test_group_routes_use_database_service_when_session_is_available(monkeypatch):
     app = create_app(MemoryService())
     session = object()

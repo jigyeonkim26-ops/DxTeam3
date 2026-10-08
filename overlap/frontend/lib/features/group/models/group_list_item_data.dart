@@ -91,10 +91,10 @@ class GroupMemberData {
   const GroupMemberData({
     required this.id,
     required this.nickname,
-    this.profileImagePath,
+    this.isCurrentUser = false,
   });
 
   final String id;
   final String nickname;
-  final String? profileImagePath;
+  final bool isCurrentUser;
 }

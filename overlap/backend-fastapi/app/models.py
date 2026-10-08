@@ -123,6 +123,14 @@ class GroupPublic(BaseModel):
     pin_color_value: int | None = None
 
 
+class GroupMemberPublic(BaseModel):
+    """The minimal member data that a joined group member may view."""
+
+    id: int
+    nickname: str
+    is_current_user: bool
+
+
 class GroupCreated(GroupPublic):
     invite_code: str
 
