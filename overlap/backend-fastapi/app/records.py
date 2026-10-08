@@ -1,5 +1,7 @@
 """Personal records and feeds; all visibility checks happen on the server."""
 import io
+import hashlib
+import mimetypes
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
@@ -89,7 +91,17 @@ def record_public(db: Session, record: Record, viewer_id: int):
         GroupMember, GroupMember.group_id == MemoryGroup.id
     ).where(RecordGroup.record_id == record.id, GroupMember.user_id == viewer_id)).all()
     return dict(
-        id=record.id, author=dict(id=author.id, name=author.nickname or "사용자"),
+        id=record.id,
+        author=dict(
+            id=author.id,
+            name=author.nickname or "사용자",
+            profile_image_url=(
+                f"/records/{record.id}/author-photo?v="
+                f"{hashlib.sha256(author.profile_image_key.encode()).hexdigest()[:16]}"
+                if author.profile_image_key is not None
+                else None
+            ),
+        ),
         place=dict(id=place.id, name=place.name, address=place.address,
                    latitude=float(place.latitude), longitude=float(place.longitude)),
         content=record.content, emotion=record.emotion, is_private=record.is_private,
@@ -391,5 +403,32 @@ def router(current_user):
                 body.close()
         return StreamingResponse(chunks(), media_type=photo.mime_type or "image/jpeg",
                                  headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+    @api.get("/records/{record_id}/author-photo")
+    def author_photo(record_id: int, user=Depends(current_user), db: Session = Depends(require_db)):
+        record = db.scalar(select(Record).where(Record.id == record_id, visibility(user.id)))
+        if record is None:
+            raise HTTPException(404, "기록을 찾을 수 없습니다.")
+        author = db.get(User, record.author_id)
+        if author is None or author.profile_image_key is None:
+            raise HTTPException(404, "등록된 프로필 사진이 없습니다.")
+        body = get_object_storage().download(author.profile_image_key)
+
+        def chunks():
+            try:
+                while chunk := body.read(64 * 1024):
+                    yield chunk
+            finally:
+                body.close()
+
+        media_type = mimetypes.guess_type(author.profile_image_key)[0] or "application/octet-stream"
+        return StreamingResponse(
+            chunks(),
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     return api

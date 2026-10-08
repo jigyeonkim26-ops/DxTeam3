@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .db_models import User
 from .record_models import Comment
 from .notification_service import notify_record_author
 from .records import require_db, require_visible_record
@@ -18,8 +19,12 @@ class CommentInput(BaseModel):
     parent_comment_id: int | None = Field(default=None, gt=0)
 
 
+class CommentAuthorPublic(BaseModel):
+    id: int
+    name: str
+
+
 class CommentPublic(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
     id: int
     record_id: int
     author_id: int
@@ -27,6 +32,7 @@ class CommentPublic(BaseModel):
     content: str
     created_at: datetime
     updated_at: datetime
+    author: CommentAuthorPublic
 
 
 class CommentPage(BaseModel):
@@ -34,6 +40,19 @@ class CommentPage(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+def comment_public(comment: Comment, author: User) -> CommentPublic:
+    return CommentPublic(
+        id=comment.id,
+        record_id=comment.record_id,
+        author_id=comment.author_id,
+        parent_comment_id=comment.parent_comment_id,
+        content=comment.content,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+        author=CommentAuthorPublic(id=author.id, name=author.nickname or "사용자"),
+    )
 
 
 def router(current_user):
@@ -45,11 +64,12 @@ def router(current_user):
         offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100),
     ):
         require_visible_record(db, record_id, user.id)
-        query = select(Comment).where(Comment.record_id == record_id)
+        query = select(Comment, User).join(User, User.id == Comment.author_id).where(
+            Comment.record_id == record_id)
         total = db.scalar(select(func.count()).select_from(query.subquery()))
-        comments = db.scalars(query.order_by(Comment.created_at, Comment.id)
+        comments = db.execute(query.order_by(Comment.created_at, Comment.id)
                               .offset(offset).limit(limit)).all()
-        return CommentPage(items=[CommentPublic.model_validate(c) for c in comments],
+        return CommentPage(items=[comment_public(comment, author) for comment, author in comments],
                            total=total, offset=offset, limit=limit)
 
     @api.post("/records/{record_id}/comments", response_model=CommentPublic, status_code=201)
@@ -73,7 +93,7 @@ def router(current_user):
             db.rollback()
             raise HTTPException(409, "댓글을 저장하지 못했습니다. 다시 시도해 주세요.") from None
         db.refresh(comment)
-        return CommentPublic.model_validate(comment)
+        return comment_public(comment, user)
 
     @api.delete("/records/{record_id}/comments/{comment_id}", status_code=204)
     def delete_comment(

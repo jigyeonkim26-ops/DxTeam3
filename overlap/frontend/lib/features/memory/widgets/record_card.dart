@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_config.dart';
+import '../../../core/network/api_transport.dart';
 import '../../../shared/models/record.dart';
 import 'record_photo.dart';
 
@@ -14,6 +16,8 @@ class RecordCard extends StatelessWidget {
     required this.onLikeTap,
     required this.onCommentTap,
     required this.onPlaceTap,
+    this.likeCount,
+    this.isLikeLoading = false,
   });
 
   final Record record;
@@ -22,10 +26,12 @@ class RecordCard extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final VoidCallback onPlaceTap;
+  final int? likeCount;
+  final bool isLikeLoading;
 
   @override
   Widget build(BuildContext context) {
-    final likeCount = record.likeCount + (isLiked ? 1 : 0);
+    final displayLikeCount = likeCount ?? record.likeCount;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -37,7 +43,10 @@ class RecordCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _Avatar(name: record.author.name),
+                  _Avatar(
+                    name: record.author.name,
+                    profileImagePath: record.author.profileImagePath,
+                  ),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Column(
@@ -78,31 +87,21 @@ class RecordCard extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(record.content, style: const TextStyle(height: 1.5)),
               if (record.imagePaths.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.sm),
                 RecordPhoto(paths: record.imagePaths),
                 const SizedBox(height: AppSpacing.sm),
               ],
-              Wrap(
-                spacing: AppSpacing.xs,
-                runSpacing: AppSpacing.xs,
-                children: [
-                  _EmotionChip(record: record),
-                  if (record.isPrivate) const _GroupChip(label: '나만 보기'),
-                  for (final group in record.sharedGroups)
-                    _GroupChip(label: group.name),
-                ],
-              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(record.content, style: const TextStyle(height: 1.5)),
               const Divider(height: AppSpacing.lg),
               Row(
                 children: [
                   _ActionButton(
                     icon: isLiked ? Icons.favorite : Icons.favorite_border,
-                    label: '공감 $likeCount',
+                    label: '공감 $displayLikeCount',
                     color: isLiked ? AppColors.coral : AppColors.muted,
-                    onTap: onLikeTap,
+                    onTap: isLikeLoading ? null : onLikeTap,
                   ),
                   const SizedBox(width: AppSpacing.lg),
                   _ActionButton(
@@ -130,67 +129,54 @@ class RecordCard extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name});
+  const _Avatar({required this.name, this.profileImagePath});
 
   final String name;
+  final String? profileImagePath;
 
   @override
   Widget build(BuildContext context) {
+    final initial = name.isEmpty ? '?' : name.substring(0, 1);
+    final token = ApiTransport.accessToken;
+    final path = profileImagePath;
+    final imageUrl = path == null || path.isEmpty
+        ? null
+        : path.startsWith('http://') || path.startsWith('https://')
+        ? path
+        : '${ApiConfig.baseUrl}$path';
+    final provider = imageUrl == null || token == null || token.isEmpty
+        ? null
+        : NetworkImage(imageUrl, headers: {'Authorization': 'Bearer $token'});
+
     return CircleAvatar(
       radius: 20,
       backgroundColor: AppColors.softMint,
       foregroundColor: AppColors.deepNavy,
-      child: Text(
-        name.isEmpty ? '?' : name.substring(0, 1),
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
+      child: provider == null
+          ? _AvatarInitial(initial: initial)
+          : ClipOval(
+              child: SizedBox.expand(
+                child: Image(
+                  image: provider,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _AvatarInitial(initial: initial),
+                ),
+              ),
+            ),
     );
   }
 }
 
-class _EmotionChip extends StatelessWidget {
-  const _EmotionChip({required this.record});
+class _AvatarInitial extends StatelessWidget {
+  const _AvatarInitial({required this.initial});
 
-  final Record record;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.paleMint,
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text('${record.emotion.emoji} ${record.emotion.displayName}'),
-    );
-  }
-}
-
-class _GroupChip extends StatelessWidget {
-  const _GroupChip({required this.label});
-
-  final String label;
+  final String initial;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        border: Border.all(color: AppColors.divider),
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: AppColors.muted, fontSize: 12),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Text(
+    initial,
+    style: const TextStyle(fontWeight: FontWeight.w700),
+  );
 }
 
 class _ActionButton extends StatelessWidget {
@@ -204,7 +190,7 @@ class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

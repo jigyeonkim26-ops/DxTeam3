@@ -7,6 +7,7 @@ class CommentItem {
     required this.author,
     required this.createdAt,
     required this.content,
+    this.parentCommentId,
     List<CommentItem>? replies,
   }) : replies = replies ?? [];
 
@@ -14,5 +15,6 @@ class CommentItem {
   final User author;
   final DateTime createdAt;
   final String content;
+  final String? parentCommentId;
   final List<CommentItem> replies;
 }

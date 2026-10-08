@@ -11,6 +11,7 @@ class CommentInput extends StatelessWidget {
     this.focusNode,
     this.replyingToName,
     this.onCancelReply,
+    this.isSubmitting = false,
   });
 
   final TextEditingController controller;
@@ -18,6 +19,7 @@ class CommentInput extends StatelessWidget {
   final FocusNode? focusNode;
   final String? replyingToName;
   final VoidCallback? onCancelReply;
+  final bool isSubmitting;
 
   @override
   Widget build(BuildContext context) {
@@ -88,12 +90,21 @@ class CommentInput extends StatelessWidget {
                   ),
                   const SizedBox(width: AppSpacing.xs),
                   IconButton.filled(
-                    onPressed: onSubmit,
+                    onPressed: isSubmitting ? null : onSubmit,
                     style: IconButton.styleFrom(
                       backgroundColor: AppColors.coral,
                       foregroundColor: Colors.white,
                     ),
-                    icon: const Icon(Icons.arrow_upward_rounded),
+                    icon: isSubmitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.arrow_upward_rounded),
                     tooltip: isReplying ? '답글 등록' : '댓글 등록',
                   ),
                 ],

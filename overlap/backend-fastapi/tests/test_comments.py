@@ -18,6 +18,7 @@ def test_create_list_and_delete_comment(world):
     item = response.json()
     assert item["content"] == "Comment text"
     assert item["record_id"] == record_id and item["author_id"] == 1
+    assert item["author"] == {"id": 1, "name": "테스트1"}
     assert item["parent_comment_id"] is None
     assert item["created_at"] and item["updated_at"]
     client, _, _, headers = world
