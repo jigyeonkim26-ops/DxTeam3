@@ -12,8 +12,10 @@ import '../../memory/widgets/record_card.dart';
 import '../../../shared/models/record.dart';
 import '../models/profile_summary_data.dart';
 import '../models/user_profile.dart';
+import '../services/saved_places_api.dart';
 import '../widgets/profile_summary_card.dart';
 import 'profile_edit_screen.dart';
+import 'saved_screen.dart';
 
 enum _ProfileContentTab { feed, savedPlaces }
 
@@ -22,10 +24,12 @@ class ProfileScreen extends StatefulWidget {
     super.key,
     this.onShowMyMap,
     this.recordApi,
+    this.savedPlacesApi,
     this.isActive = true,
   });
 
   final RecordApi? recordApi;
+  final SavedPlacesApi? savedPlacesApi;
   final bool isActive;
   final VoidCallback? onShowMyMap;
 
@@ -276,7 +280,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (_selectedContentTab == _ProfileContentTab.feed)
                 _buildRecords()
               else
-                const _SavedPlacesUnavailable(),
+                SavedScreen(
+                  embedded: true,
+                  isActive: widget.isActive,
+                  savedPlacesApi: widget.savedPlacesApi,
+                ),
             ],
           ),
         );
@@ -322,23 +330,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: AppSpacing.md),
         ],
       ],
-    );
-  }
-}
-
-class _SavedPlacesUnavailable extends StatelessWidget {
-  const _SavedPlacesUnavailable();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-      child: Center(
-        child: Text(
-          '저장한 장소 조회 API가 아직 제공되지 않습니다.',
-          style: TextStyle(color: AppColors.muted),
-        ),
-      ),
     );
   }
 }

@@ -281,6 +281,39 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                       : PopupMenuButton<_RecordMenuAction>(
                           tooltip: '기록 메뉴',
                           onSelected: _onMenuSelected,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm,
+                              vertical: AppSpacing.xs,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(
+                                AppSpacing.pillRadius,
+                              ),
+                              border: Border.all(color: AppColors.divider),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.edit_note_rounded,
+                                  size: 19,
+                                  color: AppColors.deepNavy,
+                                ),
+                                SizedBox(width: AppSpacing.xxs),
+                                Text(
+                                  '내 기록 관리',
+                                  style: TextStyle(
+                                    color: AppColors.deepNavy,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           itemBuilder: (context) => const [
                             PopupMenuItem(
                               value: _RecordMenuAction.edit,
