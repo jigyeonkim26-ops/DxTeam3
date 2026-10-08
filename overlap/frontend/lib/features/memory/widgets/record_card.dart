@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_config.dart';
+import '../../../core/network/api_transport.dart';
 import '../../../shared/models/record.dart';
 import 'record_photo.dart';
 
@@ -41,7 +43,10 @@ class RecordCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _Avatar(name: record.author.name),
+                  _Avatar(
+                    name: record.author.name,
+                    profileImagePath: record.author.profileImagePath,
+                  ),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Column(
@@ -133,22 +138,54 @@ class RecordCard extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name});
+  const _Avatar({required this.name, this.profileImagePath});
 
   final String name;
+  final String? profileImagePath;
 
   @override
   Widget build(BuildContext context) {
+    final initial = name.isEmpty ? '?' : name.substring(0, 1);
+    final token = ApiTransport.accessToken;
+    final path = profileImagePath;
+    final imageUrl = path == null || path.isEmpty
+        ? null
+        : path.startsWith('http://') || path.startsWith('https://')
+        ? path
+        : '${ApiConfig.baseUrl}$path';
+    final provider = imageUrl == null || token == null || token.isEmpty
+        ? null
+        : NetworkImage(imageUrl, headers: {'Authorization': 'Bearer $token'});
+
     return CircleAvatar(
       radius: 20,
       backgroundColor: AppColors.softMint,
       foregroundColor: AppColors.deepNavy,
-      child: Text(
-        name.isEmpty ? '?' : name.substring(0, 1),
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
+      child: provider == null
+          ? _AvatarInitial(initial: initial)
+          : ClipOval(
+              child: SizedBox.expand(
+                child: Image(
+                  image: provider,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _AvatarInitial(initial: initial),
+                ),
+              ),
+            ),
     );
   }
+}
+
+class _AvatarInitial extends StatelessWidget {
+  const _AvatarInitial({required this.initial});
+
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    initial,
+    style: const TextStyle(fontWeight: FontWeight.w700),
+  );
 }
 
 class _GroupChip extends StatelessWidget {

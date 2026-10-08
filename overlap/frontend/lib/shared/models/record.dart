@@ -36,7 +36,11 @@ class Record {
     final place = json['place'] as Map;
     return Record(
       id: '${json['id']}',
-      author: User(id: '${author['id']}', name: author['name'] as String),
+      author: User(
+        id: '${author['id']}',
+        name: author['name'] as String,
+        profileImagePath: author['profile_image_url'] as String?,
+      ),
       place: Place(
         id: '${place['id']}',
         name: place['name'] as String,
