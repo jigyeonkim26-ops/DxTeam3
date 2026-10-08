@@ -356,6 +356,7 @@ def router(current_user):
     @api.get("/feed")
     def feed(user=Depends(current_user), db: Session = Depends(require_db),
              mine: bool = False, group_id: int | None = Query(default=None, gt=0),
+             place_id: int | None = Query(default=None, gt=0),
              offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100)):
         # Identity comes only from the authenticated dependency, never query input.
         # EXISTS limits shared records to joined groups; DISTINCT also protects
@@ -363,6 +364,8 @@ def router(current_user):
         query = select(Record).where(visibility(user.id)).distinct()
         if mine:
             query = query.where(Record.author_id == user.id)
+        if place_id is not None:
+            query = query.where(Record.place_id == place_id)
         if group_id is not None:
             if db.get(GroupMember, (group_id, user.id)) is None:
                 raise HTTPException(403, "가입한 모임만 조회할 수 있습니다.")
