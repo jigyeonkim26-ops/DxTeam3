@@ -85,6 +85,17 @@ from .place_recommendation_service import (
     RecommendationResponseParseError,
     RecommendationServiceNotConfiguredError,
 )
+from .config import LLM_PROVIDER, SEARCH_PROVIDER
+from .gemini_preference_keyword_service import GeminiPreferenceKeywordService
+from .gemini_place_recommendation_service import GeminiPlaceRecommendationService
+from .openrouter_preference_keyword_service import OpenRouterPreferenceKeywordService
+from .openrouter_place_recommendation_service import OpenRouterPlaceRecommendationService
+from .provider_factory import (
+    build_preference_service,
+    build_recommendation_service,
+    build_search_service,
+)
+from .tavily_place_search_service import TavilyPlaceSearchService, TavilySearchRequestError
 
 
 Offset = Annotated[int, Query(ge=0)]
@@ -95,14 +106,14 @@ def create_app(
     service: MemoryService | None = None,
     *,
     use_db_auth: bool = False,
-    preference_service: PreferenceKeywordService | None = None,
-    place_web_search_service: PlaceWebSearchService | None = None,
-    place_recommendation_service: PlaceRecommendationService | None = None,
+    preference_service: PreferenceKeywordService | GeminiPreferenceKeywordService | OpenRouterPreferenceKeywordService | None = None,
+    place_web_search_service: PlaceWebSearchService | TavilyPlaceSearchService | None = None,
+    place_recommendation_service: PlaceRecommendationService | GeminiPlaceRecommendationService | OpenRouterPlaceRecommendationService | None = None,
 ) -> FastAPI:
     service = service if service is not None else MemoryService()
-    preference_service = preference_service or PreferenceKeywordService()
-    place_web_search_service = place_web_search_service or PlaceWebSearchService()
-    place_recommendation_service = place_recommendation_service or PlaceRecommendationService()
+    preference_service = preference_service or build_preference_service(LLM_PROVIDER)
+    place_web_search_service = place_web_search_service or build_search_service(SEARCH_PROVIDER)
+    place_recommendation_service = place_recommendation_service or build_recommendation_service(LLM_PROVIDER)
 
     api = FastAPI(
         title="오버랩 Backend — 시작 프로젝트",
@@ -284,7 +295,7 @@ def create_app(
                 status_code=503,
                 detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
             ) from exc
-        except OpenAIResponseRequestError as exc:
+        except (OpenAIResponseRequestError, TavilySearchRequestError) as exc:
             raise HTTPException(
                 status_code=502,
                 detail={"code": "openai_request_failed", "message": "The OpenAI Responses request failed"},
@@ -346,7 +357,7 @@ def create_app(
                 status_code=503,
                 detail={"code": "llm_not_configured", "message": "OPENAI_API_KEY is not configured"},
             ) from exc
-        except OpenAIResponseRequestError as exc:
+        except (OpenAIResponseRequestError, TavilySearchRequestError) as exc:
             raise HTTPException(
                 status_code=502,
                 detail={"code": "openai_request_failed", "message": "The OpenAI Responses request failed"},
