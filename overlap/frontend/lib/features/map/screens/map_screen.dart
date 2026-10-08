@@ -207,7 +207,14 @@ class _MapScreenState extends State<MapScreen> {
         onViewDetails: () {
           Navigator.pop(sheetContext);
           Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const PlaceDetailScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) => PlaceDetailScreen(
+                placeId: place.id,
+                name: place.name,
+                address: place.address,
+                recordCount: place.recordCount,
+              ),
+            ),
           );
         },
       ),

@@ -2,14 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../shared/models/place.dart';
-import '../../../shared/models/record.dart';
-import '../../memory/screens/record_detail_screen.dart';
-import '../widgets/place_record_preview_card.dart';
 
-/// 특정 장소에 쌓인 기록을 보여주는 독립 화면입니다.
+/// 선택한 장소에 쌓인 기록을 보여주는 상세 화면입니다.
 class PlaceDetailScreen extends StatefulWidget {
-  const PlaceDetailScreen({super.key});
+  const PlaceDetailScreen({
+    super.key,
+    required this.placeId,
+    required this.name,
+    required this.address,
+    required this.recordCount,
+  });
+
+  final String placeId;
+  final String name;
+  final String? address;
+  final int recordCount;
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
@@ -17,17 +24,6 @@ class PlaceDetailScreen extends StatefulWidget {
 
 class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
   bool _isSaved = false;
-
-  static const _place = Place(
-    id: 'place-yeonnam-cafe',
-    name: '연남동 작은 카페',
-    latitude: 37.5665,
-    longitude: 126.9250,
-    address: '서울 마포구 연남동',
-    recordCount: 3,
-  );
-
-  static const List<Record> _records = [];
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +68,12 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            _PlaceSummary(place: _place, isSaved: _isSaved),
+            _PlaceSummary(
+              name: widget.name,
+              address: widget.address,
+              recordCount: widget.recordCount,
+              isSaved: _isSaved,
+            ),
             const SizedBox(height: AppSpacing.lg),
             Text(
               '이 장소에 쌓인 기억',
@@ -85,7 +86,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
             ),
             const SizedBox(height: AppSpacing.xxs),
             Text(
-              '친구들이 같은 장소에서 남긴 순간들이에요.',
+              '친구들이 같은 장소에서 보낸 시간들이에요.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppColors.muted,
                 fontSize: 14,
@@ -94,19 +95,6 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            for (final record in _records) ...[
-              PlaceRecordPreviewCard(
-                record: record,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => RecordDetailScreen(record: record),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: AppSpacing.md),
-            ],
           ],
         ),
       ),
@@ -115,9 +103,16 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
 }
 
 class _PlaceSummary extends StatelessWidget {
-  const _PlaceSummary({required this.place, required this.isSaved});
+  const _PlaceSummary({
+    required this.name,
+    required this.address,
+    required this.recordCount,
+    required this.isSaved,
+  });
 
-  final Place place;
+  final String name;
+  final String? address;
+  final int recordCount;
   final bool isSaved;
 
   @override
@@ -140,7 +135,7 @@ class _PlaceSummary extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              place.name,
+              name,
               style: const TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w700,
@@ -154,7 +149,7 @@ class _PlaceSummary extends StatelessWidget {
                 const SizedBox(width: AppSpacing.xxs),
                 Expanded(
                   child: Text(
-                    place.address ?? '주소 정보 없음',
+                    address ?? '주소 정보 없음',
                     style: const TextStyle(color: AppColors.muted),
                   ),
                 ),
@@ -177,7 +172,7 @@ class _PlaceSummary extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.all(AppSpacing.sm),
                   child: Text(
-                    '창가 자리와 따뜻한 오후',
+                    '창가 자리와 어울리는 오후',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -191,7 +186,7 @@ class _PlaceSummary extends StatelessWidget {
               children: [
                 _SummaryChip(
                   icon: Icons.auto_stories_outlined,
-                  label: '기록 ${place.recordCount}개',
+                  label: '기록 $recordCount개',
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 _SummaryChip(
