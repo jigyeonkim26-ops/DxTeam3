@@ -7,8 +7,8 @@ import '../../../shared/models/record.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../../memory/services/record_api.dart';
 import '../../memory/widgets/record_card.dart';
+import '../../user/services/saved_places_api.dart';
 
-/// 선택한 장소에 쌓인 기록을 보여주는 상세 화면입니다.
 class PlaceDetailScreen extends StatefulWidget {
   const PlaceDetailScreen({
     super.key,
@@ -17,6 +17,7 @@ class PlaceDetailScreen extends StatefulWidget {
     required this.address,
     required this.recordCount,
     this.recordApi,
+    this.savedPlacesApi,
   });
 
   final String placeId;
@@ -24,28 +25,39 @@ class PlaceDetailScreen extends StatefulWidget {
   final String? address;
   final int recordCount;
   final RecordApi? recordApi;
+  final SavedPlacesApi? savedPlacesApi;
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
 }
 
 class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
-  bool _isSaved = false;
   late final RecordApi _recordApi;
+  late final SavedPlacesApi _savedPlacesApi;
   List<Record> _records = const [];
   bool _isLoadingRecords = true;
   bool _hasRecordLoadError = false;
+  bool _isSaved = false;
+  bool _isLoadingSavedState = true;
+  bool _isSaving = false;
+
+  int? get _placeId {
+    final placeId = int.tryParse(widget.placeId);
+    return placeId != null && placeId > 0 ? placeId : null;
+  }
 
   @override
   void initState() {
     super.initState();
     _recordApi = widget.recordApi ?? RecordApi();
+    _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
     _loadRecords();
+    _loadSavedState();
   }
 
   Future<void> _loadRecords() async {
-    final placeId = int.tryParse(widget.placeId);
-    if (placeId == null || placeId <= 0) {
+    final placeId = _placeId;
+    if (placeId == null) {
       if (!mounted) return;
       setState(() {
         _isLoadingRecords = false;
@@ -71,6 +83,44 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
         _isLoadingRecords = false;
         _hasRecordLoadError = true;
       });
+    }
+  }
+
+  Future<void> _loadSavedState() async {
+    final placeId = _placeId;
+    if (placeId == null) {
+      if (mounted) setState(() => _isLoadingSavedState = false);
+      return;
+    }
+    try {
+      final state = await _savedPlacesApi.state(placeId);
+      if (!mounted) return;
+      setState(() {
+        _isSaved = state.saved;
+        _isLoadingSavedState = false;
+      });
+    } on ApiException {
+      if (!mounted) return;
+      setState(() => _isLoadingSavedState = false);
+    }
+  }
+
+  Future<void> _toggleSaved() async {
+    final placeId = _placeId;
+    if (placeId == null || _isSaving || _isLoadingSavedState) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final state = _isSaved
+          ? await _savedPlacesApi.unsave(placeId)
+          : await _savedPlacesApi.save(placeId);
+      if (!mounted) return;
+      setState(() => _isSaved = state.saved);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -113,11 +163,19 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: () => setState(() => _isSaved = !_isSaved),
-                  icon: Icon(
-                    _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                    color: _isSaved ? AppColors.coral : AppColors.deepNavy,
-                  ),
+                  onPressed: _isSaving || _isLoadingSavedState
+                      ? null
+                      : _toggleSaved,
+                  icon: _isSaving || _isLoadingSavedState
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                          color: _isSaved ? AppColors.coral : AppColors.deepNavy,
+                        ),
                   tooltip: _isSaved ? '저장 취소' : '장소 저장',
                 ),
               ],
@@ -127,7 +185,6 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               name: widget.name,
               address: widget.address,
               recordCount: widget.recordCount,
-              isSaved: _isSaved,
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(
@@ -185,13 +242,11 @@ class _PlaceSummary extends StatelessWidget {
     required this.name,
     required this.address,
     required this.recordCount,
-    required this.isSaved,
   });
 
   final String name;
   final String? address;
   final int recordCount;
-  final bool isSaved;
 
   @override
   Widget build(BuildContext context) {
@@ -234,44 +289,9 @@ class _PlaceSummary extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            Container(
-              height: 126,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF9FC4B2), AppColors.deepNavy],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-              ),
-              child: const Align(
-                alignment: Alignment.bottomLeft,
-                child: Padding(
-                  padding: EdgeInsets.all(AppSpacing.sm),
-                  child: Text(
-                    '창가 자리와 어울리는 오후',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                _SummaryChip(
-                  icon: Icons.auto_stories_outlined,
-                  label: '기록 $recordCount개',
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                _SummaryChip(
-                  icon: isSaved ? Icons.bookmark : Icons.bookmark_border,
-                  label: isSaved ? '저장됨' : '저장하기',
-                ),
-              ],
+            _SummaryChip(
+              icon: Icons.auto_stories_outlined,
+              label: '기록 $recordCount개',
             ),
           ],
         ),

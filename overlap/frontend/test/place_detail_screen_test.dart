@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:overlap_app/features/map/screens/place_detail_screen.dart';
 import 'package:overlap_app/features/memory/services/record_api.dart';
 import 'package:overlap_app/features/memory/widgets/record_card.dart';
+import 'package:overlap_app/features/user/services/saved_places_api.dart';
 
 RecordApi responseApi(Map<String, dynamic> page) => RecordApi(
   tokenProvider: () => 'token',
@@ -21,13 +22,18 @@ RecordApi responseApi(Map<String, dynamic> page) => RecordApi(
   }),
 );
 
-Widget detail(RecordApi api) => MaterialApp(
+SavedPlacesApi savedApi({bool saved = false}) => SavedPlacesApi(
+  get: (_) async => {'place_id': 12, 'saved': saved, 'saved_count': 0},
+);
+
+Widget detail(RecordApi api, {SavedPlacesApi? savedPlacesApi}) => MaterialApp(
   home: PlaceDetailScreen(
     placeId: '12',
     name: '광주실감콘텐츠큐브',
     address: '광주광역시',
     recordCount: 1,
     recordApi: api,
+    savedPlacesApi: savedPlacesApi ?? savedApi(),
   ),
 );
 
@@ -75,6 +81,49 @@ void main() {
 
     expect(find.text('이 장소에 아직 기록이 없어요.'), findsOneWidget);
     expect(find.byType(RecordCard), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    api.close();
+  });
+
+  testWidgets('loads saved state and updates the bookmark after save and unsave', (
+    tester,
+  ) async {
+    var saved = false;
+    final calls = <String>[];
+    final placesApi = SavedPlacesApi(
+      get: (path) async {
+        calls.add('GET $path');
+        return {'place_id': 12, 'saved': saved, 'saved_count': saved ? 1 : 0};
+      },
+      post: (path) async {
+        calls.add('POST $path');
+        saved = true;
+        return {'place_id': 12, 'saved': true, 'saved_count': 1};
+      },
+      delete: (path) async {
+        calls.add('DELETE $path');
+        saved = false;
+        return {'place_id': 12, 'saved': false, 'saved_count': 0};
+      },
+    );
+    final api = responseApi({'items': [], 'total': 0});
+
+    await tester.pumpWidget(detail(api, savedPlacesApi: placesApi));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.bookmark_border));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.bookmark), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.bookmark));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
+    expect(calls, [
+      'GET /places/12/saved',
+      'POST /places/12/saved',
+      'DELETE /places/12/saved',
+    ]);
     await tester.pumpWidget(const SizedBox());
     api.close();
   });
