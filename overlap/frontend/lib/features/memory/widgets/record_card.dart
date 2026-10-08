@@ -78,18 +78,17 @@ class RecordCard extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(record.content, style: const TextStyle(height: 1.5)),
               if (record.imagePaths.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.sm),
                 RecordPhoto(paths: record.imagePaths),
                 const SizedBox(height: AppSpacing.sm),
               ],
+              const SizedBox(height: AppSpacing.xs),
+              Text(record.content, style: const TextStyle(height: 1.5)),
               Wrap(
                 spacing: AppSpacing.xs,
                 runSpacing: AppSpacing.xs,
                 children: [
-                  _EmotionChip(record: record),
                   if (record.isPrivate) const _GroupChip(label: '나만 보기'),
                   for (final group in record.sharedGroups)
                     _GroupChip(label: group.name),
@@ -144,27 +143,6 @@ class _Avatar extends StatelessWidget {
         name.isEmpty ? '?' : name.substring(0, 1),
         style: const TextStyle(fontWeight: FontWeight.w700),
       ),
-    );
-  }
-}
-
-class _EmotionChip extends StatelessWidget {
-  const _EmotionChip({required this.record});
-
-  final Record record;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: 6,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.paleMint,
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text('${record.emotion.emoji} ${record.emotion.displayName}'),
     );
   }
 }
