@@ -12,6 +12,7 @@ import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
 import '../services/current_location_service.dart';
+import '../services/map_places_api.dart';
 import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
@@ -21,11 +22,13 @@ class MapScreen extends StatefulWidget {
     this.selectedGroupId,
     this.locationService,
     this.requestedFilters,
+    this.mapPlacesApi,
   });
 
   final String? selectedGroupId;
   final CurrentLocationService? locationService;
   final Set<MapFilter>? requestedFilters;
+  final MapPlacesApi? mapPlacesApi;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -40,6 +43,8 @@ class _MapScreenState extends State<MapScreen> {
   var _isLocating = false;
   final bool _isSatellite = false;
   double _aiSheetExtent = 0.22;
+  late final MapPlacesApi _mapPlacesApi;
+  List<MapPlace> _places = const [];
 
   Future<void> _goToCurrentLocation() async {
     if (_isLocating) return;
@@ -79,11 +84,13 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    _mapPlacesApi = widget.mapPlacesApi ?? MapPlacesApi();
     if (widget.requestedFilters != null) {
       _selectedFilters = Set.of(widget.requestedFilters!);
     } else if (widget.selectedGroupId != null) {
       _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
     }
+    _loadMapPlaces();
   }
 
   @override
@@ -113,11 +120,22 @@ class _MapScreenState extends State<MapScreen> {
     };
   }
 
-  static const List<MapPlace> _places = [];
-
   List<MapPlace> get _visiblePlaces => _places
       .where((place) => place.filters.any(_selectedFilters.contains))
       .toList();
+
+  Future<void> _loadMapPlaces() async {
+    try {
+      final places = await _mapPlacesApi.load();
+      if (!mounted) return;
+      setState(() => _places = places);
+    } on MapPlacesApiException {
+      // Keep the map, search marker, and current-location marker usable when
+      // the authenticated pin request is unavailable.
+      if (!mounted) return;
+      setState(() => _places = const []);
+    }
+  }
 
   bool get _areAllFiltersSelected =>
       _selectedFilters.length == MapFilter.values.length &&
