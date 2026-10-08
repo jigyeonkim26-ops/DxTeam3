@@ -6,6 +6,7 @@ import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
 import '../widgets/record_photo.dart';
 import '../services/record_api.dart';
+import '../services/record_likes_api.dart';
 import '../../comment/models/comment_item.dart';
 import '../../comment/widgets/comment_input.dart';
 import '../../comment/widgets/comment_thread.dart';
@@ -47,7 +48,8 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   final _commentFocusNode = FocusNode();
   late int _likeCount;
   late List<CommentItem> _comments;
-  final bool _isLiked = false;
+  var _isLiked = false;
+  var _isLikeLoading = false;
   CommentItem? _replyTarget;
   bool _isDeleting = false;
 
@@ -56,6 +58,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     super.initState();
     _likeCount = widget.record.likeCount;
     _comments = _initialComments();
+    _loadLikeState();
   }
 
   @override
@@ -72,9 +75,38 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     (count, comment) => count + 1 + comment.replies.length,
   );
 
-  void _toggleLike() {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('공감 기능은 준비 중입니다.')));
+  Future<void> _loadLikeState() async {
+    try {
+      final state = await RecordLikesApi.getState(widget.record.id);
+      if (mounted) {
+        setState(() {
+          _isLiked = state.liked;
+          _likeCount = state.likeCount;
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    if (_isLikeLoading) return;
+    setState(() => _isLikeLoading = true);
+    try {
+      final state = _isLiked
+          ? await RecordLikesApi.unlike(widget.record.id)
+          : await RecordLikesApi.like(widget.record.id);
+      if (mounted) {
+        setState(() {
+          _isLiked = state.liked;
+          _likeCount = state.likeCount;
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } finally {
+      if (mounted) setState(() => _isLikeLoading = false);
+    }
   }
 
   void _submitComment() {
@@ -256,7 +288,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                     Row(
                       children: [
                         OutlinedButton.icon(
-                          onPressed: _toggleLike,
+                          onPressed: _isLikeLoading ? null : _toggleLike,
                           icon: Icon(
                             _isLiked ? Icons.favorite : Icons.favorite_border,
                             color: _isLiked

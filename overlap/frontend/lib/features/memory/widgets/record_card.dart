@@ -14,6 +14,8 @@ class RecordCard extends StatelessWidget {
     required this.onLikeTap,
     required this.onCommentTap,
     required this.onPlaceTap,
+    this.likeCount,
+    this.isLikeLoading = false,
   });
 
   final Record record;
@@ -22,10 +24,12 @@ class RecordCard extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final VoidCallback onPlaceTap;
+  final int? likeCount;
+  final bool isLikeLoading;
 
   @override
   Widget build(BuildContext context) {
-    final likeCount = record.likeCount + (isLiked ? 1 : 0);
+    final displayLikeCount = likeCount ?? record.likeCount;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -99,9 +103,9 @@ class RecordCard extends StatelessWidget {
                 children: [
                   _ActionButton(
                     icon: isLiked ? Icons.favorite : Icons.favorite_border,
-                    label: '공감 $likeCount',
+                    label: '공감 $displayLikeCount',
                     color: isLiked ? AppColors.coral : AppColors.muted,
-                    onTap: onLikeTap,
+                    onTap: isLikeLoading ? null : onLikeTap,
                   ),
                   const SizedBox(width: AppSpacing.lg),
                   _ActionButton(
@@ -182,7 +186,7 @@ class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
