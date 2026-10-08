@@ -99,7 +99,7 @@ class KakaoMapLocalServer {
       display: block; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .18)); height: 48px; width: 38px;
     }
     .place-marker__shape path {
-      fill: var(--pin-color); stroke: #fff; stroke-width: 2;
+      fill: var(--pin-fill, var(--pin-color)); stroke: #fff; stroke-width: 2;
     }
     .place-marker__count {
       color: #fff; font: 700 14px/1 sans-serif; left: 0; position: absolute; text-align: center; top: 13px; width: 100%;
@@ -130,7 +130,6 @@ class KakaoMapLocalServer {
     var searchRequestId = 0;
     var selectedSearchPlace;
     var poiSearchRadius = 200;
-    var maximumPoiDistance = 30;
     var poiCategoryCodes = [
       'MT1', 'CS2', 'PS3', 'SC4', 'AC5', 'PK6', 'OL7', 'SW8', 'BK9',
       'CT1', 'AG2', 'PO3', 'AT4', 'AD5', 'FD6', 'CE7', 'HP8', 'PM9'
@@ -162,6 +161,14 @@ function setPlaces(places) {
     var content = document.createElement('button'); content.type = 'button'; content.className = 'place-marker';
     content.style.setProperty('--pin-color', markerColor(place.groupColorHex));
     content.innerHTML = '<span class="place-marker__pin"><svg class="place-marker__shape" viewBox="0 0 38 48" aria-hidden="true"><path d="M19 1C9.1 1 2 8.3 2 18.2C2 30.4 13.2 42 19 47C24.8 42 36 30.4 36 18.2C36 8.3 28.9 1 19 1Z"/></svg><span class="place-marker__count">' + markerCountLabel(place.recordCount) + '</span></span>';
+    var colors = Array.from(new Set((Array.isArray(place.groupColorHexes) && place.groupColorHexes.length ? place.groupColorHexes : [place.groupColorHex]).map(markerColor)));
+    var svg = content.querySelector('svg');
+    var gradientId = 'pin-gradient-' + overlays.length;
+    var stops = colors.map(function(color, index) {
+      return '<stop offset="' + (100 * index / colors.length) + '%" stop-color="' + color + '"/><stop offset="' + (100 * (index + 1) / colors.length) + '%" stop-color="' + color + '"/>';
+    }).join('');
+    svg.insertAdjacentHTML('afterbegin', '<defs><linearGradient id="' + gradientId + '">' + stops + '</linearGradient></defs>');
+    content.style.setProperty('--pin-fill', 'url(#' + gradientId + ')');
     content.addEventListener('click', function () { OverlapMap.postMessage(String(place.id)); });
     overlays.push(new kakao.maps.CustomOverlay({ content: content, map: map, position: position, yAnchor: 1 })); bounds.extend(position);
   });
@@ -213,107 +220,129 @@ function setSearchPlace(place) {
       return typeof value === 'string' ? value.trim() : '';
     }
 
-    function resolvePlaceName(position, preferredPlaceName) {
-      if (!selectionMode || !geocoder) return;
+    function resolvePlaceName(position, preferredPlaceName, preferredPlace) {
+      if (!selectionMode) return;
 
       var requestId = ++selectionRequestId;
       var buildingName = '';
       var roadAddress = '';
       var lotAddress = '';
-      var addressFinished = false;
-      var pendingCategorySearches = places ? poiCategoryCodes.length : 0;
-      var nearestPlace;
+      var addressFinished = !geocoder;
+      var pendingSearches = places ? poiCategoryCodes.length : 0;
+      var nearestPlace = null;
+      var explicitPlace = normalizePlace(preferredPlace, true);
+      var emitted = false;
+      // A failed or silent SDK callback must not leave compose stuck loading.
+      var timeout = setTimeout(function () {
+        addressFinished = true;
+        pendingSearches = 0;
+        emitResolvedPlace();
+      }, 10000);
 
-      function emitResolvedPlace() {
-        if (requestId !== selectionRequestId ||
-            !addressFinished ||
-            pendingCategorySearches > 0) {
-          return;
-        }
-
-        var poiName = nearestPlace && nearestPlace.distance <= maximumPoiDistance
-            ? textOrEmpty(nearestPlace.place_name)
-            : '';
-        var finalPlaceName = preferredPlaceName || poiName || buildingName || roadAddress || lotAddress || '';
-        var payload = {
-          type: 'placeResolved',
-          latitude: position.getLat(),
-          longitude: position.getLng(),
-          placeName: finalPlaceName,
-          buildingName: buildingName,
-          roadAddress: roadAddress,
-          lotAddress: lotAddress
+      function normalizePlace(place, isExplicit) {
+        if (!place) return null;
+        var id = textOrEmpty(place.id);
+        var name = textOrEmpty(isExplicit ? place.placeName : place.place_name);
+        var latitude = Number.parseFloat(isExplicit ? place.latitude : place.y);
+        var longitude = Number.parseFloat(isExplicit ? place.longitude : place.x);
+        if (!/^[0-9]+\$/.test(id) || !name ||
+            !Number.isFinite(latitude) || Math.abs(latitude) > 90 ||
+            !Number.isFinite(longitude) || Math.abs(longitude) > 180) return null;
+        var radians = Math.PI / 180;
+        var latDelta = (latitude - position.getLat()) * radians;
+        var lngDelta = (longitude - position.getLng()) * radians;
+        var haversine = Math.sin(latDelta / 2) ** 2 +
+            Math.cos(position.getLat() * radians) * Math.cos(latitude * radians) *
+            Math.sin(lngDelta / 2) ** 2;
+        var distance = 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, haversine)));
+        if (distance > poiSearchRadius) return null;
+        return {
+          id: id, placeName: name, latitude: latitude, longitude: longitude,
+          roadAddress: textOrEmpty(isExplicit ? place.roadAddress : place.road_address_name),
+          address: textOrEmpty(isExplicit ? place.address : place.address_name),
+          distance: distance
         };
-        console.log('[PLACE_DEBUG] buildingName:', buildingName);
-        console.log('[PLACE_DEBUG] roadAddress:', roadAddress);
-        console.log('[PLACE_DEBUG] lotAddress:', lotAddress);
-        console.log(
-          '[PLACE_DEBUG] nearestPoi:',
-          nearestPlace || null
-        );
-        console.log('[PLACE_DEBUG] finalPlaceName:', finalPlaceName);
-        console.log('[PLACE_DEBUG] postMessage:', payload);
-        OverlapMap.postMessage(JSON.stringify(payload));
       }
 
-      geocoder.coord2Address(
-        position.getLng(),
-        position.getLat(),
-        function(result, status) {
-          if (requestId !== selectionRequestId) return;
-
-          if (status === kakao.maps.services.Status.OK && result && result.length) {
-            var item = result[0] || {};
-            var roadAddressData = item.road_address || {};
-            var addressData = item.address || {};
-            buildingName = textOrEmpty(roadAddressData.building_name);
-            roadAddress = textOrEmpty(roadAddressData.address_name);
-            lotAddress = textOrEmpty(addressData.address_name);
+      function collectPlaces(result, status) {
+        if (status !== kakao.maps.services.Status.OK || !Array.isArray(result)) return;
+        result.forEach(function (place) {
+          var candidate = normalizePlace(place, false);
+          if (candidate && (!nearestPlace || candidate.distance < nearestPlace.distance)) {
+            nearestPlace = candidate;
           }
-          addressFinished = true;
-          emitResolvedPlace();
-        }
-      );
+        });
+      }
 
-      poiCategoryCodes.forEach(function(categoryCode) {
-        if (!places) return;
+      function emitResolvedPlace() {
+        if (emitted || requestId !== selectionRequestId ||
+            !addressFinished || pendingSearches > 0) return;
+        emitted = true;
+        clearTimeout(timeout);
+        var place = explicitPlace || nearestPlace;
+        OverlapMap.postMessage(JSON.stringify({
+          type: 'placeResolved',
+          latitude: position.getLat(), longitude: position.getLng(),
+          placeName: place ? place.placeName : '', place: place,
+          buildingName: buildingName, roadAddress: roadAddress, lotAddress: lotAddress
+        }));
+      }
 
-        console.log('[PLACE_DEBUG] search start', categoryCode);
-        places.categorySearch(
-          categoryCode,
-          function(result, status) {
-            if (requestId !== selectionRequestId) return;
-
-            console.log(
-              '[PLACE_DEBUG] category result',
-              categoryCode,
-              status,
-              result ? result.length : 0
-            );
-            if (status === kakao.maps.services.Status.OK && result && result.length) {
-              result.forEach(function(place) {
-                var placeName = textOrEmpty(place.place_name);
-                var distance = Number.parseFloat(place.distance);
-                if (!placeName || !Number.isFinite(distance)) return;
-                if (!nearestPlace || distance < nearestPlace.distance) {
-                  nearestPlace = { place_name: placeName, distance: distance };
-                }
-              });
-            }
-            pendingCategorySearches -= 1;
+      function searchAddressPlace() {
+        // Buildings outside Kakao's category groups can still be found by name/address.
+        var keyword = buildingName || roadAddress || lotAddress;
+        if (!places || !keyword || explicitPlace) return;
+        pendingSearches += 1;
+        try {
+          places.keywordSearch(keyword, function (result, status) {
+            if (emitted || requestId !== selectionRequestId) return;
+            collectPlaces(result, status);
+            pendingSearches -= 1;
             emitResolvedPlace();
-          },
-          {
-            location: position,
-            radius: poiSearchRadius,
-            size: 15,
+          }, {
+            location: position, radius: poiSearchRadius, size: 15,
             sort: kakao.maps.services.SortBy.DISTANCE
-          }
-        );
+          });
+        } catch (_) { pendingSearches -= 1; }
+      }
+
+      if (geocoder) {
+        try {
+          geocoder.coord2Address(position.getLng(), position.getLat(), function (result, status) {
+            if (emitted || requestId !== selectionRequestId) return;
+            if (status === kakao.maps.services.Status.OK && result && result.length) {
+              var item = result[0] || {};
+              var road = item.road_address || {};
+              buildingName = textOrEmpty(road.building_name);
+              roadAddress = textOrEmpty(road.address_name);
+              lotAddress = textOrEmpty((item.address || {}).address_name);
+            }
+            // Register the extra query before allowing resolution to finish.
+            searchAddressPlace();
+            addressFinished = true;
+            emitResolvedPlace();
+          });
+        } catch (_) { addressFinished = true; }
+      }
+
+      poiCategoryCodes.forEach(function (code) {
+        if (!places) return;
+        try {
+          places.categorySearch(code, function (result, status) {
+            if (emitted || requestId !== selectionRequestId) return;
+            collectPlaces(result, status);
+            pendingSearches -= 1;
+            emitResolvedPlace();
+          }, {
+            location: position, radius: poiSearchRadius, size: 15,
+            sort: kakao.maps.services.SortBy.DISTANCE
+          });
+        } catch (_) { pendingSearches -= 1; }
       });
+      emitResolvedPlace();
     }
 
-    function updateSelectionPosition(position, preferredPlaceName) {
+    function updateSelectionPosition(position, preferredPlaceName, preferredPlace) {
       if (selectionMarker) {
         selectionMarker.setPosition(position);
       }
@@ -325,7 +354,7 @@ function setSearchPlace(place) {
         );
       }
       postSelectedLocation(position);
-      resolvePlaceName(position, preferredPlaceName);
+      resolvePlaceName(position, preferredPlaceName, preferredPlace);
     }
 
     function postPlaceSearchResults(keyword, searchResults, requestId) {
@@ -462,7 +491,7 @@ function setSearchPlace(place) {
       updateSelectionPosition(position);
     }
 
-    function setSelectionLocation(latitude, longitude, selectedPlaceName) {
+    function setSelectionLocation(latitude, longitude, selectedPlaceName, selectedPlace) {
       if (!selectionMode) return;
 
       initialSelection = {
@@ -490,7 +519,7 @@ function setSearchPlace(place) {
         );
       }
       map.setCenter(position);
-      updateSelectionPosition(position, placeName);
+      updateSelectionPosition(position, placeName, selectedPlace);
     }
 
     var sdkScript = document.createElement('script');

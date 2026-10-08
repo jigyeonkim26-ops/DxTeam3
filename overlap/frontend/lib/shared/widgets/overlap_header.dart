@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
+import '../../features/notification/widgets/notification_bell.dart';
 
 class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
   const OverlapHeader({
@@ -74,11 +75,7 @@ class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
                         icon: const Icon(Icons.bookmark_border),
                         tooltip: '저장한 장소',
                       ),
-                    IconButton(
-                      onPressed: onNotifications,
-                      icon: const Icon(Icons.notifications_none),
-                      tooltip: '알림',
-                    ),
+                    NotificationBell(onPressed: onNotifications),
                   ],
                 ),
               ),

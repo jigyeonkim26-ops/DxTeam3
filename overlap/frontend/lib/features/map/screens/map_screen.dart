@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../shared/models/place.dart';
+import '../../../core/network/api_client.dart';
+import '../../group/services/group_list_store.dart';
+import '../../group/services/group_api_service.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
 import '../../memory/services/record_api.dart';
 import '../models/current_location.dart';
@@ -36,7 +39,10 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  Set<MapFilter> _selectedFilters = Set.of(MapFilter.values);
+  Set<MapFilter> _selectedFilters = {MapFilter.mine};
+  List<MapFilter> _availableFilters = [MapFilter.mine];
+  bool _allFilters = true;
+  int _loadId = 0;
   MapPlace? _selectedPlace;
   MapSearchPlace? _selectedSearchPlace;
   CurrentLocation? _currentLocation;
@@ -89,19 +95,50 @@ class _MapScreenState extends State<MapScreen> {
     super.initState();
     _mapPlacesApi = widget.mapPlacesApi ?? MapPlacesApi();
     if (widget.requestedFilters != null) {
+      _allFilters = false;
       _selectedFilters = Set.of(widget.requestedFilters!);
     } else if (widget.selectedGroupId != null) {
+      _allFilters = false;
       _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
     }
+    ApiClient.sessionRevision.addListener(_onSessionRevision);
+    GroupListStore.groupsListenable.addListener(_onGroupRevision);
     RecordApi.revision.addListener(_onRecordRevision);
     _loadMapPlaces();
   }
 
   @override
   void dispose() {
+    ApiClient.sessionRevision.removeListener(_onSessionRevision);
+    GroupListStore.groupsListenable.removeListener(_onGroupRevision);
     RecordApi.revision.removeListener(_onRecordRevision);
     _aiSheetController.dispose();
     super.dispose();
+  }
+
+  void _onSessionRevision() {
+    setState(() {
+      _places = const [];
+      _availableFilters = [MapFilter.mine];
+      _selectedPlace = null;
+    });
+    _loadMapPlaces();
+  }
+
+  void _onGroupRevision() {
+    setState(() {
+      _availableFilters = [
+        MapFilter.mine,
+        for (final group in GroupListStore.groups)
+          MapFilter.group(
+            int.parse(group.id),
+            group.name,
+            pinColorValue: group.pinColorValue,
+          ),
+      ];
+      if (_allFilters) _selectedFilters = _availableFilters.toSet();
+    });
+    _loadMapPlaces();
   }
 
   void _onRecordRevision() {
@@ -120,14 +157,18 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.requestedFilters != widget.requestedFilters &&
-        widget.requestedFilters != null) {
+    if (oldWidget.requestedFilters != widget.requestedFilters) {
       setState(() {
-        _selectedFilters = Set.of(widget.requestedFilters!);
+        _allFilters =
+            widget.requestedFilters == null && widget.selectedGroupId == null;
+        _selectedFilters = widget.requestedFilters == null
+            ? _filtersForGroupId(widget.selectedGroupId)
+            : Set.of(widget.requestedFilters!);
         _selectedPlace = null;
       });
     } else if (oldWidget.selectedGroupId != widget.selectedGroupId) {
       setState(() {
+        _allFilters = widget.selectedGroupId == null;
         _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
         _selectedPlace = null;
       });
@@ -135,40 +176,61 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Set<MapFilter> _filtersForGroupId(String? groupId) {
-    if (groupId == null) return Set.of(MapFilter.values);
-    return {
-      MapFilter.values.firstWhere(
-        (filter) => filter.name == groupId,
-        orElse: () => MapFilter.mine,
-      ),
-    };
+    if (groupId == null) return _availableFilters.toSet();
+    final id = int.tryParse(groupId);
+    return id == null ? {MapFilter.mine} : {MapFilter.group(id, '')};
   }
 
   List<MapPlace> get _visiblePlaces => _places
       .where((place) => place.filters.any(_selectedFilters.contains))
+      .map(
+        (place) =>
+            place.forSelectedFilters(_selectedFilters, _availableFilters),
+      )
       .toList();
 
   Future<void> _loadMapPlaces() async {
+    final requestId = ++_loadId;
+    final token = ApiClient.accessToken;
     try {
       final places = await _mapPlacesApi.load();
-      if (!mounted) return;
-      setState(() => _places = places);
-    } on MapPlacesApiException {
-      // Keep the map, search marker, and current-location marker usable when
-      // the authenticated pin request is unavailable.
-      if (!mounted) return;
+      final groups = await GroupApiService.listGroups();
+      if (!mounted || requestId != _loadId || token != ApiClient.accessToken) {
+        return;
+      }
+      setState(() {
+        _availableFilters = [
+          MapFilter.mine,
+          for (final group in groups)
+            MapFilter.group(
+              group.id,
+              group.displayName ?? group.name,
+              pinColorValue: group.pinColorValue,
+            ),
+        ];
+        if (_allFilters) _selectedFilters = _availableFilters.toSet();
+        _places = places;
+      });
+    } catch (_) {
+      if (!mounted || requestId != _loadId || token != ApiClient.accessToken) {
+        return;
+      }
       setState(() => _places = const []);
     }
   }
 
-  bool get _areAllFiltersSelected =>
-      _selectedFilters.length == MapFilter.values.length &&
-      _selectedFilters.containsAll(MapFilter.values);
+  bool get _areAllFiltersSelected => _allFilters;
 
   String get _filterLabel {
     if (_areAllFiltersSelected) return '전체';
     if (_selectedFilters.isEmpty) return '기록 필터';
-    if (_selectedFilters.length == 1) return _selectedFilters.single.label;
+    if (_selectedFilters.length == 1) {
+      return _availableFilters
+              .where((f) => f == _selectedFilters.single)
+              .firstOrNull
+              ?.label ??
+          '기록 필터';
+    }
     return '선택 ${_selectedFilters.length}개';
   }
 
@@ -183,14 +245,18 @@ class _MapScreenState extends State<MapScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => MapFilterSheet(selectedFilters: _selectedFilters),
+      builder: (_) => MapFilterSheet(
+        selectedFilters: _selectedFilters,
+        availableFilters: _availableFilters,
+      ),
     );
 
     if (filters != null) {
       setState(() {
         _selectedFilters = filters;
+        _allFilters = filters.containsAll(_availableFilters);
         if (_selectedPlace != null &&
-            !_visiblePlaces.contains(_selectedPlace)) {
+            !_visiblePlaces.any((p) => p.id == _selectedPlace!.id)) {
           _selectedPlace = null;
         }
       });
@@ -270,12 +336,6 @@ class _MapScreenState extends State<MapScreen> {
               child: Row(
                 children: [
                   Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
-                  const SizedBox(width: AppSpacing.xs),
-                  _RoundIconButton(
-                    icon: Icons.tune_rounded,
-                    tooltip: '기록 필터',
-                    onTap: _openFilterSheet,
-                  ),
                 ],
               ),
             ),
@@ -404,8 +464,6 @@ class _FilterChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.groups_outlined, size: 17),
-              const SizedBox(width: AppSpacing.xxs),
               Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
               const Icon(Icons.keyboard_arrow_down, size: 18),
             ],

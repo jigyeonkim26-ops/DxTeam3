@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .record_models import Place, Record
+from .record_models import Place, Record, RecordGroup, GroupMember
 from .records import require_db, visibility
 
 
@@ -15,6 +15,8 @@ class MapPlace(BaseModel):
     latitude: float
     longitude: float
     record_count: int
+    has_mine: bool
+    group_ids: list[int]
 
 
 def router(current_user):
@@ -32,6 +34,20 @@ def router(current_user):
             Place.id.label("place_id"), Place.name, Place.address,
             Place.latitude, Place.longitude, counts.c.record_count,
         ).join(counts, counts.c.place_id == Place.id).order_by(Place.id)
-        return db.execute(query).mappings().all()
+        rows = [dict(row) for row in db.execute(query).mappings().all()]
+        mine = set(db.scalars(select(Record.place_id).where(
+            visibility(user.id), Record.author_id == user.id)))
+        memberships = db.execute(select(Record.place_id, RecordGroup.group_id)
+            .join(RecordGroup, RecordGroup.record_id == Record.id)
+            .join(GroupMember, GroupMember.group_id == RecordGroup.group_id)
+            .where(visibility(user.id), Record.is_private.is_(False),
+                   GroupMember.user_id == user.id).distinct()).all()
+        groups = {}
+        for place_id, group_id in memberships:
+            groups.setdefault(place_id, set()).add(group_id)
+        for row in rows:
+            row['has_mine'] = row['place_id'] in mine
+            row['group_ids'] = sorted(groups.get(row['place_id'], set()))
+        return rows
 
     return api

@@ -199,6 +199,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _selectedLongitude = place.longitude;
       _selectedRoadAddress = place.address;
       _placeNameController.text = place.name;
+      _isResolvingPlace = false;
       _isSearchingPlace = false;
       _placeSearchResults = const [];
       _placeSearchRequest = null;
@@ -208,6 +209,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         latitude: place.latitude,
         longitude: place.longitude,
         placeName: place.name,
+        placeId: place.id,
+        address: place.address,
       );
     });
   }
@@ -282,6 +285,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         latitude: place.latitude,
         longitude: place.longitude,
       );
+      _isResolvingPlace = false;
       _isSearchingPlace = false;
       _placeSearchResults = const [];
       _placeSearchMessage = null;
@@ -294,6 +298,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         latitude: place.latitude,
         longitude: place.longitude,
         placeName: place.placeName,
+        placeId: place.id,
+        address: address,
       );
     });
   }
@@ -319,17 +325,40 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
 
   void _onPlaceResolved(KakaoPlaceSelection selection) {
     if (!mounted ||
+        !_isResolvingPlace ||
         selection.latitude != _selectedLatitude ||
         selection.longitude != _selectedLongitude) {
       return;
     }
     setState(() {
       _isResolvingPlace = false;
-      _selectedRoadAddress = selection.roadAddress.isNotEmpty
+      final place = selection.place;
+      final validPlace =
+          place != null &&
+          RegExp(r'^\d+$').hasMatch(place.id) &&
+          place.placeName.trim().isNotEmpty &&
+          place.latitude.isFinite &&
+          place.longitude.isFinite &&
+          place.latitude.abs() <= 90 &&
+          place.longitude.abs() <= 180;
+      _selectedRoadAddress = validPlace && place.roadAddress.isNotEmpty
+          ? place.roadAddress
+          : validPlace && place.address.isNotEmpty
+          ? place.address
+          : selection.roadAddress.isNotEmpty
           ? selection.roadAddress
           : selection.lotAddress;
+      _selectedPlace = validPlace
+          ? Place(
+              id: place.id,
+              name: place.placeName,
+              address: _selectedRoadAddress,
+              latitude: place.latitude,
+              longitude: place.longitude,
+            )
+          : null;
+      _placeNameController.text = _selectedPlace?.name ?? '';
     });
-    // Address resolution supplies display information, never a Kakao place ID.
   }
 
   void _onLocationChanged(double latitude, double longitude) {
@@ -343,21 +372,14 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _selectedLatitude = latitude;
       _selectedLongitude = longitude;
       _isResolvingPlace = true;
+      if (_selectedPlace?.latitude != latitude ||
+          _selectedPlace?.longitude != longitude) {
+        _selectedPlace = null;
+        _selectedRoadAddress = null;
+        _placeNameController.clear();
+        _mapSelectionRequest = null;
+      }
     });
-    final place = _selectedPlace;
-    if (place == null) {
-      return;
-    }
-    if (place.latitude == latitude && place.longitude == longitude) return;
-    setState(
-      () => _selectedPlace = Place(
-        id: place.id,
-        name: place.name,
-        address: place.address,
-        latitude: latitude,
-        longitude: longitude,
-      ),
-    );
   }
 
   Future<void> _goToCurrentLocation() async {
@@ -526,7 +548,11 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
             const SizedBox(height: AppSpacing.lg),
             const _SectionTitle(title: '어디에서 보냈나요?', isRequired: true),
             const SizedBox(height: AppSpacing.xs),
-            _PlaceSelector(place: _selectedPlace, onTap: _selectPlace),
+            _PlaceSelector(
+              place: _selectedPlace,
+              address: _selectedRoadAddress,
+              onTap: _selectPlace,
+            ),
             const SizedBox(height: AppSpacing.sm),
             if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
               ClipRRect(
@@ -559,6 +585,13 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
               ),
               const SizedBox(height: AppSpacing.xs),
             ],
+            if (!_isResolvingPlace &&
+                _selectedLatitude != null &&
+                _selectedPlace == null)
+              const Text(
+                '주변 장소를 찾지 못했어요. 장소 검색으로 선택해 주세요.',
+                style: TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
             const Text(
               '핀을 드래그하거나 지도를 탭해 정확한 위치를 정해요.',
               style: TextStyle(color: AppColors.muted),
@@ -788,9 +821,14 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _PlaceSelector extends StatelessWidget {
-  const _PlaceSelector({required this.place, required this.onTap});
+  const _PlaceSelector({
+    required this.place,
+    this.address,
+    required this.onTap,
+  });
 
   final Place? place;
+  final String? address;
   final VoidCallback onTap;
 
   @override
@@ -810,7 +848,9 @@ class _PlaceSelector extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        subtitle: place == null ? null : Text(place!.address ?? ''),
+        subtitle: (place?.address ?? address)?.isNotEmpty == true
+            ? Text(place?.address ?? address!)
+            : null,
         trailing: const Icon(Icons.chevron_right),
       ),
     );
