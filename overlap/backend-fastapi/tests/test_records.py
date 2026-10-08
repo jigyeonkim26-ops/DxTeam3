@@ -383,6 +383,38 @@ def test_profile_photo_upload_get_replace_and_delete(world):
     assert client.get("/auth/me/photo", headers=headers[1]).status_code == 404
 
 
+def test_feed_exposes_current_author_photo_through_visible_record(world):
+    client, _, storage, headers = world
+    record = create(world, user=1).json()
+    assert record["author"]["profile_image_url"] is None
+
+    uploaded = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("profile.png", image(), "image/png")},
+    )
+    assert uploaded.status_code == 204
+
+    feed = client.get("/feed", headers=headers[2]).json()
+    item = next(item for item in feed["items"] if item["id"] == record["id"])
+    first_url = item["author"]["profile_image_url"]
+    assert first_url.startswith(f"/records/{record['id']}/author-photo?v=")
+    photo = client.get(first_url, headers=headers[2])
+    assert photo.status_code == 200
+    assert photo.content == image()
+    assert storage.objects
+
+    replacement = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("replacement.png", image(), "image/png")},
+    )
+    assert replacement.status_code == 204
+    refreshed_item = next(item for item in client.get("/feed", headers=headers[2]).json()["items"]
+                          if item["id"] == record["id"])
+    assert refreshed_item["author"]["profile_image_url"] != first_url
+
+
 def test_profile_photo_requires_authentication_and_valid_image(world):
     client, engine, storage, headers = world
     assert client.post(
