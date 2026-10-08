@@ -38,4 +38,60 @@ class MapPlace {
   final double longitude;
   final Set<MapFilter> filters;
   final String groupColorHex;
+
+  /// Converts the authenticated `/map/places` response into the map's
+  /// existing marker model. Invalid entries are ignored by the caller.
+  static MapPlace? tryFromMapPlacesApiJson(Map<String, dynamic> json) {
+    final id = _asId(json['place_id']);
+    final name = json['name'];
+    final recordCount = _asInt(json['record_count']);
+    final latitude = _asDouble(json['latitude']);
+    final longitude = _asDouble(json['longitude']);
+    if (id == null ||
+        name is! String ||
+        name.trim().isEmpty ||
+        recordCount == null ||
+        recordCount < 0 ||
+        latitude == null ||
+        longitude == null ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180) {
+      return null;
+    }
+
+    return MapPlace(
+      id: id,
+      name: name.trim(),
+      recordCount: recordCount,
+      author: '',
+      summary: '',
+      latitude: latitude,
+      longitude: longitude,
+      filters: Set.of(MapFilter.values),
+      groupColorHex: MapGroupColors.fallback,
+    );
+  }
+
+  static String? _asId(Object? value) {
+    if (value is int && value > 0) return value.toString();
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed > 0 ? parsed.toString() : null;
+  }
+
+  static int? _asInt(Object? value) {
+    if (value is int) return value;
+    if (value is num && value.isFinite && value == value.roundToDouble()) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  static double? _asDouble(Object? value) {
+    final number = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    return number != null && number.isFinite ? number : null;
+  }
 }
