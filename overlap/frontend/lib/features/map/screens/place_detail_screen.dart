@@ -6,6 +6,7 @@ import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../../memory/services/record_api.dart';
+import '../../memory/services/record_likes_api.dart';
 import '../../memory/widgets/record_card.dart';
 import '../../user/services/saved_places_api.dart';
 
@@ -35,6 +36,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
   late final RecordApi _recordApi;
   late final SavedPlacesApi _savedPlacesApi;
   List<Record> _records = const [];
+  Map<String, RecordLikeState> _likeStates = const {};
+  final Set<String> _likeRequestsInProgress = {};
   bool _isLoadingRecords = true;
   bool _hasRecordLoadError = false;
   bool _isSaved = false;
@@ -72,9 +75,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
     });
     try {
       final records = await _recordApi.feed(placeId: placeId);
+      final likeStates = await _loadLikeStates(records);
       if (!mounted) return;
       setState(() {
         _records = records;
+        _likeStates = likeStates;
         _isLoadingRecords = false;
       });
     } on ApiException {
@@ -83,6 +88,56 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
         _isLoadingRecords = false;
         _hasRecordLoadError = true;
       });
+    }
+  }
+
+  Future<Map<String, RecordLikeState>> _loadLikeStates(
+    List<Record> records,
+  ) async {
+    final recordsById = {for (final record in records) record.id: record};
+    final entries = await Future.wait(
+      recordsById.entries.map((entry) async {
+        try {
+          return MapEntry(entry.key, await RecordLikesApi.getState(entry.key));
+        } on ApiException {
+          return MapEntry(
+            entry.key,
+            _likeStates[entry.key] ??
+                RecordLikeState(likeCount: entry.value.likeCount, liked: false),
+          );
+        }
+      }),
+    );
+    return Map<String, RecordLikeState>.fromEntries(entries);
+  }
+
+  RecordLikeState _likeStateFor(Record record) =>
+      _likeStates[record.id] ??
+      RecordLikeState(likeCount: record.likeCount, liked: false);
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _toggleLike(String recordId) async {
+    if (_likeRequestsInProgress.contains(recordId)) return;
+    final previous = _likeStates[recordId];
+    if (previous == null) return;
+
+    setState(() => _likeRequestsInProgress.add(recordId));
+    try {
+      final next = previous.liked
+          ? await RecordLikesApi.unlike(recordId)
+          : await RecordLikesApi.like(recordId);
+      if (mounted) {
+        setState(() => _likeStates = {..._likeStates, recordId: next});
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } finally {
+      if (mounted) setState(() => _likeRequestsInProgress.remove(recordId));
     }
   }
 
@@ -124,10 +179,19 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
     }
   }
 
-  void _openRecordDetail(Record record) {
-    Navigator.of(context).push(
+  Future<void> _openRecordDetail(Record record) async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => RecordDetailScreen(record: record)),
     );
+    if (!mounted) return;
+    try {
+      final state = await RecordLikesApi.getState(record.id);
+      if (mounted) {
+        setState(() => _likeStates = {..._likeStates, record.id: state});
+      }
+    } on ApiException {
+      // Record detail already presents errors; retain the last confirmed state.
+    }
   }
 
   @override
@@ -222,9 +286,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               for (final record in _records) ...[
                 RecordCard(
                   record: record,
-                  isLiked: false,
+                  isLiked: _likeStateFor(record).liked,
+                  likeCount: _likeStateFor(record).likeCount,
+                  isLikeLoading: _likeRequestsInProgress.contains(record.id),
                   onTap: () => _openRecordDetail(record),
-                  onLikeTap: () {},
+                  onLikeTap: () => _toggleLike(record.id),
                   onCommentTap: () => _openRecordDetail(record),
                   onPlaceTap: () {},
                 ),
