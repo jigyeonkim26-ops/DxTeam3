@@ -280,7 +280,9 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
             roadAddress: place['roadAddress'] is String
                 ? place['roadAddress'] as String
                 : '',
-            address: place['address'] is String ? place['address'] as String : '',
+            address: place['address'] is String
+                ? place['address'] as String
+                : '',
             latitude: latitude,
             longitude: longitude,
             distance: _asDouble(place['distance']),
@@ -295,7 +297,9 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         ),
       );
       if (widget.selectionMode) {
-        debugPrint('[SEARCH_DEBUG] parsed result count = ${searchResults.length}');
+        debugPrint(
+          '[SEARCH_DEBUG] parsed result count = ${searchResults.length}',
+        );
       }
       return;
     }
@@ -392,9 +396,9 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
-  Future<void> _pushSelectionLocationToMap(
-    [KakaoMapSelectionRequest? selectionRequest]
-  ) async {
+  Future<void> _pushSelectionLocationToMap([
+    KakaoMapSelectionRequest? selectionRequest,
+  ]) async {
     if (!widget.selectionMode) {
       return;
     }

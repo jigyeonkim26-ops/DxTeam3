@@ -17,8 +17,8 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
   late final Set<MapFilter> _filters = {...widget.selectedFilters};
 
   bool get _isAllSelected =>
-      _filters.length == MapFilter.values.length &&
-      _filters.containsAll(MapFilter.values);
+      _filters.length == MapFilter.selectableFilters.length &&
+      _filters.containsAll(MapFilter.selectableFilters);
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +70,9 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
               onChanged: (selected) => setState(() {
                 _filters
                   ..clear()
-                  ..addAll(selected ?? false ? MapFilter.values : const []);
+                  ..addAll(
+                    selected ?? false ? MapFilter.selectableFilters : const [],
+                  );
               }),
               activeColor: AppColors.deepNavy,
               contentPadding: EdgeInsets.zero,
@@ -80,7 +82,7 @@ class _MapFilterSheetState extends State<MapFilterSheet> {
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
-            for (final filter in MapFilter.values)
+            for (final filter in MapFilter.selectableFilters)
               CheckboxListTile(
                 value: _filters.contains(filter),
                 onChanged: (selected) => setState(() {

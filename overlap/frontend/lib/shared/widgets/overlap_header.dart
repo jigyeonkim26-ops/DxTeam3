@@ -7,11 +7,13 @@ class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
     super.key,
     this.showBackButton = false,
     this.onBack,
+    this.onSavedPlaces,
     this.onNotifications,
   });
 
   final bool showBackButton;
   final VoidCallback? onBack;
+  final VoidCallback? onSavedPlaces;
   final VoidCallback? onNotifications;
 
   @override
@@ -63,12 +65,23 @@ class OverlapHeader extends StatelessWidget implements PreferredSizeWidget {
                 ),
               Align(
                 alignment: Alignment.centerRight,
-                child: SizedBox(
-                  width: 64,
-                  child: IconButton(
-                    onPressed: onNotifications,
-                    icon: const Icon(Icons.notifications_none),
-                    tooltip: '알림',
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (onSavedPlaces != null)
+                        IconButton(
+                          onPressed: onSavedPlaces,
+                          icon: const Icon(Icons.bookmark_border_rounded),
+                          tooltip: '저장한 장소',
+                        ),
+                      IconButton(
+                        onPressed: onNotifications,
+                        icon: const Icon(Icons.notifications_none),
+                        tooltip: '알림',
+                      ),
+                    ],
                   ),
                 ),
               ),

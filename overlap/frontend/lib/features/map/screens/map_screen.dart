@@ -6,6 +6,7 @@ import '../../../shared/models/place.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
+import '../services/current_location_service.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
@@ -23,9 +24,11 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  Set<MapFilter> _selectedFilters = Set.of(MapFilter.values);
+  Set<MapFilter> _selectedFilters = Set.of(MapFilter.selectableFilters);
   MapPlace? _selectedPlace;
   double _aiSheetExtent = 0.22;
+  final DraggableScrollableController _aiSheetController =
+      DraggableScrollableController();
 
   @override
   void initState() {
@@ -35,6 +38,12 @@ class _MapScreenState extends State<MapScreen> {
     } else if (widget.selectedGroupId != null) {
       _selectedFilters = _filtersForGroupId(widget.selectedGroupId);
     }
+  }
+
+  @override
+  void dispose() {
+    _aiSheetController.dispose();
+    super.dispose();
   }
 
   @override
@@ -55,15 +64,20 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Set<MapFilter> _filtersForGroupId(String? groupId) {
-    if (groupId == null) return Set.of(MapFilter.values);
-    return {MapFilter.values.firstWhere((filter) => filter.name == groupId)};
+    if (groupId == null) return Set.of(MapFilter.selectableFilters);
+    return {
+      MapFilter.values.firstWhere(
+        (filter) => filter.name == groupId,
+        orElse: () => MapFilter.mine,
+      ),
+    };
   }
 
   bool get _areAllFiltersSelected =>
-      _selectedFilters.length == MapFilter.values.length &&
-      _selectedFilters.containsAll(MapFilter.values);
+      _selectedFilters.length == MapFilter.selectableFilters.length &&
+      _selectedFilters.containsAll(MapFilter.selectableFilters);
 
-  static final List<MapPlace> _places = [
+  /* static final List<MapPlace> _places = [
     MapPlace(
       id: 'yeonnam-cafe',
       name: '연남동 카페',
@@ -97,11 +111,11 @@ class _MapScreenState extends State<MapScreen> {
       filters: {MapFilter.mine, MapFilter.neighborhood},
       groupColorHex: MapGroupColors.deepNavy,
     ),
-  ];
+  ]; */
 
-  List<MapPlace> get _visiblePlaces => _places
-      .where((place) => place.filters.any(_selectedFilters.contains))
-      .toList();
+  static const List<MapPlace> _places = [];
+
+  List<MapPlace> get _visiblePlaces => const [];
 
   String get _filterLabel {
     if (_areAllFiltersSelected) return '전체';
@@ -114,6 +128,14 @@ class _MapScreenState extends State<MapScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showCurrentLocation() async {
+    final position = await CurrentLocationService.currentPosition();
+    if (!mounted) return;
+    _showMessage(
+      position == null ? '위치 권한을 허용하면 현재 위치를 확인할 수 있어요.' : '현재 위치를 확인했어요.',
+    );
   }
 
   Future<void> _openFilterSheet() async {
@@ -161,43 +183,53 @@ class _MapScreenState extends State<MapScreen> {
     _showMessage("'${selectedPlace.name}'를 선택했어요.");
   }
 
+  void _openAiRecommendations() {
+    if (!_aiSheetController.isAttached) return;
+    _aiSheetController.animateTo(
+      0.50,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final gpsBottom = constraints.maxHeight * _aiSheetExtent + 14;
         final shouldHideGps = _aiSheetExtent >= 0.75;
+        final isAiSheetCollapsed = _aiSheetExtent <= 0.04;
         return Stack(
-      fit: StackFit.expand,
-      children: [
-        MapView(
-          isSatellite: false,
-          places: _visiblePlaces,
-          selectedPlaceId: _selectedPlace?.id,
-          onPlaceTap: _openPlacePreview,
-        ),
-        Positioned(
-          top: AppSpacing.sm,
-          left: AppSpacing.md,
-          right: AppSpacing.md,
-          child: Row(
-            children: [
-              Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
-              const SizedBox(width: AppSpacing.xs),
-              _RoundIconButton(
-                icon: Icons.tune_rounded,
-                tooltip: '기록 필터',
-                onTap: _openFilterSheet,
+          fit: StackFit.expand,
+          children: [
+            MapView(
+              isSatellite: false,
+              places: _visiblePlaces,
+              selectedPlaceId: _selectedPlace?.id,
+              onPlaceTap: _openPlacePreview,
+            ),
+            Positioned(
+              top: AppSpacing.sm,
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              child: Row(
+                children: [
+                  Expanded(child: _SearchButton(onTap: _openPlaceSearch)),
+                  const SizedBox(width: AppSpacing.xs),
+                  _RoundIconButton(
+                    icon: Icons.tune_rounded,
+                    tooltip: '기록 필터',
+                    onTap: _openFilterSheet,
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-        Positioned(
-          top: 68,
-          left: AppSpacing.md,
-          child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
-        ),
-        /*
+            ),
+            Positioned(
+              top: 68,
+              left: AppSpacing.md,
+              child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
+            ),
+            /*
         if (false)
           Positioned(
           right: AppSpacing.md,
@@ -214,52 +246,73 @@ class _MapScreenState extends State<MapScreen> {
               _RoundIconButton(
                 icon: Icons.my_location,
                 tooltip: '현재 위치',
-                onTap: () => _showMessage('현재 위치 기능은 추후 연결됩니다.'),
+                onTap: _showCurrentLocation,
               ),
             ],
           ),
         ),
         */
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 120),
-          right: AppSpacing.md,
-          bottom: gpsBottom,
-          child: IgnorePointer(
-            ignoring: shouldHideGps,
-            child: AnimatedOpacity(
+            AnimatedPositioned(
               duration: const Duration(milliseconds: 120),
-              opacity: shouldHideGps ? 0 : 1,
-              child: _RoundIconButton(
-                icon: Icons.my_location,
-                tooltip: '현재 위치',
-                onTap: () => _showMessage('현재 위치 기능은 추후 연결됩니다.'),
+              right: AppSpacing.md,
+              bottom: gpsBottom,
+              child: IgnorePointer(
+                ignoring: shouldHideGps,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: shouldHideGps ? 0 : 1,
+                  child: _RoundIconButton(
+                    icon: Icons.my_location,
+                    tooltip: '현재 위치',
+                    onTap: _showCurrentLocation,
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-        NotificationListener<DraggableScrollableNotification>(
-          onNotification: (notification) {
-            if (notification.extent != _aiSheetExtent) {
-              setState(() => _aiSheetExtent = notification.extent);
-            }
-            return false;
-          },
-          child: DraggableScrollableSheet(
-          minChildSize: 0.12,
-          initialChildSize: 0.22,
-          maxChildSize: 0.90,
-          snap: true,
-          snapSizes: const [0.12, 0.50, 0.90],
-          builder: (context, scrollController) => AiRecommendationContent(
-            scrollController: scrollController,
-            showSheetHeader: true,
-            onPlaceSelected: (place) => _showMessage(
-              "'${place.name}'을 추천 장소로 선택했어요.",
+            Positioned(
+              right: AppSpacing.md,
+              bottom: gpsBottom + 44 + AppSpacing.xs,
+              child: IgnorePointer(
+                ignoring: !isAiSheetCollapsed,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: isAiSheetCollapsed ? 1 : 0,
+                  child: AnimatedScale(
+                    duration: const Duration(milliseconds: 120),
+                    scale: isAiSheetCollapsed ? 1 : 0.9,
+                    child: _RoundIconButton(
+                      icon: Icons.auto_awesome,
+                      tooltip: 'AI 장소 추천 열기',
+                      onTap: _openAiRecommendations,
+                      isPrimary: true,
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-          ),
-        ),
-      ],
+            NotificationListener<DraggableScrollableNotification>(
+              onNotification: (notification) {
+                if (notification.extent != _aiSheetExtent) {
+                  setState(() => _aiSheetExtent = notification.extent);
+                }
+                return false;
+              },
+              child: DraggableScrollableSheet(
+                controller: _aiSheetController,
+                minChildSize: 0.0,
+                initialChildSize: 0.22,
+                maxChildSize: 0.90,
+                snap: true,
+                snapSizes: const [0.50],
+                builder: (context, scrollController) => AiRecommendationContent(
+                  scrollController: scrollController,
+                  showSheetHeader: true,
+                  onPlaceSelected: (place) =>
+                      _showMessage("'${place.name}'을 추천 장소로 선택했어요."),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

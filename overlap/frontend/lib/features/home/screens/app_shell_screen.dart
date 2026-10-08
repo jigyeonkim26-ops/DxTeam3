@@ -5,10 +5,13 @@ import '../../../core/constants/app_spacing.dart';
 import '../../group/screens/groups_screen.dart';
 import '../../map/models/map_filter.dart';
 import '../../map/screens/map_screen.dart';
+import '../../map/services/current_location_service.dart';
+import '../../map/widgets/location_permission_prompt.dart';
 import '../../memory/screens/feed_screen.dart';
 import '../../memory/screens/record_compose_screen.dart';
 import '../../notification/screens/notifications_screen.dart';
 import '../../user/screens/profile_screen.dart';
+import '../../user/screens/saved_screen.dart';
 import '../../../shared/widgets/overlap_header.dart';
 
 class AppShellScreen extends StatefulWidget {
@@ -22,6 +25,65 @@ class _AppShellScreenState extends State<AppShellScreen> {
   int _selectedIndex = 0;
   String? _selectedMapGroupId;
   Set<MapFilter>? _requestedMapFilters;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _requestLocationPermissionOnEntry();
+    });
+  }
+
+  Future<void> _requestLocationPermissionOnEntry() async {
+    if (!LocationPermissionPromptGate.tryShow()) return;
+
+    final state = await CurrentLocationService.permissionState();
+    if (!mounted || state == CurrentLocationPermissionState.granted) return;
+
+    if (state == CurrentLocationPermissionState.deniedForever) {
+      await _showDeniedForeverDialog();
+      return;
+    }
+
+    final choice = await showLocationPermissionPrompt(context);
+    if (!mounted || choice == null || choice == LocationPermissionChoice.deny) {
+      return;
+    }
+
+    if (choice == LocationPermissionChoice.all) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('현재는 앱을 사용하는 동안의 위치 권한만 지원합니다.')),
+      );
+      return;
+    }
+
+    final result = await CurrentLocationService.requestForegroundPermission();
+    if (!mounted) return;
+    if (result == CurrentLocationPermissionState.deniedForever) {
+      await _showDeniedForeverDialog();
+    }
+  }
+
+  Future<void> _showDeniedForeverDialog() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('위치 권한이 필요해요'),
+      content: const Text('설정에서 위치 권한을 허용하면 현재 위치 기능을 사용할 수 있어요.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('닫기'),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(dialogContext);
+            await CurrentLocationService.openAppSettings();
+          },
+          child: const Text('설정 열기'),
+        ),
+      ],
+    ),
+  );
 
   static const _items = <_NavigationItem>[
     _NavigationItem('지도', Icons.map_outlined, Icons.map),
@@ -46,6 +108,11 @@ class _AppShellScreenState extends State<AppShellScreen> {
     });
   }
 
+  void _showSavedPlaces() {
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const SavedScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
@@ -64,6 +131,7 @@ class _AppShellScreenState extends State<AppShellScreen> {
           OverlapHeader(
             showBackButton: _selectedIndex == 2,
             onBack: _selectedIndex == 2 ? _showMap : null,
+            onSavedPlaces: _selectedIndex == 2 ? null : _showSavedPlaces,
             onNotifications: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const NotificationsScreen(),

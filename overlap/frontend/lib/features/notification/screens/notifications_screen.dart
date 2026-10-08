@@ -52,18 +52,22 @@ class NotificationsScreen extends StatelessWidget {
                 ?.copyWith(height: 1.65),
           ),
           const SizedBox(height: AppSpacing.sm),
+          if (MockNotificationRepository.items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+              child: Center(
+                child: Text(
+                  '새로운 알림이 없어요.',
+                  style: TextStyle(color: AppColors.muted),
+                ),
+              ),
+            ),
           ...MockNotificationRepository.items.map(
             (item) => NotificationListItem(
               item: item,
               onTap: () => ScaffoldMessenger.of(context)
                   .showSnackBar(SnackBar(content: Text(_message(item.type)))),
             ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          OutlinedButton(
-            onPressed: () => ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('샘플 알림을 보냈어요.'))),
-            child: const Text('샘플 알림 보내기'),
           ),
         ],
       ),

@@ -29,7 +29,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   void initState() {
     super.initState();
     _likeCount = widget.record.likeCount;
-    _comments = _initialComments();
+    _comments = [];
   }
 
   @override
@@ -93,23 +93,9 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
       return;
     }
 
-    const currentUser = User(id: 'current-user', name: '서연');
-    final item = CommentItem(
-      id: 'comment-${DateTime.now().microsecondsSinceEpoch}',
-      author: currentUser,
-      createdAt: DateTime.now(),
-      content: content,
-    );
-    setState(() {
-      if (_replyTarget == null) {
-        _comments.add(item);
-      } else {
-        _replyTarget!.replies.add(item);
-      }
-      _replyTarget = null;
-      _commentController.clear();
-    });
-    FocusScope.of(context).unfocus();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('댓글 작성은 서버 연결 후 사용할 수 있어요.')));
   }
 
   void _selectReply(CommentItem comment) {

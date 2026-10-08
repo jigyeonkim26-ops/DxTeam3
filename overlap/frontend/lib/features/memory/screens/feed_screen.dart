@@ -1,9 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../shared/models/emotion.dart';
+import '../../../shared/models/place.dart';
 import '../../../shared/models/record.dart';
-import '../data/mock_feed_data.dart';
+import '../../../shared/models/user.dart';
 import '../models/feed_filter.dart';
 import 'record_detail_screen.dart';
 import '../widgets/feed_filter_sheet.dart';
@@ -27,6 +30,25 @@ class _FeedScreenState extends State<FeedScreen> {
   Set<FeedFilter> _selectedFilters = Set.of(FeedFilter.selectableFilters);
   final Set<String> _likedRecordIds = {};
 
+  static final Record _debugMultiImagePreviewRecord = Record(
+    id: 'debug-multi-image-preview',
+    author: const User(id: 'debug-multi-image-author', name: '다중 사진 테스트'),
+    place: const Place(
+      id: 'debug-multi-image-place',
+      name: 'OVERLAP 테스트 장소',
+      latitude: 35.110791,
+      longitude: 126.877343,
+    ),
+    createdAt: DateTime(2026, 10, 8, 12),
+    content: '여러 장의 사진을 좌우로 넘겨 확인해 보세요.',
+    emotion: Emotion.good,
+    imagePaths: const [
+      'assets/debug/landscape_test.png',
+      'assets/debug/portrait_test.png',
+      'assets/debug/square_test.png',
+    ],
+  );
+
   @override
   void initState() {
     super.initState();
@@ -45,26 +67,9 @@ class _FeedScreenState extends State<FeedScreen> {
       _activeFilters.containsAll(FeedFilter.selectableFilters);
 
   List<Record> get _visibleRecords {
-    final filters = _activeFilters;
-    final records = _isAllSelected
-        ? mockFeedRecords
-        : mockFeedRecords.where((record) {
-            final matchesMine =
-                filters.contains(FeedFilter.mine) &&
-                record.author.id == currentFeedUser.id;
-            final matchesGroup = record.sharedGroups.any(
-              (group) => filters
-                  .where(
-                    (filter) =>
-                        filter != FeedFilter.all && filter != FeedFilter.mine,
-                  )
-                  .map(_groupIdForFilter)
-                  .contains(group.id),
-            );
-            return matchesMine || matchesGroup;
-          });
-    return [...records]
-      ..sort((first, second) => second.createdAt.compareTo(first.createdAt));
+    // The record API is not connected here yet. This preview is debug-only.
+    if (kDebugMode) return [_debugMultiImagePreviewRecord];
+    return const [];
   }
 
   String get _filterLabel {
@@ -75,13 +80,6 @@ class _FeedScreenState extends State<FeedScreen> {
     if (filters.length == 1) return filters.single.label;
     return '${filters.length}개 선택';
   }
-
-  String _groupIdForFilter(FeedFilter filter) => switch (filter) {
-    FeedFilter.yeonnam => yeonnamGroup.id,
-    FeedFilter.neighborhood => neighborhoodGroup.id,
-    FeedFilter.travel => travelGroup.id,
-    FeedFilter.all || FeedFilter.mine => '',
-  };
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)

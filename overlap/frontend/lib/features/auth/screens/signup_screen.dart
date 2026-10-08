@@ -118,18 +118,33 @@ class _SignupScreenState extends State<SignupScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'OVERLAP과 함께\n새로운 장소를 기록해요.',
-                style: TextStyle(
-                  color: AppColors.deepNavy,
-                  fontSize: 25,
-                  height: 1.25,
-                  fontWeight: FontWeight.w700,
+              RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'OVER',
+                      style: TextStyle(color: AppColors.deepNavy),
+                    ),
+                    TextSpan(
+                      text: 'LAP',
+                      style: TextStyle(color: AppColors.coral),
+                    ),
+                    TextSpan(text: '과 함께\n'),
+                    TextSpan(text: '새로운 장소를 기록해요.'),
+                  ],
+                  style: TextStyle(
+                    color: AppColors.deepNavy,
+                    fontSize: 25,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
               const Text(
                 '필수 정보만 입력하면 바로 시작할 수 있어요.',
+                textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.muted),
               ),
               const SizedBox(height: AppSpacing.lg),

@@ -4,7 +4,6 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../group/models/group_list_item_data.dart';
 import '../../group/services/mock_group_repository.dart';
-import '../../memory/data/mock_feed_data.dart';
 import '../../memory/widgets/record_card.dart';
 import '../services/mock_profile_repository.dart';
 import '../services/mock_saved_repository.dart';
@@ -63,13 +62,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final profile = MockProfileRepository.profile.copyWith(
           groupCount: groups.length,
         );
-        final myRecords =
-            mockFeedRecords
-                .where((record) => record.author.id == currentFeedUser.id)
-                .toList()
-              ..sort(
-                (first, second) => second.createdAt.compareTo(first.createdAt),
-              );
+        const myRecords = <dynamic>[];
         return ColoredBox(
           color: AppColors.paper,
           child: ListView(
@@ -126,7 +119,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: AppSpacing.md),
                   ],
-              ] else
+              ] else if (MockSavedRepository.wishPlaces.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                  child: Center(
+                    child: Text(
+                      '저장한 장소가 없어요.',
+                      style: TextStyle(color: AppColors.muted),
+                    ),
+                  ),
+                )
+              else
                 for (final item in MockSavedRepository.wishPlaces)
                   SavedItemRow(
                     item: item,

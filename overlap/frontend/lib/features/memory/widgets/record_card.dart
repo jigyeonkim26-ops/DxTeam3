@@ -79,9 +79,11 @@ class RecordCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(record.content, style: const TextStyle(height: 1.5)),
-              const SizedBox(height: AppSpacing.sm),
-              _PhotoPlaceholder(record: record),
-              const SizedBox(height: AppSpacing.sm),
+              if (record.imagePaths.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sm),
+                _RecordPhotos(key: ValueKey(record.id), record: record),
+                const SizedBox(height: AppSpacing.sm),
+              ],
               Wrap(
                 spacing: AppSpacing.xs,
                 runSpacing: AppSpacing.xs,
@@ -144,14 +146,112 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-class _PhotoPlaceholder extends StatelessWidget {
-  const _PhotoPlaceholder({required this.record});
+class _RecordPhotos extends StatefulWidget {
+  const _RecordPhotos({super.key, required this.record});
 
   final Record record;
 
   @override
+  State<_RecordPhotos> createState() => _RecordPhotosState();
+}
+
+class _RecordPhotosState extends State<_RecordPhotos> {
+  static const _viewportFraction = 0.9;
+  late final PageController _pageController;
+  final Map<String, double> _aspectRatioCache = {};
+  var _currentPage = 0;
+
+  Record get record => widget.record;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(viewportFraction: _viewportFraction);
+    for (final path in record.imagePaths) {
+      _resolveAspectRatio(path);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final colors = switch (record.emotion) {
+    final path = record.imagePaths[_currentPage];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final itemWidth = record.imagePaths.length == 1
+            ? constraints.maxWidth
+            : constraints.maxWidth * _viewportFraction - AppSpacing.xs;
+        final ratio = _aspectRatioCache[path] ?? 1;
+        final height = itemWidth / ratio;
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          child: SizedBox(
+            height: height,
+            child: record.imagePaths.length == 1
+                ? _RecordImage(path: path, fallbackColors: _colorsFor(0))
+                : PageView.builder(
+                    controller: _pageController,
+                    padEnds: false,
+                    itemCount: record.imagePaths.length,
+                    onPageChanged: (index) =>
+                        setState(() => _currentPage = index),
+                    itemBuilder: (context, index) => Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.xs),
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: _RecordImage(
+                              path: record.imagePaths[index],
+                              fallbackColors: _colorsFor(index),
+                            ),
+                          ),
+                          Positioned(
+                            top: AppSpacing.xs,
+                            right: AppSpacing.sm,
+                            child: _PageIndicator(
+                              currentPage: _currentPage,
+                              pageCount: record.imagePaths.length,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _resolveAspectRatio(String path) {
+    if (!path.startsWith('assets/')) return;
+    final stream = AssetImage(path).resolve(ImageConfiguration.empty);
+    stream.addListener(
+      ImageStreamListener((info, _) {
+        final ratio = info.image.width / info.image.height;
+        if (mounted && _aspectRatioCache[path] != ratio) {
+          setState(() => _aspectRatioCache[path] = ratio);
+        }
+      }),
+    );
+  }
+
+  List<Color> _colorsFor(int index) {
+    if (record.id == 'debug-multi-image-preview') {
+      return const [
+        [Color(0xFF5E8EA8), Color(0xFFB9D9E8)],
+        [Color(0xFFE6B07A), Color(0xFFFF7058)],
+        [Color(0xFF86B88C), Color(0xFFDCEFE5)],
+      ][index];
+    }
+
+    return switch (record.emotion) {
       _ when record.id.contains('coast') => const [
         Color(0xFF5E8EA8),
         Color(0xFFFFB26B),
@@ -166,22 +266,74 @@ class _PhotoPlaceholder extends StatelessWidget {
       ],
       _ => const [Color(0xFF9FC4B2), AppColors.deepNavy],
     };
-    return Container(
-      height: 176,
-      width: double.infinity,
-      decoration: BoxDecoration(
+  }
+}
+
+class _RecordImage extends StatelessWidget {
+  const _RecordImage({required this.path, required this.fallbackColors});
+
+  final String path;
+  final List<Color> fallbackColors;
+
+  @override
+  Widget build(BuildContext context) {
+    if (path.startsWith('assets/')) {
+      return ClipRRect(
         borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        child: Image.asset(
+          path,
+          width: double.infinity,
+          height: double.infinity,
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => _PhotoPlaceholder(colors: fallbackColors),
         ),
+      );
+    }
+    return _PhotoPlaceholder(colors: fallbackColors);
+  }
+}
+
+class _PhotoPlaceholder extends StatelessWidget {
+  const _PhotoPlaceholder({required this.colors});
+  final List<Color> colors;
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+      gradient: LinearGradient(colors: colors),
+    ),
+    child: const Align(
+      alignment: Alignment.bottomLeft,
+      child: Padding(
+        padding: EdgeInsets.all(AppSpacing.sm),
+        child: Icon(Icons.image_outlined, color: Colors.white70),
       ),
-      child: const Align(
-        alignment: Alignment.bottomLeft,
-        child: Padding(
-          padding: EdgeInsets.all(AppSpacing.sm),
-          child: Icon(Icons.image_outlined, color: Colors.white70),
+    ),
+  );
+}
+
+class _PageIndicator extends StatelessWidget {
+  const _PageIndicator({required this.currentPage, required this.pageCount});
+
+  final int currentPage;
+  final int pageCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          '${currentPage + 1} / $pageCount',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
