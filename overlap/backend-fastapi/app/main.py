@@ -65,13 +65,22 @@ from .models import (
 )
 from .service import MemoryService
 from .records import router as records_router
+from .ai_recommendations import router as ai_recommendations_router
 
 
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 
 
-def create_app(service: MemoryService | None = None, *, use_db_auth: bool = False) -> FastAPI:
+def create_app(
+    service: MemoryService | None = None,
+    *,
+    use_db_auth: bool = False,
+    recommendation_adapter=None,
+    preference_service=None,
+    place_search_service=None,
+    place_recommendation_service=None,
+) -> FastAPI:
     service = service if service is not None else MemoryService()
 
     api = FastAPI(
@@ -552,6 +561,13 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
         )
 
     api.include_router(records_router(current_user))
+    api.include_router(ai_recommendations_router(
+        current_user,
+        adapter=recommendation_adapter,
+        preference_service=preference_service,
+        search_service=place_search_service,
+        recommendation_service=place_recommendation_service,
+    ))
     return api
 
 
