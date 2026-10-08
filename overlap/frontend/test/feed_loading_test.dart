@@ -38,7 +38,11 @@ class PendingFeedApi extends RecordApi {
   @override
   Future<List<Group>> groups() async => [];
   @override
-  Future<List<Record>> feed({bool mine = false, String? groupId}) {
+  Future<List<Record>> feed({
+    bool mine = false,
+    String? groupId,
+    int? placeId,
+  }) {
     final response = Completer<List<Record>>();
     responses.add(response);
     return response.future;
