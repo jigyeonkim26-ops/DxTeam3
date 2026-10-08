@@ -8,6 +8,7 @@ import '../widgets/record_photo.dart';
 import '../services/record_api.dart';
 import '../services/record_likes_api.dart';
 import '../../comment/models/comment_item.dart';
+import '../../comment/services/record_comments_api.dart';
 import '../../comment/widgets/comment_input.dart';
 import '../../comment/widgets/comment_thread.dart';
 import 'record_edit_screen.dart';
@@ -50,6 +51,9 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   late List<CommentItem> _comments;
   var _isLiked = false;
   var _isLikeLoading = false;
+  var _isCommentsLoading = false;
+  var _isSubmittingComment = false;
+  String? _commentsError;
   CommentItem? _replyTarget;
   bool _isDeleting = false;
 
@@ -57,8 +61,9 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   void initState() {
     super.initState();
     _likeCount = widget.record.likeCount;
-    _comments = _initialComments();
+    _comments = [];
     _loadLikeState();
+    _loadComments();
   }
 
   @override
@@ -67,8 +72,6 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     _commentFocusNode.dispose();
     super.dispose();
   }
-
-  List<CommentItem> _initialComments() => [];
 
   int get _commentCount => _comments.fold<int>(
     0,
@@ -109,9 +112,55 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     }
   }
 
-  void _submitComment() {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('댓글 기능은 준비 중입니다.')));
+  Future<void> _loadComments() async {
+    if (mounted) {
+      setState(() {
+        _isCommentsLoading = true;
+        _commentsError = null;
+      });
+    }
+    try {
+      final items = await RecordCommentsApi.getComments(widget.record.id);
+      final byId = {for (final item in items) item.id: item};
+      final roots = <CommentItem>[];
+      for (final item in items) {
+        final parentId = item.parentCommentId;
+        final parent = parentId == null ? null : byId[parentId];
+        if (parent == null) {
+          roots.add(item);
+        } else {
+          parent.replies.add(item);
+        }
+      }
+      if (mounted) setState(() => _comments = roots);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _commentsError = error.message);
+    } finally {
+      if (mounted) setState(() => _isCommentsLoading = false);
+    }
+  }
+
+  Future<void> _submitComment() async {
+    if (_isSubmittingComment) return;
+    final content = _commentController.text.trim();
+    if (content.isEmpty) return;
+
+    setState(() => _isSubmittingComment = true);
+    try {
+      await RecordCommentsApi.createComment(
+        widget.record.id,
+        content,
+        parentCommentId: _replyTarget?.id,
+      );
+      if (!mounted) return;
+      _commentController.clear();
+      setState(() => _replyTarget = null);
+      await _loadComments();
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } finally {
+      if (mounted) setState(() => _isSubmittingComment = false);
+    }
   }
 
   void _selectReply(CommentItem comment) {
@@ -187,6 +236,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         controller: _commentController,
         focusNode: _commentFocusNode,
         onSubmit: _submitComment,
+        isSubmitting: _isSubmittingComment,
         replyingToName: _replyTarget?.author.name,
         onCancelReply: () => setState(() => _replyTarget = null),
       ),
@@ -329,18 +379,54 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            for (final comment in _comments) ...[
-              CommentThread(
-                comment: comment,
-                onReply: () => _selectReply(comment),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
+            if (_isCommentsLoading)
+              const Center(child: CircularProgressIndicator())
+            else if (_commentsError != null)
+              _CommentsError(
+                message: _commentsError!,
+                onRetry: _loadComments,
+              )
+            else if (_comments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                child: Center(
+                  child: Text(
+                    '아직 댓글이 없어요.',
+                    style: TextStyle(color: AppColors.muted),
+                  ),
+                ),
+              )
+            else
+              for (final comment in _comments) ...[
+                CommentThread(
+                  comment: comment,
+                  onReply: () => _selectReply(comment),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
           ],
         ),
       ),
     );
   }
+}
+
+class _CommentsError extends StatelessWidget {
+  const _CommentsError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+    child: Column(
+      children: [
+        Text(message, style: const TextStyle(color: AppColors.muted)),
+        TextButton(onPressed: onRetry, child: const Text('다시 시도')),
+      ],
+    ),
+  );
 }
 
 class _RecordAuthor extends StatelessWidget {
