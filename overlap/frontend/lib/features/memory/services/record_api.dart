@@ -68,11 +68,16 @@ class RecordApi {
       )
       .toList();
 
-  Future<List<Record>> feed({bool mine = false, String? groupId}) async {
+  Future<List<Record>> feed({
+    bool mine = false,
+    String? groupId,
+    int? placeId,
+  }) async {
     final params = {
       'limit': '100',
       if (mine) 'mine': 'true',
       'group_id': ?groupId,
+      'place_id': ?placeId?.toString(),
     };
     final query = Uri(queryParameters: params).query;
     final items = <Record>[];

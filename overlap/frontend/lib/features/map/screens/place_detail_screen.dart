@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_client.dart';
+import '../../../shared/models/record.dart';
+import '../../memory/screens/record_detail_screen.dart';
+import '../../memory/services/record_api.dart';
+import '../../memory/widgets/record_card.dart';
 
 /// 선택한 장소에 쌓인 기록을 보여주는 상세 화면입니다.
 class PlaceDetailScreen extends StatefulWidget {
@@ -11,12 +16,14 @@ class PlaceDetailScreen extends StatefulWidget {
     required this.name,
     required this.address,
     required this.recordCount,
+    this.recordApi,
   });
 
   final String placeId;
   final String name;
   final String? address;
   final int recordCount;
+  final RecordApi? recordApi;
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
@@ -24,6 +31,54 @@ class PlaceDetailScreen extends StatefulWidget {
 
 class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
   bool _isSaved = false;
+  late final RecordApi _recordApi;
+  List<Record> _records = const [];
+  bool _isLoadingRecords = true;
+  bool _hasRecordLoadError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _recordApi = widget.recordApi ?? RecordApi();
+    _loadRecords();
+  }
+
+  Future<void> _loadRecords() async {
+    final placeId = int.tryParse(widget.placeId);
+    if (placeId == null || placeId <= 0) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecords = false;
+        _hasRecordLoadError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingRecords = true;
+      _hasRecordLoadError = false;
+    });
+    try {
+      final records = await _recordApi.feed(placeId: placeId);
+      if (!mounted) return;
+      setState(() {
+        _records = records;
+        _isLoadingRecords = false;
+      });
+    } on ApiException {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecords = false;
+        _hasRecordLoadError = true;
+      });
+    }
+  }
+
+  void _openRecordDetail(Record record) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => RecordDetailScreen(record: record)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +150,29 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
+            if (_isLoadingRecords)
+              const Center(child: CircularProgressIndicator())
+            else if (_hasRecordLoadError)
+              Center(
+                child: TextButton(
+                  onPressed: _loadRecords,
+                  child: const Text('기록을 불러오지 못했습니다. 다시 시도'),
+                ),
+              )
+            else if (_records.isEmpty)
+              const Center(child: Text('이 장소에 아직 기록이 없어요.'))
+            else
+              for (final record in _records) ...[
+                RecordCard(
+                  record: record,
+                  isLiked: false,
+                  onTap: () => _openRecordDetail(record),
+                  onLikeTap: () {},
+                  onCommentTap: () => _openRecordDetail(record),
+                  onPlaceTap: () {},
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
           ],
         ),
       ),
