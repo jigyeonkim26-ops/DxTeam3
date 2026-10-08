@@ -6,7 +6,6 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/network/api_config.dart';
 import '../../../core/network/api_transport.dart';
-import '../../group/services/group_list_store.dart';
 import '../../user/models/user_profile.dart';
 
 abstract final class AuthApiService {
@@ -31,7 +30,6 @@ abstract final class AuthApiService {
         (response['access_token'] as String).isEmpty) {
       throw const ApiException('로그인 응답을 확인할 수 없습니다.');
     }
-    GroupListStore.clear();
     ApiTransport.setAccessToken(response['access_token'] as String);
   }
 
@@ -137,6 +135,7 @@ abstract final class AuthApiService {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
 
     if (response.statusCode == 401) {
+      ApiTransport.expireAccessToken();
       throw const ApiException('로그인이 필요하거나 로그인 시간이 만료되었습니다.', statusCode: 401);
     }
     if (response.statusCode == 413) {
@@ -178,7 +177,12 @@ abstract final class AuthApiService {
   }
 
   static Future<void> logout() async {
-    await ApiTransport.post('/auth/logout');
-    ApiTransport.clearAccessToken();
+    try {
+      await ApiTransport.post('/auth/logout');
+    } on ApiException catch (error) {
+      if (error.statusCode != 401) rethrow;
+    } finally {
+      ApiTransport.clearAccessToken();
+    }
   }
 }

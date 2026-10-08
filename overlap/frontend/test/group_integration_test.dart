@@ -69,6 +69,67 @@ void main() {
     },
   );
 
+  test('create, join, and leave update the shared group cache immediately', () {
+    GroupListStore.upsertGroup(
+      const GroupApiItem(id: 10, name: 'Created group', memberCount: 1),
+      inviteCode: 'CREATED-CODE',
+    );
+    expect(GroupListStore.groups.single.name, 'Created group');
+    expect(GroupListStore.groups.single.inviteCode, 'CREATED-CODE');
+
+    GroupListStore.upsertGroup(
+      const GroupApiItem(id: 11, name: 'Joined group', memberCount: 2),
+    );
+    expect(GroupListStore.groups.map((group) => group.id), ['10', '11']);
+
+    expect(GroupListStore.removeGroupFromCache('10'), isTrue);
+    expect(GroupListStore.groups.map((group) => group.id), ['11']);
+  });
+
+  test(
+    'an authenticated 401 clears a session once, but login 401 does not',
+    () async {
+      ApiTransport.setAccessToken('expired-token');
+      var sessionChanges = 0;
+      void onSessionChanged() => sessionChanges++;
+      ApiClient.sessionRevision.addListener(onSessionChanged);
+      addTearDown(
+        () => ApiClient.sessionRevision.removeListener(onSessionChanged),
+      );
+
+      final server = _Client((_) => {'detail': 'expired'}, status: 401);
+      await HttpOverrides.runZoned(() async {
+        await expectLater(
+          ApiTransport.get('/protected'),
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.statusCode,
+              'statusCode',
+              401,
+            ),
+          ),
+        );
+        await expectLater(
+          ApiTransport.get('/protected'),
+          throwsA(isA<ApiException>()),
+        );
+      }, createHttpClient: (_) => server);
+
+      expect(ApiClient.accessToken, isNull);
+      expect(ApiClient.sessionExpired, isTrue);
+      expect(sessionChanges, 1);
+
+      final revisionAfterExpiry = ApiClient.sessionRevision.value;
+      await HttpOverrides.runZoned(() async {
+        await expectLater(
+          AuthApiService.login(email: 'user@example.com', password: 'wrong'),
+          throwsA(isA<ApiException>()),
+        );
+      }, createHttpClient: (_) => server);
+      expect(ApiClient.sessionRevision.value, revisionAfterExpiry);
+    },
+  );
+
   test('actual group requests preserve contracts and settings without sample members', () async {
     ApiTransport.setAccessToken('group-test-token');
     final server = _Client((request) {
@@ -174,6 +235,32 @@ void main() {
       }, createHttpClient: (_) => server);
     },
   );
+
+  testWidgets('invite sheet keeps copy and removes the unused share action', (
+    tester,
+  ) async {
+    ApiTransport.setAccessToken('group-test-token');
+    final server = _Client((request) {
+      if (request.uri.path == '/groups' && request.method == 'GET') {
+        return [groupResponse()];
+      }
+      if (request.uri.path.endsWith('/invite')) {
+        return {'invite_code': 'COPY-ONLY-CODE'};
+      }
+      return null;
+    });
+    await HttpOverrides.runZoned(() async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: GroupsScreen())),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.ios_share_outlined));
+      await tester.pumpAndSettle();
+      expect(find.text('코드 복사'), findsOneWidget);
+      expect(find.text('공유하기'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    }, createHttpClient: (_) => server);
+  });
 
   testWidgets('group query failure exposes retry instead of fake empty data', (
     tester,

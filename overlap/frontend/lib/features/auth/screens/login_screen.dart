@@ -9,7 +9,9 @@ import '../widgets/auth_text_field.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.sessionExpired = false});
+
+  final bool sessionExpired;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -95,6 +97,30 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: AppSpacing.xl),
+              if (widget.sessionExpired) ...[
+                const Card(
+                  color: AppColors.paleMint,
+                  child: Padding(
+                    padding: EdgeInsets.all(AppSpacing.md),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.lock_clock_outlined,
+                          color: AppColors.deepNavy,
+                        ),
+                        SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            '세션이 만료되었거나 서버가 재시작되었습니다. 다시 로그인해 주세요.',
+                            style: TextStyle(color: AppColors.deepNavy),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
               Center(
                 child: RichText(
                   text: TextSpan(

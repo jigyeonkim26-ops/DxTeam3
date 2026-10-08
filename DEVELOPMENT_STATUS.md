@@ -3,6 +3,30 @@
 > 기준 시각: 2026-10-08
 > 근거: 현재 작업 트리, 코드 diff, 최신 인수인계(`CODEX_HANDOFF.md`)를 확인해 작성했다. 검증 결과는 실행 시점이 명시된 항목만 검증 완료로 취급한다.
 
+## 2026-10-08 — 통합본 모임·인증 오류 수정
+
+- 작업 브랜치: `feature/fix-group-auth` (기준: `feature/fullstack-frontend-ui-test`의 `2cfb287`)
+- 모임 생성·초대코드 가입 성공 응답을 `GroupListStore`에 즉시 upsert하고, 기록 작성 화면은 해당 `ValueNotifier`를 구독한다.
+- 기록 작성 화면은 유효한 기존 공유 모임 선택을 유지하고, 탈퇴로 목록에서 제거된 ID는 선택값에서도 제거한다.
+- `GroupListStore`는 동시 새로고침을 합쳐 중복 목록 호출을 줄이며, 통계가 필요한 요청은 기존 목록 요청 이후 한 번만 추가로 수행한다.
+- 초대코드 시트에는 `코드 복사`만 남기고 미구현 `공유하기` 버튼을 제거했다.
+- 인증된 API 요청이 실제 HTTP 401을 받으면 메모리 Access Token을 한 번만 폐기하고 로그인 화면으로 스택을 초기화한다. 네트워크·시간 초과·일반 서버 오류는 세션을 폐기하지 않는다.
+- 로그인 API의 401은 기존 토큰이 없으므로 잘못된 비밀번호 메시지로 유지한다. Refresh Token, 토큰 영속 저장, MySQL 스키마·백엔드 API 변경은 없다.
+- 앱 재시작 시 토큰을 저장·복원하지 않아 로그인 화면에서 시작한다. 백엔드 재시작 또는 1시간 세션 만료는 401 후 동일한 재로그인 안내로 처리한다.
+
+### 이번 작업 검증
+
+- `C:\flutter\bin\flutter.bat analyze --no-pub` → 통과 (`No issues found`)
+- 대상 테스트 `auth_session_test.dart`, `group_integration_test.dart`, `record_compose_test.dart` → 통과
+- 전체 `flutter test --no-pub` → 77 통과, `map_places_api_test.dart` 기존 3건 실패. 지도 소스·테스트는 이번 diff에 포함하지 않았고, 해당 테스트 단독 실행에서도 같은 `MapPlacesApiException`이 발생한다.
+- 백엔드 파일을 변경하지 않아 pytest는 이번 작업에서 실행하지 않았다.
+
+### 통합 주의
+
+- 충돌 가능성 높음: `api_client.dart`, `api_transport.dart`, `main.dart`, `login_screen.dart` — 공통 인증 및 앱 진입 흐름
+- 충돌 가능성 높음: `group_list_store.dart`, `create_group_screen.dart`, `join_group_screen.dart`, `groups_screen.dart`, `record_compose_screen.dart` — 모임 상태와 공유 UI
+- 지도·피드·장소 상세·알림·AI 추천 기능 및 DB/NCP 설정은 수정하지 않았다.
+
 ## 저장소 상태
 
 - 프로젝트: `DxTeam3-team4`

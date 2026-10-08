@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_transport.dart';
 import '../services/group_api_service.dart';
+import '../services/group_list_store.dart';
 
 class JoinGroupScreen extends StatefulWidget {
   const JoinGroupScreen({super.key, required this.inviteCode});
@@ -22,6 +23,7 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
     setState(() => _isJoining = true);
     try {
       final group = await GroupApiService.joinGroup(widget.inviteCode);
+      GroupListStore.upsertGroup(group);
       if (!mounted) return;
       setState(() => _joinedGroup = group);
       ScaffoldMessenger.of(context).showSnackBar(

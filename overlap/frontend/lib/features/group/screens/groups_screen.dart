@@ -189,19 +189,6 @@ class _GroupsScreenState extends State<GroupsScreen> {
                     label: const Text('코드 복사'),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('실제 시스템 공유 기능을 위해 share_plus 추가가 필요합니다.'),
-                      ),
-                    ),
-                    icon: const Icon(Icons.ios_share_outlined),
-                    label: const Text('공유하기'),
-                  ),
-                ),
               ],
             ),
           ),

@@ -16,6 +16,8 @@ abstract final class ApiTransport {
 
   static void clearAccessToken() => ApiClient.clearSession();
 
+  static bool expireAccessToken() => ApiClient.expireSession();
+
   static Future<dynamic> get(String path) => _send('GET', path);
 
   static Future<dynamic> post(String path, {Object? body}) =>
@@ -58,6 +60,7 @@ abstract final class ApiTransport {
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        if (response.statusCode == 401) expireAccessToken();
         throw ApiException(
           _messageForStatus(response.statusCode, decoded),
           statusCode: response.statusCode,
