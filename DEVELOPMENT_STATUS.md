@@ -8,8 +8,8 @@
 - 프로젝트: `DxTeam3-team4`
 - 현재 브랜치: `feature/mypage-group-ui`
 - PR 대상 통합 브랜치: `feature/fullstack-frontend-ui-test`
-- HEAD: `f6be04b` — `merge: integrate completed frontend`
-- 기준 확인 시점에는 commit, push, PR 생성, merge를 하지 않았다.
+- 구현 커밋: `415461f` — `feat: complete my page and group management features`
+- `415461f`는 원격 `feature/mypage-group-ui`에 non-force push 완료했다. PR 생성·merge는 하지 않았다.
 - `.env.example` 삭제를 포함한 기존 미커밋 변경이 있으므로, 출처를 확인하기 전에는 되돌리거나 삭제하지 않는다.
 - 이번 문서 설정으로 `AGENTS.md`는 로컬 Git 제외 대상이며, 이 문서와 `DEVELOPMENT_LOG.md`는 향후 PR 포함 여부를 별도로 결정한다.
 - 새 통합 브랜치 최신 확인값은 `61bf32a`이며, 현재 작업 브랜치와 merge·rebase하지 않았다.
@@ -107,4 +107,4 @@
 1. 에뮬레이터에서 내 기록 수정·삭제 플로우를 실제 로그인 계정으로 확인한다. 공통 DB의 기존 기록은 삭제 테스트에 사용하지 않는다.
 2. 수동 사진 플로우와 DB 컬럼 존재 여부를 확인한다.
 3. 검증 결과와 실제 변경 파일을 이 문서·로그에 갱신한다.
-4. 사용자 승인에 따라 현재 브랜치에 개별 stage·commit·non-force push만 수행한다. PR 생성·merge는 수행하지 않는다.
+4. GitHub에서 `feature/fullstack-frontend-ui-test`를 대상으로 PR을 생성하기 전, `group_api_service.dart`의 통합 hunk를 확인한다. PR 생성·merge는 사용자와 팀 확인 후에만 수행한다.
