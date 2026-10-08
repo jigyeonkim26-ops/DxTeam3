@@ -43,7 +43,7 @@ def test_own_records_and_internal_place_ids(map_world):
     result = pins(map_world)
     assert [p["place_id"] for p in result] == [12, 14, 17]
     assert result[0] == dict(place_id=12, name="Place 12", address="Address",
-                           latitude=35.1107137, longitude=126.8778041, record_count=2)
+                           latitude=35.1107137, longitude=126.8778041, record_count=1)
 
 
 def test_other_private_records_excluded_even_with_group_link(map_world):

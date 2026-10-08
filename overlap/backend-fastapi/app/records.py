@@ -6,14 +6,15 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, case, delete, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .db import get_db
 from .db_models import User
 from .object_storage import get_object_storage
-from .record_models import GroupMember, MemoryGroup, Place, Record, RecordGroup, RecordPhoto
+from .notification_service import notify_group_members, notify_record_author
+from .record_models import GroupMember, MemoryGroup, Place, Record, RecordGroup, RecordLike, RecordPhoto
 
 
 class RecordPlace(BaseModel):
@@ -54,7 +55,10 @@ def visibility(user_id: int):
     shared = exists(select(RecordGroup.record_id).join(
         GroupMember, GroupMember.group_id == RecordGroup.group_id
     ).where(RecordGroup.record_id == Record.id, GroupMember.user_id == user_id))
-    return or_(Record.author_id == user_id, and_(Record.is_private.is_(False), shared))
+    return or_(
+        and_(Record.is_private.is_(True), Record.author_id == user_id),
+        and_(Record.is_private.is_(False), shared),
+    )
 
 
 def groups_for_user(db: Session, user_id: int):
@@ -86,12 +90,61 @@ def record_public(db: Session, record: Record, viewer_id: int):
     )
 
 
+class RecordLikesPublic(BaseModel):
+    record_id: int
+    like_count: int
+    liked: bool
+
+
+def require_visible_record(db: Session, record_id: int, user_id: int):
+    record = db.scalar(select(Record.id).where(Record.id == record_id, visibility(user_id)))
+    if record is None:
+        raise HTTPException(404, "기록을 찾을 수 없습니다.")
+
+
+def record_likes_public(db: Session, record_id: int, user_id: int):
+    # One statement keeps the count and the viewer's state consistent.
+    count, own_count = db.execute(select(
+        func.count(), func.count(case((RecordLike.user_id == user_id, 1))),
+    ).where(RecordLike.record_id == record_id)).one()
+    return RecordLikesPublic(record_id=record_id, like_count=count, liked=own_count > 0)
+
+
 def router(current_user):
     api = APIRouter(tags=["Records"])
 
     @api.get("/records/groups")
     def my_groups(user=Depends(current_user), db: Session = Depends(require_db)):
         return groups_for_user(db, user.id)
+
+    @api.get("/records/{record_id}/likes", response_model=RecordLikesPublic)
+    def get_likes(record_id: int, user=Depends(current_user), db: Session = Depends(require_db)):
+        require_visible_record(db, record_id, user.id)
+        return record_likes_public(db, record_id, user.id)
+
+    @api.post("/records/{record_id}/likes", response_model=RecordLikesPublic)
+    def add_like(record_id: int, user=Depends(current_user), db: Session = Depends(require_db)):
+        require_visible_record(db, record_id, user.id)
+        if db.get(RecordLike, (record_id, user.id)) is None:
+            db.add(RecordLike(record_id=record_id, user_id=user.id))
+            try:
+                notify_record_author(db, record_id=record_id, actor_id=user.id, event="LIKE")
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                # The composite PK also protects simultaneous requests.
+                require_visible_record(db, record_id, user.id)
+                if db.get(RecordLike, (record_id, user.id)) is None:
+                    raise HTTPException(503, "좋아요를 저장하지 못했습니다.") from None
+        return record_likes_public(db, record_id, user.id)
+
+    @api.delete("/records/{record_id}/likes", response_model=RecordLikesPublic)
+    def remove_like(record_id: int, user=Depends(current_user), db: Session = Depends(require_db)):
+        require_visible_record(db, record_id, user.id)
+        db.execute(delete(RecordLike).where(
+            RecordLike.record_id == record_id, RecordLike.user_id == user.id))
+        db.commit()
+        return record_likes_public(db, record_id, user.id)
 
     @api.post("/records", status_code=201)
     def create_record(
@@ -155,6 +208,7 @@ def router(current_user):
             for group_id in payload.group_ids:
                 db.add(RecordGroup(record_id=record.id, group_id=group_id))
             db.flush()
+            notify_group_members(db, group_ids=payload.group_ids, actor_id=user.id, record_id=record.id)
             response = record_public(db, record, user.id)
             db.commit()
             return response

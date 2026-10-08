@@ -1,9 +1,11 @@
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .group_db_models import GroupMember, MemoryGroup
 from .models import GroupCreated, GroupPreferencesInput, GroupPublic, GroupUpdateInput
 from . import group_repository
+from .notification_service import notify_group_members
 
 
 def _member(db: Session, group_id: int, user_id: int) -> GroupMember:
@@ -34,11 +36,18 @@ def create_group(db: Session, *, user_id: int, name: str, description: str | Non
 
 def update_group(db: Session, *, user_id: int, group_id: int, data: GroupUpdateInput) -> GroupPublic:
     _member(db, group_id, user_id)
-    group = group_repository.get_group(db, group_id)
+    group = db.scalar(select(MemoryGroup).where(MemoryGroup.id == group_id).with_for_update())
     if group is None:
         raise HTTPException(status_code=404, detail="모임을 찾을 수 없습니다.")
-    group.description, group.visibility = data.description, data.visibility
-    db.commit()
+    changed = (group.description, group.visibility) != (data.description, data.visibility)
+    try:
+        group.description, group.visibility = data.description, data.visibility
+        if changed:
+            notify_group_members(db, group_ids=[group_id], actor_id=user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(group)
     return _public(db, group, user_id)
 
@@ -57,6 +66,17 @@ def update_preferences(db: Session, *, user_id: int, group_id: int, data: GroupP
 
 
 def leave_group(db: Session, *, user_id: int, group_id: int) -> None:
-    member = _member(db, group_id, user_id)
-    db.delete(member)
-    db.commit()
+    # Serialize repeated concurrent departures before emitting their event.
+    member = db.scalar(select(GroupMember).where(
+        GroupMember.group_id == group_id, GroupMember.user_id == user_id,
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="모임을 찾을 수 없습니다.")
+    try:
+        db.delete(member)
+        db.flush()
+        notify_group_members(db, group_ids=[group_id], actor_id=user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise

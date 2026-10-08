@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .group_db_models import MemoryGroup
 from .models import GroupCreated, GroupPublic
 from . import group_repository
+from .notification_service import notify_group_members
 
 
 INVITE_CODE_LENGTH = 12
@@ -95,30 +96,27 @@ def create_group(
     )
 
 
+def _validated_invite(db: Session, invite_code: str) -> MemoryGroup:
+    group = group_repository.get_group_by_invite_code(db, invite_code.strip().upper())
+    if group is None:
+        raise HTTPException(404, "초대 코드를 확인해 주세요.")
+    if not group.invite_enabled:
+        raise HTTPException(403, "현재 사용할 수 없는 초대 코드입니다.")
+    return group
+
+
+def validate_invite(db: Session, *, user_id: int, invite_code: str) -> GroupPublic:
+    """Preview a valid invitation without adding a membership."""
+    return _to_group_public(db, _validated_invite(db, invite_code), user_id)
+
+
 def join_group(
     db: Session,
     *,
     user_id: int,
     invite_code: str,
 ) -> GroupPublic:
-    normalized_code = invite_code.strip().upper()
-
-    group = group_repository.get_group_by_invite_code(
-        db,
-        normalized_code,
-    )
-
-    if group is None:
-        raise HTTPException(
-            status_code=404,
-            detail="초대 코드를 확인해 주세요.",
-        )
-
-    if not group.invite_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="현재 사용할 수 없는 초대 코드입니다.",
-        )
+    group = _validated_invite(db, invite_code)
 
     if group_repository.is_member(
         db,
@@ -137,6 +135,8 @@ def join_group(
             user_id=user_id,
         )
 
+        db.flush()
+        notify_group_members(db, group_ids=[group.id], actor_id=user_id)
         db.commit()
 
     except IntegrityError:
@@ -201,5 +201,8 @@ def get_invite(
             status_code=404,
             detail="현재 사용할 수 있는 초대 코드가 없습니다.",
         )
+
+    if not group.invite_enabled:
+        raise HTTPException(403, "현재 사용할 수 없는 초대 코드입니다.")
 
     return group.invite_code

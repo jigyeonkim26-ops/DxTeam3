@@ -66,6 +66,9 @@ from .models import (
 from .service import MemoryService
 from .records import router as records_router
 from .map_places import router as map_places_router
+from .comments import router as comments_router
+from .saved_places import router as saved_places_router
+from .notifications import router as notifications_router
 
 
 Offset = Annotated[int, Query(ge=0)]
@@ -256,6 +259,16 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
             description=data.description,
             visibility=data.visibility,
         )
+
+    @api.post("/groups/invite/validate", response_model=GroupPublic, tags=["2. 모임"])
+    def validate_invite(
+        data: JoinInput,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session = Depends(get_db),
+    ):
+        if db is None:
+            return service.validate_invite(user.id, data.invite_code)
+        return group_service.validate_invite(db, user_id=user.id, invite_code=data.invite_code)
 
     @api.post(
         "/groups/join",
@@ -554,6 +567,9 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
 
     api.include_router(records_router(current_user))
     api.include_router(map_places_router(current_user))
+    api.include_router(comments_router(current_user))
+    api.include_router(saved_places_router(current_user))
+    api.include_router(notifications_router(current_user))
     return api
 
 

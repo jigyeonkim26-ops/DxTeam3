@@ -55,3 +55,28 @@ class RecordGroup(Base):
     record_id: Mapped[int] = mapped_column(ForeignKey("records.id"), primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("memory_groups.id"), primary_key=True)
     shared_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class RecordLike(Base):
+    """Map the existing composite key; production tables are never created here."""
+    __tablename__ = "record_likes"
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+
+
+class Comment(Base):
+    __tablename__ = "comments"
+    id: Mapped[int] = mapped_column(Id, primary_key=True, autoincrement=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id"))
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    parent_comment_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id"), nullable=True)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class SavedPlace(Base):
+    __tablename__ = "saved_places"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    place_id: Mapped[int] = mapped_column(ForeignKey("places.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
