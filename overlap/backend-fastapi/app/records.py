@@ -2,7 +2,7 @@
 import io
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -42,6 +42,15 @@ class RecordInput(BaseModel):
             raise ValueError("공유할 모임을 선택해 주세요.")
         self.group_ids = list(dict.fromkeys(self.group_ids))
         return self
+
+
+class RecordUpdate(BaseModel):
+    """Editable fields only; place and photos deliberately remain immutable here."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    content: str | None = Field(default=None, max_length=300)
+    emotion: Literal["excellent", "good", "okay", "neutral", "disappointed", "poor"] | None = None
+    is_private: bool | None = None
+    group_ids: list[Annotated[int, Field(gt=0)]] | None = Field(default=None, max_length=100)
 
 
 def require_db(db: Session | None = Depends(get_db)) -> Session:
@@ -168,6 +177,127 @@ def router(current_user):
             if isinstance(error, HTTPException):
                 raise
             raise HTTPException(503, "기록을 저장하지 못했습니다. 다시 시도해 주세요.") from None
+
+    @api.patch("/records/{record_id}")
+    def update_record(
+        record_id: int,
+        payload: RecordUpdate,
+        user=Depends(current_user),
+        db: Session = Depends(require_db),
+    ):
+        record = db.get(Record, record_id)
+        if record is None:
+            raise HTTPException(404, "기록을 찾을 수 없습니다.")
+        if record.author_id != user.id:
+            raise HTTPException(403, "작성자만 기록을 수정할 수 있습니다.")
+
+        current_group_ids = list(db.scalars(select(RecordGroup.group_id).where(
+            RecordGroup.record_id == record.id
+        )))
+        next_private = record.is_private if payload.is_private is None else payload.is_private
+        submitted_group_ids = (
+            None
+            if payload.group_ids is None
+            else list(dict.fromkeys(payload.group_ids))
+        )
+
+        if next_private:
+            if submitted_group_ids:
+                raise HTTPException(422, "나만 보기 기록은 모임에 공유할 수 없습니다.")
+            next_group_ids: list[int] = []
+        else:
+            next_group_ids = (
+                current_group_ids if submitted_group_ids is None else submitted_group_ids
+            )
+            if not next_group_ids:
+                raise HTTPException(422, "공유할 모임을 선택해 주세요.")
+            # Membership is checked whenever the request selects sharing targets.
+            # A content-only partial update preserves a legacy share unchanged.
+            if submitted_group_ids is not None:
+                joined_group_ids = set(db.scalars(select(GroupMember.group_id).where(
+                    GroupMember.user_id == user.id,
+                    GroupMember.group_id.in_(next_group_ids),
+                )))
+                if joined_group_ids != set(next_group_ids):
+                    raise HTTPException(403, "가입한 모임에만 공유할 수 있습니다.")
+
+        if payload.content is not None:
+            record.content = payload.content
+        if payload.emotion is not None:
+            record.emotion = payload.emotion
+        record.is_private = next_private
+
+        scope_changed = payload.is_private is not None or submitted_group_ids is not None
+        if scope_changed:
+            for link in db.scalars(select(RecordGroup).where(
+                RecordGroup.record_id == record.id
+            )).all():
+                db.delete(link)
+            for group_id in next_group_ids:
+                db.add(RecordGroup(record_id=record.id, group_id=group_id))
+
+        try:
+            db.flush()
+            response = record_public(db, record, user.id)
+            db.commit()
+            return response
+        except Exception:
+            db.rollback()
+            raise HTTPException(503, "기록을 수정하지 못했습니다. 다시 시도해 주세요.") from None
+
+    @api.delete("/records/{record_id}", status_code=204)
+    def delete_record(
+        record_id: int,
+        user=Depends(current_user),
+        db: Session = Depends(require_db),
+    ):
+        record = db.get(Record, record_id)
+        if record is None:
+            raise HTTPException(404, "기록을 찾을 수 없습니다.")
+        if record.author_id != user.id:
+            raise HTTPException(403, "작성자만 기록을 삭제할 수 있습니다.")
+
+        photos = db.scalars(select(RecordPhoto).where(
+            RecordPhoto.record_id == record.id
+        )).all()
+        object_keys = {photo.object_key for photo in photos if photo.object_key}
+        shared_object_keys: set[str] = set()
+        if object_keys:
+            shared_object_keys = set(db.scalars(select(RecordPhoto.object_key).where(
+                RecordPhoto.object_key.in_(object_keys),
+                RecordPhoto.record_id != record.id,
+            )))
+        exclusive_object_keys = sorted(object_keys - shared_object_keys)
+
+        try:
+            for link in db.scalars(select(RecordGroup).where(
+                RecordGroup.record_id == record.id
+            )).all():
+                db.delete(link)
+            for photo in photos:
+                db.delete(photo)
+            # Do not delete the place: it can be referenced by other records.
+            db.delete(record)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise HTTPException(503, "기록을 삭제하지 못했습니다. 다시 시도해 주세요.") from None
+
+        # MySQL commits before Object Storage cleanup. This deliberately avoids
+        # deleting a photo while leaving its record behind if the DB transaction
+        # fails. A storage failure can only leave an inaccessible private orphan,
+        # never a record pointing at an already-deleted photo.
+        if exclusive_object_keys:
+            try:
+                storage = get_object_storage()
+                for object_key in exclusive_object_keys:
+                    try:
+                        storage.delete(object_key)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return Response(status_code=204)
 
     @api.get("/feed")
     def feed(user=Depends(current_user), db: Session = Depends(require_db),

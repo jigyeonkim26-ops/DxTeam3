@@ -45,7 +45,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
       _loadError = null;
     });
     try {
-      await GroupListStore.refreshGroups();
+      await GroupListStore.refreshGroups(includeRecordStatistics: true);
     } on ApiException catch (error) {
       if (mounted && generation == _loadGeneration) {
         setState(() => _loadError = error.message);

@@ -7,7 +7,7 @@ class GroupListItemData {
     required this.placeCount,
     required this.newRecordCount,
     required this.inviteCode,
-    this.recordCount = 0,
+    this.recordCount,
     this.pinColorValue = 0xFFFF7058,
     this.notificationsEnabled = true,
     List<GroupMemberData> members = const [],
@@ -23,8 +23,8 @@ class GroupListItemData {
   final String? description;
   final String visibility;
   final int memberCount;
-  final int placeCount;
-  final int newRecordCount;
+  final int? placeCount;
+  final int? newRecordCount;
   final String inviteCode;
   final int? recordCount;
   final int? pinColorValue;
@@ -52,7 +52,7 @@ class GroupListItemData {
       placeCount: placeCount,
       newRecordCount: newRecordCount,
       inviteCode: inviteCode,
-      recordCount: recordCount ?? 0,
+      recordCount: recordCount,
       pinColorValue: pinColorValue ?? this.pinColorValue ?? 0xFFFF7058,
       notificationsEnabled:
           notificationsEnabled ?? this.notificationsEnabled ?? true,
@@ -65,12 +65,25 @@ class GroupListItemData {
   }
 
   String get newRecordDescription {
+    if (newRecordCount == null) {
+      return '새 기록 기준 미정';
+    }
     if (newRecordCount == 0) {
       return '새 기록 없음';
     }
 
     final prefix = hasTodayNewRecords ? '오늘 새 기록' : '새 기록';
     return '$prefix $newRecordCount개';
+  }
+
+  String get placeCountDescription {
+    final count = placeCount;
+    return count == null ? '장소 집계 불가' : '장소 $count곳';
+  }
+
+  String get recordCountDescription {
+    final count = recordCount;
+    return count == null ? '기록 집계 불가' : '기록 $count개';
   }
 }
 

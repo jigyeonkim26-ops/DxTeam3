@@ -32,18 +32,22 @@
 
 """요청을 받는 API 입구. 실행: python -m uvicorn app.main:app --reload"""
 
+import io
+import mimetypes
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from . import group_management_service, group_service
 from .db import get_db
 from .kakao import search_places
+from .object_storage import get_object_storage
 from .models import (
     GroupCreated,
     GroupInput,
@@ -59,6 +63,7 @@ from .models import (
     Page,
     PlaceInput,
     PlacePublic,
+    ProfileUpdateInput,
     RegisterInput,
     TokenOutput,
     UserPublic,
@@ -69,6 +74,26 @@ from .records import router as records_router
 
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
+_PROFILE_PHOTO_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _read_profile_photo(photo: UploadFile) -> tuple[bytes, str]:
+    raw = photo.file.read(_PROFILE_PHOTO_MAX_BYTES + 1)
+    if len(raw) > _PROFILE_PHOTO_MAX_BYTES:
+        raise HTTPException(413, "프로필 사진은 5MB 이하로 선택해 주세요.")
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            mime_type = {
+                "JPEG": "image/jpeg",
+                "PNG": "image/png",
+                "WEBP": "image/webp",
+            }.get(image.format)
+            image.verify()
+        if mime_type is None:
+            raise ValueError()
+    except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError):
+        raise HTTPException(422, "JPEG, PNG, WebP 사진 파일만 선택해 주세요.") from None
+    return raw, mime_type
 
 
 def create_app(service: MemoryService | None = None, *, use_db_auth: bool = False) -> FastAPI:
@@ -211,6 +236,123 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
         ],
     ):
         return user
+
+    @api.patch(
+        "/auth/me",
+        response_model=UserPublic,
+        tags=["1. 회원"],
+        summary="로그인한 사용자 프로필 수정",
+    )
+    def update_me(
+        data: ProfileUpdateInput,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        if not use_db_auth or db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="프로필 수정은 MySQL 연결이 필요합니다.",
+        )
+        return service.update_profile_db(user.id, data, db)
+
+    @api.post(
+        "/auth/me/photo",
+        status_code=204,
+        tags=["1. 회원"],
+        summary="로그인한 사용자 프로필 사진 업로드 또는 변경",
+    )
+    def upload_profile_photo(
+        photo: Annotated[UploadFile, File()],
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        if not use_db_auth or db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="프로필 사진은 MySQL 연결이 필요합니다.",
+            )
+        raw, mime_type = _read_profile_photo(photo)
+        storage = get_object_storage()
+        uploaded = storage.upload_profile(user.id, raw, mime_type)
+        try:
+            previous_key = service.update_profile_image_key_db(
+                user.id,
+                uploaded.object_key,
+                db,
+            )
+        except Exception:
+            try:
+                storage.delete(uploaded.object_key)
+            except Exception:
+                pass
+            raise
+
+        if previous_key and previous_key != uploaded.object_key:
+            try:
+                storage.delete(previous_key)
+            except Exception:
+                pass
+        return Response(status_code=204)
+
+    @api.get(
+        "/auth/me/photo",
+        tags=["1. 회원"],
+        summary="로그인한 사용자 프로필 사진 조회",
+    )
+    def get_profile_photo(
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        if not use_db_auth or db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="프로필 사진은 MySQL 연결이 필요합니다.",
+            )
+        object_key = service.profile_image_key_db(user.id, db)
+        if object_key is None:
+            raise HTTPException(404, "등록된 프로필 사진이 없습니다.")
+
+        body = get_object_storage().download(object_key)
+
+        def chunks():
+            try:
+                while chunk := body.read(64 * 1024):
+                    yield chunk
+            finally:
+                body.close()
+
+        media_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+        return StreamingResponse(
+            chunks(),
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @api.delete(
+        "/auth/me/photo",
+        status_code=204,
+        tags=["1. 회원"],
+        summary="로그인한 사용자 프로필 사진 삭제",
+    )
+    def delete_profile_photo(
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        if not use_db_auth or db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="프로필 사진은 MySQL 연결이 필요합니다.",
+            )
+        previous_key = service.update_profile_image_key_db(user.id, None, db)
+        if previous_key:
+            try:
+                get_object_storage().delete(previous_key)
+            except Exception:
+                pass
+        return Response(status_code=204)
 
     @api.post(
         "/auth/logout",

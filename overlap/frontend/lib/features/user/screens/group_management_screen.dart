@@ -32,7 +32,7 @@ class _GroupManagementScreenState extends State<GroupManagementScreen> {
       _error = null;
     });
     try {
-      await GroupListStore.refreshGroups();
+      await GroupListStore.refreshGroups(includeRecordStatistics: true);
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
@@ -239,7 +239,7 @@ class _GroupSelectionRow extends StatelessWidget {
                     ),
                     const SizedBox(height: AppSpacing.xxs),
                     Text(
-                      '멤버 ${group.memberCount}명 · 장소 ${group.placeCount}곳',
+                      '멤버 ${group.memberCount}명 · ${group.placeCountDescription}',
                       style: const TextStyle(
                         color: AppColors.muted,
                         fontSize: 12,

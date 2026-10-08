@@ -202,7 +202,6 @@ class _GroupDetailManagementScreenState
         }
         final isNotificationsEnabled = group.notificationsEnabled ?? true;
         final pinColorValue = group.pinColorValue ?? AppColors.coral.toARGB32();
-        final recordCount = group.recordCount ?? 0;
         final members = group.members;
         final memberCount = members.isEmpty
             ? group.memberCount
@@ -292,7 +291,7 @@ class _GroupDetailManagementScreenState
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    '멤버 $memberCount명  ·  장소 ${group.placeCount}곳  ·  기록 $recordCount개',
+                    '멤버 $memberCount명  ·  ${group.placeCountDescription}  ·  ${group.recordCountDescription}',
                     style: const TextStyle(color: AppColors.muted),
                   ),
                   const SizedBox(height: AppSpacing.xl),

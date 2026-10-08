@@ -47,9 +47,18 @@ class ObjectStorage:
             config=ncp_config,
         )
 
-    def upload(self, data: bytes, mime_type: str) -> UploadedPhoto:
+    def upload(
+        self,
+        data: bytes,
+        mime_type: str,
+        *,
+        prefix: str = "records",
+    ) -> UploadedPhoto:
         suffix = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime_type]
-        key = f"records/{uuid4().hex}.{suffix}"
+        normalized_prefix = prefix.strip("/")
+        if not normalized_prefix:
+            raise HTTPException(503, "Object Storage 경로를 확인해 주세요.")
+        key = f"{normalized_prefix}/{uuid4().hex}.{suffix}"
         url = f"{self.endpoint}/{quote(self.bucket, safe='')}/{quote(key, safe='/')}"
         if len(url) > 500:
             raise HTTPException(503, "Object Storage 주소 길이를 확인해 주세요.")
@@ -59,6 +68,11 @@ class ObjectStorage:
         except Exception:
             raise HTTPException(502, "사진 저장에 실패했습니다. 다시 시도해 주세요.") from None
         return UploadedPhoto(key, url)
+
+    def upload_profile(self, user_id: int, data: bytes, mime_type: str) -> UploadedPhoto:
+        if user_id <= 0:
+            raise HTTPException(503, "프로필 사진 사용자 정보를 확인할 수 없습니다.")
+        return self.upload(data, mime_type, prefix=f"profiles/{user_id}")
 
     def delete(self, key: str):
         self.client.delete_object(Bucket=self.bucket, Key=key)

@@ -16,6 +16,7 @@ from app.main import create_app
 from app.object_storage import UploadedPhoto, ObjectStorage
 from app.record_models import GroupMember, MemoryGroup, Record, RecordPhoto, RecordGroup
 from app.security import hash_password
+import app.main as main_api
 import app.records as records_api
 
 
@@ -24,6 +25,7 @@ class Storage:
         self.objects = {}
         self.deleted = []
         self.fail_at = None
+        self.fail_delete = False
 
     def upload(self, raw, mime):
         if self.fail_at == len(self.objects):
@@ -32,7 +34,16 @@ class Storage:
         self.objects[key] = raw
         return UploadedPhoto(key, f"https://storage.example.test/bucket/{key}")
 
+    def upload_profile(self, user_id, raw, mime):
+        if self.fail_at == len(self.objects):
+            raise HTTPException(502, "사진 저장 실패")
+        key = f"profiles/{user_id}/test-{len(self.objects)}.png"
+        self.objects[key] = raw
+        return UploadedPhoto(key, f"https://storage.example.test/bucket/{key}")
+
     def delete(self, key):
+        if self.fail_delete:
+            raise HTTPException(502, "사진 삭제 실패")
         self.deleted.append(key)
         self.objects.pop(key, None)
 
@@ -59,6 +70,7 @@ def world(monkeypatch):
     api.dependency_overrides[get_db] = session
     storage = Storage()
     monkeypatch.setattr(records_api, "get_object_storage", lambda: storage)
+    monkeypatch.setattr(main_api, "get_object_storage", lambda: storage)
     with TestClient(api) as client:
         headers = {}
         for user_id in (1, 2, 3):
@@ -97,6 +109,313 @@ def test_record_save_and_photo_url(world):
         assert photo.file_size == len(image())
         assert db.scalar(select(func.count()).select_from(RecordGroup)) == 1
     assert world[0].get(response.json()["photo_urls"][0], headers=world[3][1]).content == image()
+
+
+def test_author_updates_record_content_emotion_and_scope(world):
+    client, engine, _, headers = world
+    created = create(world, content="수정 전 내용").json()
+
+    private_update = client.patch(
+        f"/records/{created['id']}",
+        headers=headers[1],
+        json={"content": "수정한 내용", "emotion": "excellent", "is_private": True, "group_ids": []},
+    )
+    assert private_update.status_code == 200, private_update.text
+    assert private_update.json()["content"] == "수정한 내용"
+    assert private_update.json()["emotion"] == "excellent"
+    assert private_update.json()["is_private"] is True
+    assert private_update.json()["shared_groups"] == []
+
+    shared_update = client.patch(
+        f"/records/{created['id']}",
+        headers=headers[1],
+        json={"is_private": False, "group_ids": [10]},
+    )
+    assert shared_update.status_code == 200, shared_update.text
+    assert shared_update.json()["is_private"] is False
+    assert [group["id"] for group in shared_update.json()["shared_groups"]] == [10]
+    with Session(engine) as db:
+        record = db.get(Record, created["id"])
+        assert record.content == "수정한 내용"
+        assert record.emotion == "excellent"
+        assert db.scalars(select(RecordGroup.group_id).where(
+            RecordGroup.record_id == created["id"]
+        )).all() == [10]
+    assert client.get("/feed?mine=true", headers=headers[1]).json()["items"][0]["content"] == "수정한 내용"
+
+
+def test_record_update_rejects_non_author_invalid_scope_and_nonmember(world):
+    client, engine, _, headers = world
+    created = create(world, content="원본").json()
+
+    assert client.patch(
+        f"/records/{created['id']}", headers=headers[2], json={"content": "다른 사용자 수정"}
+    ).status_code == 403
+    assert client.patch(
+        f"/records/{created['id']}", json={"content": "인증 없음"}
+    ).status_code == 401
+    assert client.patch(
+        f"/records/{created['id']}",
+        headers=headers[1],
+        json={"is_private": False, "group_ids": [20]},
+    ).status_code == 403
+    assert client.patch(
+        f"/records/{created['id']}",
+        headers=headers[1],
+        json={"is_private": True, "group_ids": [10]},
+    ).status_code == 422
+    assert client.patch(
+        f"/records/{created['id']}",
+        headers=headers[1],
+        json={"is_private": False, "group_ids": []},
+    ).status_code == 422
+    with Session(engine) as db:
+        assert db.get(Record, created["id"]).content == "원본"
+        assert db.scalars(select(RecordGroup.group_id).where(
+            RecordGroup.record_id == created["id"]
+        )).all() == [10]
+
+
+def test_author_deletes_record_relationships_and_exclusive_photo(world):
+    client, engine, storage, headers = world
+    created = create(world).json()
+    with Session(engine) as db:
+        object_key = db.scalar(select(RecordPhoto.object_key).where(
+            RecordPhoto.record_id == created["id"]
+        ))
+
+    deleted = client.delete(f"/records/{created['id']}", headers=headers[1])
+    assert deleted.status_code == 204, deleted.text
+    assert object_key in storage.deleted
+    with Session(engine) as db:
+        assert db.get(Record, created["id"]) is None
+        assert db.scalars(select(RecordPhoto).where(RecordPhoto.record_id == created["id"])).all() == []
+        assert db.scalars(select(RecordGroup).where(RecordGroup.record_id == created["id"])).all() == []
+    assert client.get("/feed?mine=true", headers=headers[1]).json()["items"] == []
+
+
+def test_delete_preserves_object_key_still_referenced_by_another_record(world):
+    client, engine, storage, headers = world
+    created = create(world).json()
+    with Session(engine) as db:
+        original = db.get(Record, created["id"])
+        original_photo = db.scalar(select(RecordPhoto).where(RecordPhoto.record_id == original.id))
+        other = Record(
+            author_id=1,
+            place_id=original.place_id,
+            content="공유 객체를 참조하는 다른 기록",
+            emotion="good",
+            is_private=True,
+        )
+        db.add(other)
+        db.flush()
+        db.add(RecordPhoto(
+            record_id=other.id,
+            object_key=original_photo.object_key,
+            photo_url=original_photo.photo_url,
+            original_name=original_photo.original_name,
+            mime_type=original_photo.mime_type,
+            file_size=original_photo.file_size,
+            sort_order=0,
+        ))
+        db.commit()
+        object_key = original_photo.object_key
+
+    assert client.delete(f"/records/{created['id']}", headers=headers[1]).status_code == 204
+    assert object_key not in storage.deleted
+    assert object_key in storage.objects
+
+
+def test_storage_delete_failure_never_leaves_the_database_record(world):
+    client, engine, storage, headers = world
+    created = create(world).json()
+    storage.fail_delete = True
+
+    deleted = client.delete(f"/records/{created['id']}", headers=headers[1])
+    assert deleted.status_code == 204, deleted.text
+    with Session(engine) as db:
+        assert db.get(Record, created["id"]) is None
+        assert db.scalars(select(RecordPhoto).where(RecordPhoto.record_id == created["id"])).all() == []
+    # The private object may remain for a later storage cleanup job, but no API
+    # can expose it because its record/photo rows are already gone.
+    assert storage.objects
+
+
+def test_profile_update_persists_partial_changes_and_keeps_authentication(world):
+    client, engine, _, headers = world
+
+    nickname_update = client.patch(
+        "/auth/me",
+        headers=headers[1],
+        json={"nickname": "updated-user-one"},
+    )
+    assert nickname_update.status_code == 200, nickname_update.text
+    assert nickname_update.json() == {
+        "id": 1,
+        "email": "user1@test.example",
+        "nickname": "updated-user-one",
+        "birth_date": "1990-01-01",
+        "gender": "female",
+    }
+
+    remaining_update = client.patch(
+        "/auth/me",
+        headers=headers[1],
+        json={"birth_date": "1991-02-03", "gender": "male"},
+    )
+    assert remaining_update.status_code == 200, remaining_update.text
+    assert remaining_update.json()["nickname"] == "updated-user-one"
+    assert remaining_update.json()["birth_date"] == "1991-02-03"
+    assert remaining_update.json()["gender"] == "male"
+    assert client.get("/auth/me", headers=headers[1]).json() == remaining_update.json()
+
+    relogin = client.post(
+        "/auth/login",
+        json={"email": "user1@test.example", "password": "test-password"},
+    )
+    assert relogin.status_code == 200, relogin.text
+    relogin_headers = {"Authorization": "Bearer " + relogin.json()["access_token"]}
+    assert client.get("/auth/me", headers=relogin_headers).json() == remaining_update.json()
+
+    with Session(engine) as db:
+        user = db.get(User, 1)
+        assert user.nickname == "updated-user-one"
+        assert user.birth_date == date(1991, 2, 3)
+        assert user.gender == "male"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"nickname": "   "},
+        {"birth_date": "2999-01-01"},
+        {"gender": "other"},
+        {"nickname": None},
+    ],
+)
+def test_profile_update_validates_input_without_writing(world, payload):
+    client, engine, _, headers = world
+    response = client.patch("/auth/me", headers=headers[1], json=payload)
+    assert response.status_code == 422
+
+    with Session(engine) as db:
+        user = db.get(User, 1)
+        assert user.nickname == "테스트1"
+        assert user.birth_date == date(1990, 1, 1)
+        assert user.gender == "female"
+
+
+def test_profile_update_only_changes_the_authenticated_user(world):
+    client, engine, _, headers = world
+    response = client.patch(
+        "/auth/me",
+        headers=headers[2],
+        json={"nickname": "updated-user-two"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == 2
+    assert response.json()["nickname"] == "updated-user-two"
+
+    with Session(engine) as db:
+        first_user = db.get(User, 1)
+        second_user = db.get(User, 2)
+        assert first_user.nickname == "테스트1"
+        assert second_user.nickname == "updated-user-two"
+
+    forged_target = client.patch(
+        "/auth/me",
+        headers=headers[2],
+        json={"id": 1, "nickname": "attempted-other-user-update"},
+    )
+    assert forged_target.status_code == 422
+    with Session(engine) as db:
+        assert db.get(User, 1).nickname == "테스트1"
+
+
+def test_profile_photo_upload_get_replace_and_delete(world):
+    client, engine, storage, headers = world
+
+    uploaded = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("profile.png", image(), "image/png")},
+    )
+    assert uploaded.status_code == 204, uploaded.text
+    with Session(engine) as db:
+        first_key = db.get(User, 1).profile_image_key
+    assert first_key is not None and first_key.startswith("profiles/1/")
+    assert first_key in storage.objects
+
+    photo = client.get("/auth/me/photo", headers=headers[1])
+    assert photo.status_code == 200
+    assert photo.content == image()
+    assert photo.headers["cache-control"] == "private, no-store"
+    assert client.get("/auth/me/photo", headers=headers[2]).status_code == 404
+
+    replacement = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("replacement.png", image(), "image/png")},
+    )
+    assert replacement.status_code == 204, replacement.text
+    with Session(engine) as db:
+        replacement_key = db.get(User, 1).profile_image_key
+    assert replacement_key is not None and replacement_key != first_key
+    assert first_key in storage.deleted
+    assert first_key not in storage.objects
+
+    other_user_upload = client.post(
+        "/auth/me/photo",
+        headers=headers[2],
+        files={"photo": ("other.png", image(), "image/png")},
+    )
+    assert other_user_upload.status_code == 204, other_user_upload.text
+    with Session(engine) as db:
+        assert db.get(User, 1).profile_image_key == replacement_key
+        assert db.get(User, 2).profile_image_key.startswith("profiles/2/")
+
+    deleted = client.delete("/auth/me/photo", headers=headers[1])
+    assert deleted.status_code == 204, deleted.text
+    with Session(engine) as db:
+        assert db.get(User, 1).profile_image_key is None
+    assert replacement_key in storage.deleted
+    assert client.get("/auth/me/photo", headers=headers[1]).status_code == 404
+
+
+def test_profile_photo_requires_authentication_and_valid_image(world):
+    client, engine, storage, headers = world
+    assert client.post(
+        "/auth/me/photo",
+        files={"photo": ("profile.png", image(), "image/png")},
+    ).status_code == 401
+    assert client.get("/auth/me/photo").status_code == 401
+    assert client.delete("/auth/me/photo").status_code == 401
+
+    invalid = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("profile.jpg", b"not-an-image", "image/jpeg")},
+    )
+    assert invalid.status_code == 422
+    too_large = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("profile.png", b"x" * (5 * 1024 * 1024 + 1), "image/png")},
+    )
+    assert too_large.status_code == 413
+    with Session(engine) as db:
+        assert db.get(User, 1).profile_image_key is None
+
+    storage.fail_at = 0
+    failed_upload = client.post(
+        "/auth/me/photo",
+        headers=headers[1],
+        files={"photo": ("profile.png", image(), "image/png")},
+    )
+    assert failed_upload.status_code == 502
+    with Session(engine) as db:
+        assert db.get(User, 1).profile_image_key is None
 
 
 def test_group_api_memberships_and_settings_are_shared_with_records(world):
