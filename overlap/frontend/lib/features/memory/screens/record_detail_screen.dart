@@ -321,19 +321,6 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                         height: 1.6,
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.md),
-                    Wrap(
-                      spacing: AppSpacing.xs,
-                      runSpacing: AppSpacing.xs,
-                      children: [
-                        _DetailChip(
-                          label:
-                              '${record.emotion.emoji} ${record.emotion.displayName}',
-                        ),
-                        for (final group in record.sharedGroups)
-                          _DetailChip(label: group.name),
-                      ],
-                    ),
                     const Divider(height: AppSpacing.lg),
                     Row(
                       children: [
@@ -410,7 +397,6 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     );
   }
 }
-
 class _CommentsError extends StatelessWidget {
   const _CommentsError({required this.message, required this.onRetry});
 
@@ -499,30 +485,6 @@ class _RecordAuthor extends StatelessWidget {
         ),
         Text(record.emotion.emoji, style: const TextStyle(fontSize: 28)),
       ],
-    );
-  }
-}
-
-class _DetailChip extends StatelessWidget {
-  const _DetailChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.paleMint,
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: AppColors.deepNavy, fontSize: 12),
-      ),
     );
   }
 }
