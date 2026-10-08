@@ -189,8 +189,13 @@ def list_members(
                 else f"사용자 {member_id}"
             ),
             is_current_user=member_id == user_id,
+            profile_image_url=(
+                f"/groups/{group_id}/members/{member_id}/photo"
+                if profile_image_key
+                else None
+            ),
         )
-        for member_id, nickname in group_repository.list_members_with_nickname(
+        for member_id, nickname, profile_image_key in group_repository.list_members_with_nickname(
             db,
             group_id=group_id,
         )

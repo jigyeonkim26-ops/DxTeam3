@@ -87,17 +87,17 @@ def list_members_with_nickname(
     db: Session,
     *,
     group_id: int,
-) -> list[tuple[int, str | None]]:
-    """Return only member identifiers and public display names in a stable order."""
+) -> list[tuple[int, str | None, str | None]]:
+    """Return member identifiers, names, and optional profile keys in stable order."""
     statement = (
-        select(GroupMember.user_id, User.nickname)
+        select(GroupMember.user_id, User.nickname, User.profile_image_key)
         .join(User, User.id == GroupMember.user_id)
         .where(GroupMember.group_id == group_id)
         .order_by(GroupMember.joined_at.asc(), GroupMember.user_id.asc())
     )
     return [
-        (int(user_id), nickname)
-        for user_id, nickname in db.execute(statement).all()
+        (int(user_id), nickname, profile_image_key)
+        for user_id, nickname, profile_image_key in db.execute(statement).all()
     ]
 
 

@@ -29,6 +29,8 @@ def test_group_record_settings_private_and_self(world, global_enabled, group_ena
         assert notifications[0]["type"] == "GROUP_RECORD"
         assert notifications[0]["reference_type"] == "RECORD"
         assert notifications[0]["reference_id"] == response.json()["id"]
+        assert "테스트1" in notifications[0]["message"]
+        assert "실제 가입 모임" in notifications[0]["message"]
     assert items(world, 1) == []
     assert items(world, 3) == []
 
@@ -67,6 +69,7 @@ def test_reply_notifies_distinct_authors_and_respects_recipient_settings(world):
     record_id = create(world).json()["id"]
     path = f"/records/{record_id}/comments"
     parent = call(world, "POST", path, user=2, json={"content": "parent"}).json()
+    assert "테스트2" in items(world, 1, "COMMENT")[0]["message"]
     assert call(world, "POST", path, user=3, json={"content": "reply", "parent_comment_id": parent["id"]}).status_code == 201
     assert len(items(world, 1, "COMMENT")) == 2
     assert len(items(world, 2, "COMMENT")) == 1

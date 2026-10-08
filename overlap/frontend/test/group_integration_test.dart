@@ -271,7 +271,7 @@ void main() {
       expect(find.text('지연'), findsOneWidget);
       expect(find.text('나'), findsOneWidget);
       expect(find.text('멤버 상세 정보가 제공되지 않았어요.'), findsNothing);
-      expect(find.text('소개/공유 범위 저장'), findsOneWidget);
+      expect(find.text('소개/공유 범위 저장'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     }, createHttpClient: (_) => server);

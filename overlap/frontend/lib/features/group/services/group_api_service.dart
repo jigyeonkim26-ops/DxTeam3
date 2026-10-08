@@ -60,11 +60,13 @@ class GroupMemberApiItem {
     required this.id,
     required this.nickname,
     required this.isCurrentUser,
+    this.profileImageUrl,
   });
 
   final int id;
   final String nickname;
   final bool isCurrentUser;
+  final String? profileImageUrl;
 
   factory GroupMemberApiItem.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
@@ -77,6 +79,7 @@ class GroupMemberApiItem {
       id: id,
       nickname: nickname,
       isCurrentUser: isCurrentUser,
+      profileImageUrl: json['profile_image_url'] as String?,
     );
   }
 
@@ -84,6 +87,7 @@ class GroupMemberApiItem {
     id: '$id',
     nickname: nickname,
     isCurrentUser: isCurrentUser,
+    profileImageUrl: profileImageUrl,
   );
 }
 

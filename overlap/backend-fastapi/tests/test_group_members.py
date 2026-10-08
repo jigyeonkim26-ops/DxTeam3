@@ -10,12 +10,15 @@ def test_group_members_returns_only_joined_users_and_safe_fields(world):
     response = client.get("/groups/10/members", headers=headers[1])
 
     assert response.status_code == 200, response.text
-    assert response.json() == [
+    payload = response.json()
+    for member in payload:
+        member.pop("profile_image_url", None)
+    assert payload == [
         {"id": 1, "nickname": "테스트1", "is_current_user": True},
         {"id": 2, "nickname": "테스트2", "is_current_user": False},
     ]
     assert all(
-        set(member) == {"id", "nickname", "is_current_user"}
+        set(member) == {"id", "nickname", "is_current_user", "profile_image_url"}
         for member in response.json()
     )
     assert client.get("/groups/10/members").status_code == 401
@@ -31,6 +34,23 @@ def test_group_members_returns_only_joined_users_and_safe_fields(world):
     assert fallback.json()[1]["nickname"] == "사용자 2"
 
 
+def test_group_member_profile_photo_is_scoped_and_served(world):
+    client, engine, storage, headers = world
+    with Session(engine) as db:
+        db.get(User, 2).profile_image_key = "profiles/2/avatar.png"
+        db.commit()
+    storage.objects["profiles/2/avatar.png"] = b"member-photo"
+
+    members = client.get("/groups/10/members", headers=headers[1])
+    assert members.status_code == 200
+    assert members.json()[1]["profile_image_url"] == "/groups/10/members/2/photo"
+
+    photo = client.get("/groups/10/members/2/photo", headers=headers[1])
+    assert photo.status_code == 200
+    assert photo.content == b"member-photo"
+    assert client.get("/groups/10/members/2/photo", headers=headers[3]).status_code == 404
+
+
 def test_group_members_reflect_join_and_leave_without_duplicate_rows(world):
     client, _, _, headers = world
     created = client.post(
@@ -43,7 +63,10 @@ def test_group_members_reflect_join_and_leave_without_duplicate_rows(world):
 
     initial = client.get(f"/groups/{group_id}/members", headers=headers[1])
     assert initial.status_code == 200
-    assert initial.json() == [
+    initial_payload = initial.json()
+    for member in initial_payload:
+        member.pop("profile_image_url", None)
+    assert initial_payload == [
         {"id": 1, "nickname": "테스트1", "is_current_user": True},
     ]
 
