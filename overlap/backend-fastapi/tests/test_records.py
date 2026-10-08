@@ -477,6 +477,65 @@ def test_personalized_feed_and_private_visibility(world):
     assert client.get("/feed").status_code == 401
 
 
+def test_feed_filters_by_place_without_bypassing_visibility(world):
+    own_at_target = create(world, private=True).json()
+    shared_at_target = create(world, user=2).json()
+    visible_elsewhere = create(
+        world,
+        user=2,
+        place=dict(
+            kakao_place_id="456",
+            name="다른 장소",
+            address="서울",
+            latitude=37.6,
+            longitude=127.1,
+        ),
+    ).json()
+    hidden_private_at_target = create(world, user=2, private=True).json()
+    hidden_nonmember_at_target = create(world, user=3, groups=[20]).json()
+    client, _, _, headers = world
+    target_id = own_at_target["place"]["id"]
+
+    filtered = client.get(f"/feed?place_id={target_id}", headers=headers[1])
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 2
+    assert {item["id"] for item in filtered.json()["items"]} == {
+        own_at_target["id"],
+        shared_at_target["id"],
+    }
+    assert visible_elsewhere["id"] not in {
+        item["id"] for item in filtered.json()["items"]
+    }
+    assert hidden_private_at_target["id"] not in {
+        item["id"] for item in filtered.json()["items"]
+    }
+    assert hidden_nonmember_at_target["id"] not in {
+        item["id"] for item in filtered.json()["items"]
+    }
+
+    assert {
+        item["id"]
+        for item in client.get(
+            f"/feed?place_id={target_id}&mine=true", headers=headers[1]
+        ).json()["items"]
+    } == {own_at_target["id"]}
+    assert {
+        item["id"]
+        for item in client.get(
+            f"/feed?place_id={target_id}&group_id=10", headers=headers[1]
+        ).json()["items"]
+    } == {shared_at_target["id"]}
+    assert client.get("/feed?place_id=999999", headers=headers[1]).json() == {
+        "items": [],
+        "total": 0,
+        "offset": 0,
+        "limit": 20,
+    }
+    assert {
+        item["id"] for item in client.get("/feed", headers=headers[1]).json()["items"]
+    } == {own_at_target["id"], shared_at_target["id"], visible_elsewhere["id"]}
+
+
 def feed_ids(world, user, query=""):
     response = world[0].get("/feed" + query, headers=world[3][user])
     assert response.status_code == 200

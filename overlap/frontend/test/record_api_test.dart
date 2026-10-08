@@ -94,6 +94,30 @@ void main() {
     api.close();
   });
 
+  test('feed adds place_id only when a place filter is supplied', () async {
+    final requests = <Uri>[];
+    final api = RecordApi(
+      tokenProvider: () => 'token',
+      client: MockClient((request) async {
+        requests.add(request.url);
+        return http.Response(
+          jsonEncode({'items': [], 'total': 0}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+
+    await api.feed();
+    await api.feed(placeId: 12);
+
+    expect(requests[0].queryParameters.containsKey('place_id'), isFalse);
+    expect(requests[1].queryParameters['place_id'], '12');
+    expect(requests[1].queryParameters['limit'], '100');
+    expect(requests[1].queryParameters['offset'], '0');
+    api.close();
+  });
+
   test('failed save does not signal success', () async {
     final revision = RecordApi.revision.value;
     final api = RecordApi(

@@ -2,32 +2,133 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../shared/models/place.dart';
+import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
 import '../../memory/screens/record_detail_screen.dart';
-import '../widgets/place_record_preview_card.dart';
+import '../../memory/services/record_api.dart';
+import '../../memory/widgets/record_card.dart';
+import '../../user/services/saved_places_api.dart';
 
-/// 특정 장소에 쌓인 기록을 보여주는 독립 화면입니다.
 class PlaceDetailScreen extends StatefulWidget {
-  const PlaceDetailScreen({super.key});
+  const PlaceDetailScreen({
+    super.key,
+    required this.placeId,
+    required this.name,
+    required this.address,
+    required this.recordCount,
+    this.recordApi,
+    this.savedPlacesApi,
+  });
+
+  final String placeId;
+  final String name;
+  final String? address;
+  final int recordCount;
+  final RecordApi? recordApi;
+  final SavedPlacesApi? savedPlacesApi;
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
 }
 
 class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
+  late final RecordApi _recordApi;
+  late final SavedPlacesApi _savedPlacesApi;
+  List<Record> _records = const [];
+  bool _isLoadingRecords = true;
+  bool _hasRecordLoadError = false;
   bool _isSaved = false;
+  bool _isLoadingSavedState = true;
+  bool _isSaving = false;
 
-  static const _place = Place(
-    id: 'place-yeonnam-cafe',
-    name: '연남동 작은 카페',
-    latitude: 37.5665,
-    longitude: 126.9250,
-    address: '서울 마포구 연남동',
-    recordCount: 3,
-  );
+  int? get _placeId {
+    final placeId = int.tryParse(widget.placeId);
+    return placeId != null && placeId > 0 ? placeId : null;
+  }
 
-  static const List<Record> _records = [];
+  @override
+  void initState() {
+    super.initState();
+    _recordApi = widget.recordApi ?? RecordApi();
+    _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
+    _loadRecords();
+    _loadSavedState();
+  }
+
+  Future<void> _loadRecords() async {
+    final placeId = _placeId;
+    if (placeId == null) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecords = false;
+        _hasRecordLoadError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingRecords = true;
+      _hasRecordLoadError = false;
+    });
+    try {
+      final records = await _recordApi.feed(placeId: placeId);
+      if (!mounted) return;
+      setState(() {
+        _records = records;
+        _isLoadingRecords = false;
+      });
+    } on ApiException {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecords = false;
+        _hasRecordLoadError = true;
+      });
+    }
+  }
+
+  Future<void> _loadSavedState() async {
+    final placeId = _placeId;
+    if (placeId == null) {
+      if (mounted) setState(() => _isLoadingSavedState = false);
+      return;
+    }
+    try {
+      final state = await _savedPlacesApi.state(placeId);
+      if (!mounted) return;
+      setState(() {
+        _isSaved = state.saved;
+        _isLoadingSavedState = false;
+      });
+    } on ApiException {
+      if (!mounted) return;
+      setState(() => _isLoadingSavedState = false);
+    }
+  }
+
+  Future<void> _toggleSaved() async {
+    final placeId = _placeId;
+    if (placeId == null || _isSaving || _isLoadingSavedState) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final state = _isSaved
+          ? await _savedPlacesApi.unsave(placeId)
+          : await _savedPlacesApi.save(placeId);
+      if (!mounted) return;
+      setState(() => _isSaved = state.saved);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _openRecordDetail(Record record) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => RecordDetailScreen(record: record)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,17 +163,29 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: () => setState(() => _isSaved = !_isSaved),
-                  icon: Icon(
-                    _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                    color: _isSaved ? AppColors.coral : AppColors.deepNavy,
-                  ),
+                  onPressed: _isSaving || _isLoadingSavedState
+                      ? null
+                      : _toggleSaved,
+                  icon: _isSaving || _isLoadingSavedState
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                          color: _isSaved ? AppColors.coral : AppColors.deepNavy,
+                        ),
                   tooltip: _isSaved ? '저장 취소' : '장소 저장',
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            _PlaceSummary(place: _place, isSaved: _isSaved),
+            _PlaceSummary(
+              name: widget.name,
+              address: widget.address,
+              recordCount: widget.recordCount,
+            ),
             const SizedBox(height: AppSpacing.lg),
             Text(
               '이 장소에 쌓인 기억',
@@ -85,7 +198,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
             ),
             const SizedBox(height: AppSpacing.xxs),
             Text(
-              '친구들이 같은 장소에서 남긴 순간들이에요.',
+              '친구들이 같은 장소에서 보낸 시간들이에요.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppColors.muted,
                 fontSize: 14,
@@ -94,19 +207,29 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            for (final record in _records) ...[
-              PlaceRecordPreviewCard(
-                record: record,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => RecordDetailScreen(record: record),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: AppSpacing.md),
-            ],
+            if (_isLoadingRecords)
+              const Center(child: CircularProgressIndicator())
+            else if (_hasRecordLoadError)
+              Center(
+                child: TextButton(
+                  onPressed: _loadRecords,
+                  child: const Text('기록을 불러오지 못했습니다. 다시 시도'),
+                ),
+              )
+            else if (_records.isEmpty)
+              const Center(child: Text('이 장소에 아직 기록이 없어요.'))
+            else
+              for (final record in _records) ...[
+                RecordCard(
+                  record: record,
+                  isLiked: false,
+                  onTap: () => _openRecordDetail(record),
+                  onLikeTap: () {},
+                  onCommentTap: () => _openRecordDetail(record),
+                  onPlaceTap: () {},
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
           ],
         ),
       ),
@@ -115,10 +238,15 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
 }
 
 class _PlaceSummary extends StatelessWidget {
-  const _PlaceSummary({required this.place, required this.isSaved});
+  const _PlaceSummary({
+    required this.name,
+    required this.address,
+    required this.recordCount,
+  });
 
-  final Place place;
-  final bool isSaved;
+  final String name;
+  final String? address;
+  final int recordCount;
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +268,7 @@ class _PlaceSummary extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              place.name,
+              name,
               style: const TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w700,
@@ -154,51 +282,16 @@ class _PlaceSummary extends StatelessWidget {
                 const SizedBox(width: AppSpacing.xxs),
                 Expanded(
                   child: Text(
-                    place.address ?? '주소 정보 없음',
+                    address ?? '주소 정보 없음',
                     style: const TextStyle(color: AppColors.muted),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            Container(
-              height: 126,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF9FC4B2), AppColors.deepNavy],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-              ),
-              child: const Align(
-                alignment: Alignment.bottomLeft,
-                child: Padding(
-                  padding: EdgeInsets.all(AppSpacing.sm),
-                  child: Text(
-                    '창가 자리와 따뜻한 오후',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                _SummaryChip(
-                  icon: Icons.auto_stories_outlined,
-                  label: '기록 ${place.recordCount}개',
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                _SummaryChip(
-                  icon: isSaved ? Icons.bookmark : Icons.bookmark_border,
-                  label: isSaved ? '저장됨' : '저장하기',
-                ),
-              ],
+            _SummaryChip(
+              icon: Icons.auto_stories_outlined,
+              label: '기록 $recordCount개',
             ),
           ],
         ),

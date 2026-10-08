@@ -20,6 +20,7 @@ class MapPlace {
   const MapPlace({
     required this.id,
     required this.name,
+    required this.address,
     required this.recordCount,
     required this.author,
     required this.summary,
@@ -31,6 +32,7 @@ class MapPlace {
 
   final String id;
   final String name;
+  final String? address;
   final int recordCount;
   final String author;
   final String summary;
@@ -44,6 +46,7 @@ class MapPlace {
   static MapPlace? tryFromMapPlacesApiJson(Map<String, dynamic> json) {
     final id = _asId(json['place_id']);
     final name = json['name'];
+    final address = json['address'];
     final recordCount = _asInt(json['record_count']);
     final latitude = _asDouble(json['latitude']);
     final longitude = _asDouble(json['longitude']);
@@ -64,6 +67,9 @@ class MapPlace {
     return MapPlace(
       id: id,
       name: name.trim(),
+      address: address is String && address.trim().isNotEmpty
+          ? address.trim()
+          : null,
       recordCount: recordCount,
       author: '',
       summary: '',
