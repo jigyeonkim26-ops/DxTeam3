@@ -1,6 +1,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .db_models import User
 from .group_db_models import GroupMember, MemoryGroup
 
 
@@ -80,6 +81,24 @@ def is_member(
 
 def get_member(db: Session, *, group_id: int, user_id: int) -> GroupMember | None:
     return db.get(GroupMember, {"group_id": group_id, "user_id": user_id})
+
+
+def list_members_with_nickname(
+    db: Session,
+    *,
+    group_id: int,
+) -> list[tuple[int, str | None]]:
+    """Return only member identifiers and public display names in a stable order."""
+    statement = (
+        select(GroupMember.user_id, User.nickname)
+        .join(User, User.id == GroupMember.user_id)
+        .where(GroupMember.group_id == group_id)
+        .order_by(GroupMember.joined_at.asc(), GroupMember.user_id.asc())
+    )
+    return [
+        (int(user_id), nickname)
+        for user_id, nickname in db.execute(statement).all()
+    ]
 
 
 def count_members(

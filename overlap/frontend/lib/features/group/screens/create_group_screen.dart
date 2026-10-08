@@ -5,6 +5,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_transport.dart';
 import '../services/group_api_service.dart';
+import '../services/group_list_store.dart';
 
 class CreateGroupScreen extends StatefulWidget {
   const CreateGroupScreen({super.key});
@@ -42,6 +43,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         // exposes it as a user choice, so retain the existing private default.
         visibility: 'INVITED_ONLY',
       );
+      GroupListStore.upsertGroup(created, inviteCode: created.inviteCode);
       if (!mounted) return;
       await _showCreatedSheet(created.inviteCode);
     } on ApiException catch (error) {

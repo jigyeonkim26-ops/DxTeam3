@@ -15,6 +15,8 @@ import '../../map/models/current_location.dart';
 import '../../map/services/current_location_service.dart';
 import '../services/record_api.dart';
 import '../../../core/network/api_client.dart';
+import '../../group/models/group_list_item_data.dart';
+import '../../group/services/group_list_store.dart';
 
 import 'package:image_picker/image_picker.dart';
 
@@ -76,6 +78,7 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   void initState() {
     super.initState();
     _api = widget.recordApi ?? RecordApi();
+    GroupListStore.groupsListenable.addListener(_onGroupsChanged);
     _loadGroups();
   }
 
@@ -85,14 +88,11 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       _groupError = null;
     });
     try {
-      final groups = await _api.groups();
+      if (!GroupListStore.hasLoadedGroups) {
+        await GroupListStore.refreshGroups();
+      }
       if (!mounted) return;
-      setState(() {
-        _groups = groups;
-        _selectedGroupIds.retainAll(groups.map((g) => g.id));
-        _groupError = null;
-        _isLoadingGroups = false;
-      });
+      _applyGroups(GroupListStore.groups);
     } on ApiException catch (error) {
       if (mounted) {
         setState(() {
@@ -110,8 +110,34 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     }
   }
 
+  void _onGroupsChanged() {
+    if (!mounted) return;
+    _applyGroups(GroupListStore.groups);
+  }
+
+  void _applyGroups(List<GroupListItemData> groups) {
+    final availableGroups = groups
+        .map(
+          (group) => Group(
+            id: group.id,
+            name: group.name,
+            description: group.description ?? '',
+            memberCount: group.memberCount,
+            inviteCode: group.inviteCode,
+          ),
+        )
+        .toList(growable: false);
+    setState(() {
+      _groups = availableGroups;
+      _selectedGroupIds.retainAll(availableGroups.map((group) => group.id));
+      _groupError = null;
+      _isLoadingGroups = false;
+    });
+  }
+
   @override
   void dispose() {
+    GroupListStore.groupsListenable.removeListener(_onGroupsChanged);
     _storyController.dispose();
     _placeNameController.dispose();
     if (widget.recordApi == null) _api.close();

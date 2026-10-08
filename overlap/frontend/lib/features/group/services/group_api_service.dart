@@ -1,4 +1,5 @@
 import '../../../core/network/api_transport.dart';
+import '../models/group_list_item_data.dart';
 
 class GroupApiItem {
   const GroupApiItem({
@@ -54,6 +55,38 @@ class GroupApiCreated extends GroupApiItem {
       );
 }
 
+class GroupMemberApiItem {
+  const GroupMemberApiItem({
+    required this.id,
+    required this.nickname,
+    required this.isCurrentUser,
+  });
+
+  final int id;
+  final String nickname;
+  final bool isCurrentUser;
+
+  factory GroupMemberApiItem.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final nickname = json['nickname'];
+    final isCurrentUser = json['is_current_user'];
+    if (id is! int || nickname is! String || isCurrentUser is! bool) {
+      throw const FormatException('Invalid group member response.');
+    }
+    return GroupMemberApiItem(
+      id: id,
+      nickname: nickname,
+      isCurrentUser: isCurrentUser,
+    );
+  }
+
+  GroupMemberData toData() => GroupMemberData(
+    id: '$id',
+    nickname: nickname,
+    isCurrentUser: isCurrentUser,
+  );
+}
+
 class GroupRecordStatistics {
   const GroupRecordStatistics({
     required this.recordCount,
@@ -74,6 +107,26 @@ abstract final class GroupApiService {
         .whereType<Map<String, dynamic>>()
         .map(GroupApiItem.fromJson)
         .toList(growable: false);
+  }
+
+  static Future<List<GroupMemberData>> getGroupMembers(int groupId) async {
+    final response = await ApiTransport.get('/groups/$groupId/members');
+    if (response is! List) {
+      throw const ApiException('모임 멤버 응답을 확인할 수 없습니다.');
+    }
+    try {
+      return response
+          .map((member) {
+            if (member is! Map<String, dynamic>) {
+              throw const FormatException('Invalid group member response.');
+            }
+            return GroupMemberApiItem.fromJson(member);
+          })
+          .map((member) => member.toData())
+          .toList(growable: false);
+    } on FormatException {
+      throw const ApiException('모임 멤버 응답을 확인할 수 없습니다.');
+    }
   }
 
   /// Calculates group statistics from the existing paginated group feed.

@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:overlap_app/features/map/widgets/kakao_map_webview.dart';
+import 'package:overlap_app/features/group/services/group_api_service.dart';
+import 'package:overlap_app/features/group/services/group_list_store.dart';
 import 'package:overlap_app/features/memory/screens/record_compose_screen.dart';
 import 'package:overlap_app/features/memory/services/record_api.dart';
 import 'package:overlap_app/shared/models/place.dart';
@@ -17,6 +19,8 @@ void main() {
   testWidgets(
     'private compose requires photo emotion place but allows empty story',
     (tester) async {
+      GroupListStore.replaceGroups(const []);
+      addTearDown(GroupListStore.clear);
       const config = MethodChannel('overlap/kakao_config');
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         config,
@@ -108,4 +112,51 @@ void main() {
       api.close();
     },
   );
+
+  testWidgets('compose group picker follows the shared group store', (
+    tester,
+  ) async {
+    GroupListStore.replaceGroups(const []);
+    addTearDown(GroupListStore.clear);
+    const config = MethodChannel('overlap/kakao_config');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      config,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        config,
+        null,
+      ),
+    );
+    final api = RecordApi(
+      tokenProvider: () => 'token',
+      client: MockClient((request) async => http.Response('[]', 200)),
+    );
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RecordComposeScreen(onExitToMap: () {}, recordApi: api),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Fresh group'), findsNothing);
+
+    GroupListStore.upsertGroup(
+      const GroupApiItem(id: 99, name: 'Fresh group', memberCount: 1),
+    );
+    await tester.scrollUntilVisible(
+      find.text('Fresh group'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Fresh group'), findsOneWidget);
+
+    GroupListStore.removeGroupFromCache('99');
+    await tester.pump();
+    expect(find.text('Fresh group'), findsNothing);
+  });
 }

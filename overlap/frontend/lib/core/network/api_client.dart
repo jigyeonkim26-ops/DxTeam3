@@ -17,14 +17,27 @@ class ApiException implements Exception {
 
 class ApiClient {
   static String? _accessToken;
+  static bool _sessionExpired = false;
   static final sessionRevision = ValueNotifier<int>(0);
 
   static String? get accessToken => _accessToken;
+  static bool get sessionExpired => _sessionExpired;
 
   static void setAccessToken(String token) {
-    if (_accessToken == token) return;
+    if (_accessToken == token && !_sessionExpired) return;
     _accessToken = token;
+    _sessionExpired = false;
     sessionRevision.value++;
+  }
+
+  /// Clears an authenticated token after the server rejects it. The return
+  /// value makes repeated simultaneous 401 responses a no-op.
+  static bool expireSession() {
+    if (_accessToken == null) return false;
+    _accessToken = null;
+    _sessionExpired = true;
+    sessionRevision.value++;
+    return true;
   }
 
   static Future<void> checkHealth() async {
@@ -103,6 +116,7 @@ class ApiClient {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return response;
       }
+      if (response.statusCode == 401) expireSession();
       throw ApiException(
         '장소 검색 요청을 처리하지 못했습니다.',
         statusCode: response.statusCode,
@@ -115,7 +129,9 @@ class ApiClient {
   }
 
   static void clearSession() {
+    if (_accessToken == null && !_sessionExpired) return;
     _accessToken = null;
+    _sessionExpired = false;
     sessionRevision.value++;
   }
 
@@ -145,6 +161,7 @@ class ApiClient {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return response;
       }
+      if (response.statusCode == 401) expireSession();
       throw ApiException(
         _messageForStatus(response.statusCode, response.body),
         statusCode: response.statusCode,

@@ -30,6 +30,9 @@ class RecordApi {
 
   dynamic _decode(http.Response response) {
     final isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+    if (!isSuccess && response.statusCode == 401) {
+      ApiClient.expireSession();
+    }
     final payload = response.bodyBytes.isEmpty
         ? null
         : jsonDecode(utf8.decode(response.bodyBytes));

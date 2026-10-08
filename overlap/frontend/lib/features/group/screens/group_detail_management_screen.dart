@@ -9,9 +9,14 @@ import '../services/group_list_store.dart';
 import '../../../core/network/api_transport.dart';
 
 class GroupDetailManagementScreen extends StatefulWidget {
-  const GroupDetailManagementScreen({super.key, required this.groupId});
+  const GroupDetailManagementScreen({
+    super.key,
+    required this.groupId,
+    this.memberLoader = GroupApiService.getGroupMembers,
+  });
 
   final String groupId;
+  final Future<List<GroupMemberData>> Function(int groupId) memberLoader;
 
   @override
   State<GroupDetailManagementScreen> createState() =>
@@ -33,13 +38,67 @@ class _GroupDetailManagementScreenState
   bool _isEditingName = false;
   bool _isSaving = false;
   bool _settingsInitialized = false;
+  bool _isLoadingMembers = true;
+  String? _membersError;
+  int _memberLoadGeneration = 0;
   String _visibility = 'INVITED_ONLY';
 
   @override
+  void initState() {
+    super.initState();
+    _loadMembers();
+  }
+
+  @override
   void dispose() {
+    _memberLoadGeneration++;
     _nameController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadMembers() async {
+    final generation = ++_memberLoadGeneration;
+    final token = ApiTransport.accessToken;
+    if (mounted) {
+      setState(() {
+        _isLoadingMembers = true;
+        _membersError = null;
+      });
+    }
+    try {
+      final members = await widget.memberLoader(int.parse(widget.groupId));
+      if (!mounted ||
+          generation != _memberLoadGeneration ||
+          token != ApiTransport.accessToken) {
+        return;
+      }
+      GroupListStore.updateMembers(widget.groupId, members);
+    } on ApiException catch (error) {
+      if (mounted &&
+          generation == _memberLoadGeneration &&
+          token == ApiTransport.accessToken) {
+        setState(() => _membersError = error.message);
+      }
+    } on FormatException {
+      if (mounted &&
+          generation == _memberLoadGeneration &&
+          token == ApiTransport.accessToken) {
+        setState(() => _membersError = '모임 ID를 확인할 수 없습니다.');
+      }
+    } catch (_) {
+      if (mounted &&
+          generation == _memberLoadGeneration &&
+          token == ApiTransport.accessToken) {
+        setState(() => _membersError = '멤버 목록을 불러오지 못했습니다.');
+      }
+    } finally {
+      if (mounted &&
+          generation == _memberLoadGeneration &&
+          token == ApiTransport.accessToken) {
+        setState(() => _isLoadingMembers = false);
+      }
+    }
   }
 
   void _startEditingName(GroupListItemData group) {
@@ -316,23 +375,74 @@ class _GroupDetailManagementScreenState
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  Text(
-                    '멤버',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        '멤버',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleMedium?.copyWith(
+                          color: AppColors.ink,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: '멤버 목록 새로고침',
+                        onPressed: _isLoadingMembers ? null : _loadMembers,
+                        icon: const Icon(Icons.refresh_outlined, size: 20),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  for (final member in members) _GroupMemberRow(member: member),
-                  if (members.isEmpty)
+                  if (_isLoadingMembers)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: AppSpacing.sm),
+                          Text(
+                            '멤버 목록을 불러오는 중이에요.',
+                            style: TextStyle(color: AppColors.muted),
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (_membersError != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.xs,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _membersError!,
+                            style: const TextStyle(color: AppColors.muted),
+                          ),
+                          TextButton(
+                            onPressed: _loadMembers,
+                            child: const Text('다시 시도'),
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (members.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
                       child: Text(
-                        '멤버 상세 정보가 제공되지 않았어요.',
+                        '가입한 멤버가 없어요.',
                         style: TextStyle(color: AppColors.muted),
                       ),
-                    ),
+                    )
+                  else
+                    for (final member in members)
+                      _GroupMemberRow(member: member),
                   const SizedBox(height: AppSpacing.lg),
                   const Divider(),
                   const SizedBox(height: AppSpacing.sm),
@@ -375,18 +485,7 @@ class _GroupMemberRow extends StatelessWidget {
             radius: 22,
             backgroundColor: AppColors.paleMint,
             foregroundColor: AppColors.deepNavy,
-            child: member.profileImagePath == null
-                ? _MemberInitial(initial: initial)
-                : ClipOval(
-                    child: SizedBox.expand(
-                      child: Image.asset(
-                        member.profileImagePath!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            _MemberInitial(initial: initial),
-                      ),
-                    ),
-                  ),
+            child: _MemberInitial(initial: initial),
           ),
           const SizedBox(width: AppSpacing.sm),
           Text(
@@ -396,6 +495,27 @@ class _GroupMemberRow extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+          if (member.isCurrentUser) ...[
+            const SizedBox(width: AppSpacing.xs),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.xs,
+                vertical: 2,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.paleMint,
+                borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
+              ),
+              child: const Text(
+                '나',
+                style: TextStyle(
+                  color: AppColors.deepNavy,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
