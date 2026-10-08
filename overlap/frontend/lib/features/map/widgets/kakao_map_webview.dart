@@ -417,6 +417,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
                 'latitude': place.latitude,
                 'longitude': place.longitude,
                 'groupColorHex': place.groupColorHex,
+                'groupColorHexes': place.groupColorHexes,
               },
             )
             .toList();

@@ -1,10 +1,6 @@
 import 'map_filter.dart';
 
-/// Current group-color defaults shared with the community UI.
-///
-/// These values are defaults for mock data only; [MapPlace.groupColorHex] is
-/// intentionally not limited to this list so future group colors flow through
-/// to the map without a map-code update.
+/// Shared default colors; API group colors are accepted independently.
 abstract final class MapGroupColors {
   static const coral = '#FF7058';
   static const deepNavy = '#14364A';
@@ -27,6 +23,7 @@ class MapPlace {
     required this.longitude,
     required this.filters,
     required this.groupColorHex,
+    this.groupColorHexes = const [],
   });
 
   final String id;
@@ -38,6 +35,38 @@ class MapPlace {
   final double longitude;
   final Set<MapFilter> filters;
   final String groupColorHex;
+  final List<String> groupColorHexes;
+
+  MapPlace forSelectedFilters(
+    Set<MapFilter> selected,
+    List<MapFilter> available,
+  ) {
+    final colors = <String>{};
+    for (final filter in available) {
+      if (filter.groupId != null &&
+          selected.contains(filter) &&
+          filters.contains(filter)) {
+        colors.add(
+          '#${((filter.pinColorValue ?? 0xFF14364A) & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
+        );
+      }
+    }
+    if (colors.isEmpty) colors.add(MapGroupColors.fallback);
+    return withColors(colors.toList());
+  }
+
+  MapPlace withColors(List<String> colors) => MapPlace(
+    id: id,
+    name: name,
+    recordCount: recordCount,
+    author: author,
+    summary: summary,
+    latitude: latitude,
+    longitude: longitude,
+    filters: filters,
+    groupColorHex: colors.isEmpty ? MapGroupColors.fallback : colors.first,
+    groupColorHexes: colors,
+  );
 
   /// Converts the authenticated `/map/places` response into the map's
   /// existing marker model. Invalid entries are ignored by the caller.
@@ -69,7 +98,11 @@ class MapPlace {
       summary: '',
       latitude: latitude,
       longitude: longitude,
-      filters: Set.of(MapFilter.values),
+      filters: {
+        if (json['has_mine'] == true) MapFilter.mine,
+        for (final id in (json['group_ids'] as List? ?? const []))
+          if (id is int && id > 0) MapFilter.group(id, ''),
+      },
       groupColorHex: MapGroupColors.fallback,
     );
   }

@@ -5,28 +5,32 @@ import 'package:http/http.dart' as http;
 import 'package:overlap_app/features/map/services/map_places_api.dart';
 
 void main() {
-  test('maps record_count to recordCount and preserves a valid place', () async {
-    final api = MapPlacesApi(
-      request: () async => http.Response(
-        jsonEncode([
-          {
-            'place_id': 12,
-            'name': '광주CGI센터',
-            'address': '광주광역시',
-            'latitude': 35.1107137,
-            'longitude': 126.8778041,
-            'record_count': 3,
-          },
-        ]),
-        200,
-      ),
-    );
+  test(
+    'maps record_count to recordCount and preserves a valid place',
+    () async {
+      final api = MapPlacesApi(
+        request: () async => http.Response(
+          jsonEncode([
+            {
+              'place_id': 12,
+              'name': '광주CGI센터',
+              'address': '광주광역시',
+              'latitude': 35.1107137,
+              'longitude': 126.8778041,
+              'record_count': 3,
+            },
+          ]),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      );
 
-    final places = await api.load();
-    expect(places, hasLength(1));
-    expect(places.single.id, '12');
-    expect(places.single.recordCount, 3);
-  });
+      final places = await api.load();
+      expect(places, hasLength(1));
+      expect(places.single.id, '12');
+      expect(places.single.recordCount, 3);
+    },
+  );
 
   test('keeps one marker for duplicate place_id values', () async {
     final api = MapPlacesApi(
@@ -48,6 +52,7 @@ void main() {
           },
         ]),
         200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
       ),
     );
 
@@ -82,6 +87,7 @@ void main() {
           },
         ]),
         200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
       ),
     );
 

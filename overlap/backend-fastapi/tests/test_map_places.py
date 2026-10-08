@@ -43,7 +43,7 @@ def test_own_records_and_internal_place_ids(map_world):
     result = pins(map_world)
     assert [p["place_id"] for p in result] == [12, 14, 17]
     assert result[0] == dict(place_id=12, name="Place 12", address="Address",
-                           latitude=35.1107137, longitude=126.8778041, record_count=1)
+                           latitude=35.1107137, longitude=126.8778041, record_count=1, has_mine=True, group_ids=[])
 
 
 def test_other_private_records_excluded_even_with_group_link(map_world):
@@ -76,3 +76,12 @@ def test_no_visible_records_returns_empty_array(world):
     response = client.get("/map/places", headers=headers[1])
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_pin_memberships_only_include_joined_visible_groups(map_world):
+    result = {p['place_id']: p for p in pins(map_world)}
+    assert result[14]['group_ids'] == [10, 30]
+    assert result[14]['has_mine'] is False
+    assert result[14]['record_count'] == 2
+    assert result[12]['group_ids'] == []
+    assert result[12]['has_mine'] is True
