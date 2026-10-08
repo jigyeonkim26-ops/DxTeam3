@@ -60,6 +60,7 @@ class MapPlace {
   MapPlace withColors(List<String> colors) => MapPlace(
     id: id,
     name: name,
+    address: address,
     recordCount: recordCount,
     author: author,
     summary: summary,
