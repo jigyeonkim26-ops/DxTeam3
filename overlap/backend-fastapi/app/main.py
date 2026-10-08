@@ -65,6 +65,7 @@ from .models import (
 )
 from .service import MemoryService
 from .records import router as records_router
+from .map_places import router as map_places_router
 
 
 Offset = Annotated[int, Query(ge=0)]
@@ -552,6 +553,7 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
         )
 
     api.include_router(records_router(current_user))
+    api.include_router(map_places_router(current_user))
     return api
 
 
