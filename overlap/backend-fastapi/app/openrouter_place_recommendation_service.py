@@ -1,6 +1,7 @@
 """OpenRouter ranking constrained to the Tavily candidate list."""
 
 import json
+import logging
 from typing import Any, Callable
 
 import httpx
@@ -12,9 +13,38 @@ from .ai_recommendation_models import (
 from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 from .recommendation_record_adapter import RecommendationRecord
 
+logger = logging.getLogger("uvicorn.error")
+
 
 class OpenRouterPlaceRecommendationService:
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
+    _RANKING_SCHEMA = {
+        "name": "place_recommendations",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "recommendations": {
+                    "type": "array", "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "minLength": 1, "maxLength": 160},
+                            "address": {"type": ["string", "null"]},
+                            "source_url": {"type": "string", "minLength": 1},
+                            "match_score": {"type": "number", "minimum": 0, "maximum": 1},
+                            "matched_keywords": {"type": "array", "items": {"type": "string"}},
+                            "reason": {"type": "string", "minLength": 1, "maxLength": 500},
+                        },
+                        "required": ["name", "address", "source_url", "match_score", "matched_keywords", "reason"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["recommendations"],
+            "additionalProperties": False,
+        },
+    }
 
     def __init__(self, api_key: str | None = None, model: str | None = None,
                  post_json: Callable[..., Any] | None = None) -> None:
@@ -25,6 +55,46 @@ class OpenRouterPlaceRecommendationService:
     @staticmethod
     def _key(name: str | None, address: str | None, url: str) -> tuple[str, str, str]:
         return (" ".join((name or "").split()).casefold(), " ".join((address or "").split()).casefold(), url)
+
+    @staticmethod
+    def _url_key(url: str) -> str:
+        return url.strip().rstrip("/")
+
+    @staticmethod
+    def _parse_recommendations_content(content: Any) -> list[Any]:
+        """Extract a JSON object or array from a model response without trusting prose."""
+        if not isinstance(content, str):
+            raise TypeError("OpenRouter content must be a string")
+        text = content.strip()
+        if text.startswith("```"):
+            line_end = text.find("\n")
+            if line_end < 0:
+                logger.info("AI recommendation diagnostic invalid_structure_category=unterminated_fence")
+                raise ValueError("unterminated markdown fence")
+            text = text[line_end + 1:]
+            fence_end = text.rfind("```")
+            if fence_end >= 0:
+                text = text[:fence_end]
+            text = text.strip()
+
+        starts = [index for index in (text.find("{"), text.find("[")) if index >= 0]
+        if not starts:
+            logger.info("AI recommendation diagnostic invalid_structure_category=missing_json")
+            raise ValueError("OpenRouter content does not contain JSON")
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(text[min(starts):])
+        except json.JSONDecodeError:
+            logger.info("AI recommendation diagnostic invalid_structure_category=invalid_json")
+            raise
+        if isinstance(parsed, dict):
+            raw = parsed.get("recommendations", [])
+        elif isinstance(parsed, list):
+            raw = parsed
+        else:
+            raise TypeError("OpenRouter JSON must be an object or array")
+        if not isinstance(raw, list):
+            raise TypeError("recommendations must be an array")
+        return raw
 
     def recommend(self, records: list[RecommendationRecord], keywords: list[PreferenceKeyword],
                   candidates: list[PlaceCandidate] | PlaceCandidateResponse) -> PlaceRecommendationResponse:
@@ -50,7 +120,11 @@ class OpenRouterPlaceRecommendationService:
                     "place_candidates": [item.model_dump(exclude={"latitude", "longitude"}) for item in candidate_list],
                 }, ensure_ascii=False)},
             ],
-            "response_format": {"type": "json_object"},
+            "response_format": {"type": "json_schema", "json_schema": self._RANKING_SCHEMA},
+            "provider": {"require_parameters": True},
+            "temperature": 0,
+            "max_tokens": 900,
+            "stream": False,
         }
         try:
             response = self._post_json(self.API_URL, headers={
@@ -58,21 +132,22 @@ class OpenRouterPlaceRecommendationService:
             }, json=payload, timeout=45.0)
             response.raise_for_status()
             text = response.json()["choices"][0]["message"]["content"]
-            start, end = text.find("{"), text.rfind("}")
-            raw = json.loads(text[start:end + 1] if start >= 0 <= end else text).get("recommendations", [])
-            if not isinstance(raw, list):
-                raise TypeError("recommendations must be an array")
+            raw = self._parse_recommendations_content(text)
         except httpx.HTTPError as exc:
             raise AIRequestError from exc
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise AIResponseError from exc
+        logger.info("AI recommendation diagnostic ranking_output_count=%d", len(raw))
         candidate_index = {self._key(item.name, item.address, item.source_url): item for item in candidate_list}
+        candidate_url_index = {self._url_key(item.source_url): item for item in candidate_list}
         preference_names = {" ".join(item.keyword.split()).casefold(): item.keyword for item in keywords}
         ranked = []
         for item in raw:
             try:
                 key = self._key(item["name"], item.get("address"), item["source_url"])
-                candidate = candidate_index.get(key)
+                candidate = candidate_index.get(key) or candidate_url_index.get(
+                    self._url_key(item["source_url"])
+                )
                 if candidate is None:
                     raise InvalidRecommendationError("candidate is not in the supplied list")
                 matches = []
@@ -82,10 +157,10 @@ class OpenRouterPlaceRecommendationService:
                         raise InvalidRecommendationError("unknown preference keyword")
                     if canonical not in matches:
                         matches.append(canonical)
-                if matches:
-                    ranked.append((float(item["match_score"]), candidate, matches, item["reason"]))
+                ranked.append((float(item["match_score"]), candidate, matches, item["reason"]))
             except (KeyError, TypeError, ValueError) as exc:
                 raise AIResponseError from exc
+        logger.info("AI recommendation diagnostic validated_recommendations_count=%d", len(ranked))
         ranked.sort(key=lambda item: item[0], reverse=True)
         output, seen = [], set()
         for score, candidate, matches, reason in ranked:
@@ -99,4 +174,5 @@ class OpenRouterPlaceRecommendationService:
                                             source_url=candidate.source_url))
             if len(output) == 3:
                 break
+        logger.info("AI recommendation diagnostic final_response_count=%d", len(output))
         return PlaceRecommendationResponse(recommendations=output)

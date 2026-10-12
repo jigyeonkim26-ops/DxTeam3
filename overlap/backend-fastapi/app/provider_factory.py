@@ -9,7 +9,6 @@ def build_preference_service(provider: str):
         return OpenRouterPreferenceKeywordService()
     raise AIConfigurationError(f"Unsupported LLM_PROVIDER: {provider}")
 
-
 def build_search_service(provider: str):
     if provider == "tavily":
         return TavilyPlaceSearchService()
