@@ -23,6 +23,7 @@ class RecommendationRecord(BaseModel):
     record_id: int
     user_id: int
     place_id: int
+    kakao_place_id: str | None = None
     place_name: str | None = None
     address: str | None = None
     latitude: float | None = None
@@ -55,6 +56,7 @@ class RecordRecommendationAdapter:
             record_id=record.id,
             user_id=record.author_id,
             place_id=record.place_id,
+            kakao_place_id=(place.external_place_id if place is not None and place.provider == "kakao" else None),
             place_name=place.name if place is not None else None,
             address=(place.road_address or place.address) if place is not None else None,
             latitude=float(place.latitude) if place is not None and place.latitude is not None else None,

@@ -53,7 +53,7 @@ class TavilyPlaceSearchService:
         try:
             for query in self.build_queries(location, keywords):
                 response = self._post_json(self.API_URL, headers={"Authorization": f"Bearer {self.api_key}"},
-                                           json={"query": query, "search_depth": "basic", "max_results": 10}, timeout=30.0)
+                                           json={"query": query, "search_depth": "basic", "max_results": 10}, timeout=15.0)
                 response.raise_for_status()
                 for result in response.json().get("results", []):
                     title, url, content = result.get("title"), result.get("url"), result.get("content")

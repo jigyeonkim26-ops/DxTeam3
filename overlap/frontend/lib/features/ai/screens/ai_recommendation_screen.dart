@@ -4,12 +4,16 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart' show ApiException;
 import '../../../shared/models/place.dart';
+import '../../user/services/saved_places_api.dart';
 import '../models/ai_place_recommendation.dart';
 import '../services/ai_recommendations_api.dart';
 import '../widgets/ai_place_recommendation_card.dart';
 
 class AiRecommendationScreen extends StatelessWidget {
-  const AiRecommendationScreen({super.key});
+  const AiRecommendationScreen({super.key, this.api, this.savedPlacesApi});
+
+  final AiRecommendationsApi? api;
+  final SavedPlacesApi? savedPlacesApi;
 
   @override
   Widget build(BuildContext context) {
@@ -17,6 +21,8 @@ class AiRecommendationScreen extends StatelessWidget {
       backgroundColor: AppColors.paper,
       body: SafeArea(
         child: AiRecommendationContent(
+          api: api,
+          savedPlacesApi: savedPlacesApi,
           showNavigation: true,
           onPlaceSelected: (place) => Navigator.pop(context, place),
         ),
@@ -32,12 +38,18 @@ class AiRecommendationContent extends StatefulWidget {
     this.showNavigation = false,
     this.showSheetHeader = false,
     this.onPlaceSelected,
+    this.onRecommendationSelected,
+    this.api,
+    this.savedPlacesApi,
   });
 
   final ScrollController? scrollController;
   final bool showNavigation;
   final bool showSheetHeader;
   final ValueChanged<Place>? onPlaceSelected;
+  final ValueChanged<AiPlaceRecommendation>? onRecommendationSelected;
+  final AiRecommendationsApi? api;
+  final SavedPlacesApi? savedPlacesApi;
 
   @override
   State<AiRecommendationContent> createState() =>
@@ -45,8 +57,10 @@ class AiRecommendationContent extends StatefulWidget {
 }
 
 class _AiRecommendationContentState extends State<AiRecommendationContent> {
-  final _api = AiRecommendationsApi();
+  late final _api = widget.api ?? AiRecommendationsApi();
+  late final _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
   List<AiPlaceRecommendation> _recommendations = const [];
+  int _recommendationsRevision = 0;
   bool _loading = false;
   String? _error;
 
@@ -64,9 +78,14 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
     });
     try {
       final items = await _api.load();
-      if (mounted) setState(() => _recommendations = items);
+      if (mounted) {
+        setState(() {
+          _recommendations = items;
+          _recommendationsRevision++;
+        });
+      }
     } on ApiException catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error = e.statusCode == 401
               ? '로그인이 필요해요.'
@@ -74,6 +93,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
               ? 'AI 추천 서비스에 일시적인 문제가 있어요.'
               : e.message,
         );
+      }
     } catch (_) {
       if (mounted) setState(() => _error = '추천 장소를 불러오지 못했어요.');
     } finally {
@@ -224,7 +244,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
             padding: const EdgeInsets.all(AppSpacing.lg),
             child: Column(
               children: [
-                const Text('아직 추천 장소가 없어요.', textAlign: TextAlign.center),
+                const Text('확인된 추천 장소가 없어요. 기록을 더 남긴 뒤 다시 시도해 주세요.', textAlign: TextAlign.center),
                 TextButton(
                   onPressed: _loading ? null : _load,
                   child: const Text('다시 추천받기'),
@@ -244,23 +264,32 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             child: AiPlaceRecommendationCard(
+              key: ValueKey((recommendation.kakaoPlaceId ?? recommendation.name,
+                  _recommendationsRevision)),
               recommendation: recommendation,
+              savedPlacesApi: _savedPlacesApi,
               onTap: () {
+                if (widget.onRecommendationSelected != null &&
+                    recommendation.kakaoPlaceId != null &&
+                    recommendation.latitude != null &&
+                    recommendation.longitude != null) {
+                  widget.onRecommendationSelected!(recommendation);
+                  return;
+                }
                 final onPlaceSelected = widget.onPlaceSelected;
                 if (onPlaceSelected != null &&
+                    recommendation.kakaoPlaceId != null &&
                     recommendation.latitude != null &&
                     recommendation.longitude != null) {
                   onPlaceSelected(
                     Place(
-                      id: recommendation.sourceUrl,
+                      id: recommendation.kakaoPlaceId!,
                       name: recommendation.name,
                       address: recommendation.address,
                       latitude: recommendation.latitude!,
                       longitude: recommendation.longitude!,
                     ),
                   );
-                } else {
-                  Navigator.maybePop(context);
                 }
               },
             ),

@@ -21,6 +21,8 @@ def record(record_id, user_id, emotion, place_id=1, content="기록"):
 def place(name="사직공원", latitude=35.14, longitude=126.91):
     return SimpleNamespace(
         name=name,
+        provider="kakao",
+        external_place_id="12345",
         address="광주광역시 남구",
         road_address=None,
         latitude=latitude,
@@ -42,6 +44,7 @@ def test_positive_emotions_map_to_recommendation_codes_and_keep_place_content():
         assert result.emotion_code == code
         assert result.content == "노을이 예쁘고 조용해서 좋았어요"
         assert result.place_name == "사직공원"
+        assert result.kakao_place_id == "12345"
         assert result.visited_on is None
 
 
@@ -60,6 +63,7 @@ def test_missing_place_and_coordinates_are_never_invented():
     adapter = RecordRecommendationAdapter()
     missing = adapter.to_recommendation_record(record(1, 7, "excellent", place_id=999), None)
     assert missing.place_name is None
+    assert missing.kakao_place_id is None
     assert missing.address is None
     assert missing.latitude is None and missing.longitude is None
     no_coordinates = adapter.to_recommendation_record(record(2, 7, "good"), place(latitude=None, longitude=None))

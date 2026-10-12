@@ -5,7 +5,7 @@ import httpx
 from .config import KAKAO_REST_API_KEY
 
 
-def search_places(query: str):
+def search_places(query: str, *, timeout: float = 10.0):
     if not KAKAO_REST_API_KEY:
         raise RuntimeError(".env에서 카카오 REST API 키를 확인해 주세요.")
 
@@ -19,7 +19,7 @@ def search_places(query: str):
             "query": query,
             "size": 5,
         },
-        timeout=10.0,
+        timeout=timeout,
     )
 
     # 카카오 요청이 실패했다면 오류 표시

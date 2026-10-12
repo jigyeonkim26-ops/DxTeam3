@@ -5,6 +5,7 @@ import logging
 from typing import Any, Callable
 
 import httpx
+from pydantic import ValidationError
 
 from .ai_recommendation_errors import AIConfigurationError, AIRequestError, AIResponseError, InvalidRecommendationError
 from .ai_recommendation_models import (
@@ -29,14 +30,12 @@ class OpenRouterPlaceRecommendationService:
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "minLength": 1, "maxLength": 160},
-                            "address": {"type": ["string", "null"]},
-                            "source_url": {"type": "string", "minLength": 1},
+                            "kakao_place_id": {"type": "string", "minLength": 1},
                             "match_score": {"type": "number", "minimum": 0, "maximum": 1},
                             "matched_keywords": {"type": "array", "items": {"type": "string"}},
                             "reason": {"type": "string", "minLength": 1, "maxLength": 500},
                         },
-                        "required": ["name", "address", "source_url", "match_score", "matched_keywords", "reason"],
+                        "required": ["kakao_place_id", "match_score", "matched_keywords", "reason"],
                         "additionalProperties": False,
                     },
                 },
@@ -51,14 +50,6 @@ class OpenRouterPlaceRecommendationService:
         self.api_key = OPENROUTER_API_KEY if api_key is None else api_key.strip()
         self.model = OPENROUTER_MODEL if model is None else model.strip()
         self._post_json = post_json or httpx.post
-
-    @staticmethod
-    def _key(name: str | None, address: str | None, url: str) -> tuple[str, str, str]:
-        return (" ".join((name or "").split()).casefold(), " ".join((address or "").split()).casefold(), url)
-
-    @staticmethod
-    def _url_key(url: str) -> str:
-        return url.strip().rstrip("/")
 
     @staticmethod
     def _parse_recommendations_content(content: Any) -> list[Any]:
@@ -103,14 +94,16 @@ class OpenRouterPlaceRecommendationService:
             return PlaceRecommendationResponse()
         if not self.api_key or not self.model:
             raise AIConfigurationError("OpenRouter is not configured")
+        if any(not candidate.kakao_place_id for candidate in candidate_list):
+            raise InvalidRecommendationError("candidate has no verified Kakao place ID")
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": (
-                    "Return JSON only: {\"recommendations\":[{\"name\":string,\"address\":string|null,"
-                    "\"source_url\":string,\"match_score\":number,\"matched_keywords\":[string],\"reason\":string}]}. "
-                    "Select at most three distinct places only from place_candidates. Never alter candidate name, "
-                    "address, or source_url. Scores are 0 to 1 descending. Higher preference scores matter more. "
+                    "Return JSON only: {\"recommendations\":[{\"kakao_place_id\":string,"
+                    "\"match_score\":number,\"matched_keywords\":[string],\"reason\":string}]}. "
+                    "Select at most three distinct Kakao place IDs only from place_candidates. "
+                    "Scores are 0 to 1 descending. Higher preference scores matter more. "
                     "matched_keywords must come from preferences. Write concise Korean personalized reasons."
                 )},
                 {"role": "user", "content": json.dumps({
@@ -138,16 +131,12 @@ class OpenRouterPlaceRecommendationService:
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise AIResponseError from exc
         logger.info("AI recommendation diagnostic ranking_output_count=%d", len(raw))
-        candidate_index = {self._key(item.name, item.address, item.source_url): item for item in candidate_list}
-        candidate_url_index = {self._url_key(item.source_url): item for item in candidate_list}
+        candidate_index = {item.kakao_place_id: item for item in candidate_list}
         preference_names = {" ".join(item.keyword.split()).casefold(): item.keyword for item in keywords}
         ranked = []
         for item in raw:
             try:
-                key = self._key(item["name"], item.get("address"), item["source_url"])
-                candidate = candidate_index.get(key) or candidate_url_index.get(
-                    self._url_key(item["source_url"])
-                )
+                candidate = candidate_index.get(str(item["kakao_place_id"]))
                 if candidate is None:
                     raise InvalidRecommendationError("candidate is not in the supplied list")
                 matches = []
@@ -164,14 +153,18 @@ class OpenRouterPlaceRecommendationService:
         ranked.sort(key=lambda item: item[0], reverse=True)
         output, seen = [], set()
         for score, candidate, matches, reason in ranked:
-            identity = (candidate.name.casefold(), (candidate.address or "").casefold())
+            identity = candidate.kakao_place_id
             if identity in seen:
                 continue
             seen.add(identity)
-            output.append(RecommendedPlace(rank=len(output) + 1, name=candidate.name, address=candidate.address,
-                                            latitude=candidate.latitude, longitude=candidate.longitude,
-                                            match_score=score, matched_keywords=matches, reason=reason,
-                                            source_url=candidate.source_url))
+            try:
+                output.append(RecommendedPlace(rank=len(output) + 1, kakao_place_id=candidate.kakao_place_id,
+                                               name=candidate.name, address=candidate.address,
+                                               latitude=candidate.latitude, longitude=candidate.longitude,
+                                               match_score=score, matched_keywords=matches, reason=reason,
+                                               source_url=candidate.source_url))
+            except ValidationError as exc:
+                raise AIResponseError("Invalid recommendation fields") from exc
             if len(output) == 3:
                 break
         logger.info("AI recommendation diagnostic final_response_count=%d", len(output))

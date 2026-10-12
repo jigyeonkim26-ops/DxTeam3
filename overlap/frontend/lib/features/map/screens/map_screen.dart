@@ -7,6 +7,9 @@ import '../../../core/network/api_client.dart';
 import '../../group/services/group_list_store.dart';
 import '../../group/services/group_api_service.dart';
 import '../../ai/screens/ai_recommendation_screen.dart';
+import '../../ai/services/ai_recommendations_api.dart';
+import '../../ai/models/ai_place_recommendation.dart';
+import '../../user/services/saved_places_api.dart';
 import '../../memory/services/record_api.dart';
 import '../models/current_location.dart';
 import '../models/map_filter.dart';
@@ -27,12 +30,18 @@ class MapScreen extends StatefulWidget {
     this.locationService,
     this.requestedFilters,
     this.mapPlacesApi,
+    this.aiRecommendationsApi,
+    this.savedPlacesApi,
+    this.placeRecordApi,
   });
 
   final String? selectedGroupId;
   final CurrentLocationService? locationService;
   final Set<MapFilter>? requestedFilters;
   final MapPlacesApi? mapPlacesApi;
+  final AiRecommendationsApi? aiRecommendationsApi;
+  final SavedPlacesApi? savedPlacesApi;
+  final RecordApi? placeRecordApi;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -304,13 +313,56 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _selectedSearchPlace = searchPlace);
   }
 
-  void _showPlaceOnMap(Place place) {
+  Future<void> _showPlaceOnMap(Place place) async {
     final searchPlace = MapSearchPlace.fromPlace(place);
     if (!searchPlace.hasValidCoordinates) {
       _showMessage('선택한 장소의 좌표가 올바르지 않습니다.');
       return;
     }
     setState(() => _selectedSearchPlace = searchPlace);
+    if (_aiSheetController.isAttached) {
+      await _aiSheetController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  Future<void> _showRecommendedPlaceOnMap(AiPlaceRecommendation recommendation) async {
+    final kakaoId = recommendation.kakaoPlaceId;
+    final latitude = recommendation.latitude;
+    final longitude = recommendation.longitude;
+    if (kakaoId == null || latitude == null || longitude == null) return;
+    await _showPlaceOnMap(Place(
+      id: kakaoId,
+      name: recommendation.name,
+      address: recommendation.address,
+      latitude: latitude,
+      longitude: longitude,
+    ));
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => PlacePreviewSheet.recommendation(
+        recommendation: recommendation,
+        onViewDetails: () {
+          Navigator.pop(sheetContext);
+          Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => PlaceDetailScreen(
+              placeId: '',
+              name: recommendation.name,
+              address: recommendation.address,
+              recordCount: 0,
+              recommendation: recommendation,
+              savedPlacesApi: widget.savedPlacesApi,
+              recordApi: widget.placeRecordApi,
+            ),
+          ));
+        },
+      ),
+    );
   }
 
   @override
@@ -397,7 +449,9 @@ class _MapScreenState extends State<MapScreen> {
                 builder: (context, scrollController) => AiRecommendationContent(
                   scrollController: scrollController,
                   showSheetHeader: true,
-                  onPlaceSelected: _showPlaceOnMap,
+                  onRecommendationSelected: _showRecommendedPlaceOnMap,
+                  api: widget.aiRecommendationsApi,
+                  savedPlacesApi: widget.savedPlacesApi,
                 ),
               ),
             ),

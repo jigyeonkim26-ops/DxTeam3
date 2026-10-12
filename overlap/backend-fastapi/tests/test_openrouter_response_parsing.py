@@ -24,7 +24,7 @@ def test_invalid_content_remains_an_ai_response_error(content):
             return {"choices": [{"message": {"content": content}}]}
 
     record = type("RecordInput", (), {"content": "record", "emotion_meaning": "good", "place_name": "place"})()
-    candidate = PlaceCandidate(name="place", summary="summary", source_url="https://place")
+    candidate = PlaceCandidate(kakao_place_id="12345", name="place", summary="summary", source_url="https://place")
     with pytest.raises(AIResponseError):
         OpenRouterPlaceRecommendationService(api_key="test", model="test", post_json=lambda *_, **__: Response()).recommend(
             [record], [PreferenceKeyword(keyword="keyword", score=1)], [candidate]

@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/constants/app_colors.dart';
 import '../models/current_location.dart';
 import '../models/map_place.dart';
 import '../models/map_search_place.dart';
@@ -45,23 +44,6 @@ class MapView extends StatelessWidget {
               : CustomPaint(
                   painter: _MapPlaceholderPainter(isSatellite: isSatellite),
                 ),
-        ),
-        Positioned(
-          left: 16,
-          bottom: 18,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.82),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              child: Text(
-                'Kakao Map 연결 전 미리보기',
-                style: TextStyle(color: AppColors.muted, fontSize: 10),
-              ),
-            ),
-          ),
         ),
       ],
     );

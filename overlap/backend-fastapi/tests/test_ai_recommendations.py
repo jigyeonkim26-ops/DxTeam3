@@ -40,6 +40,15 @@ class Search:
         )])
 
 
+class Verification:
+    def verify(self, hints, keywords, records):
+        return PlaceCandidateResponse(candidates=[PlaceCandidate(
+            kakao_place_id="12345", name="광암교", address="광주광역시 남구",
+            latitude=35.14, longitude=126.91, matched_keywords=["노을"],
+            summary="카카오에서 확인된 장소", source_url="https://place.map.kakao.com/12345",
+        )])
+
+
 class Ranking:
     def __init__(self):
         self.records = self.keywords = self.candidates = None
@@ -48,7 +57,8 @@ class Ranking:
         self.records, self.keywords, self.candidates = records, keywords, candidates
         candidate = candidates.candidates[0]
         return PlaceRecommendationResponse(recommendations=[RecommendedPlace(
-            rank=1, name=candidate.name, address=candidate.address, latitude=candidate.latitude,
+            rank=1, kakao_place_id=candidate.kakao_place_id,
+            name=candidate.name, address=candidate.address, latitude=candidate.latitude,
             longitude=candidate.longitude, match_score=0.95, matched_keywords=["노을"],
             reason="노을을 선호한 기록과 맞습니다.", source_url=candidate.source_url,
         )])
@@ -77,7 +87,8 @@ def world():
         db.commit()
     keywords, search, ranking = Keywords(), Search(), Ranking()
     api = create_app(use_db_auth=True, recommendation_adapter=RecordRecommendationAdapter(),
-                     preference_service=keywords, place_search_service=search, place_recommendation_service=ranking)
+                     preference_service=keywords, place_search_service=search,
+                     place_verification_service=Verification(), place_recommendation_service=ranking)
     def session():
         with Session(engine) as db:
             yield db
@@ -98,10 +109,11 @@ def test_recommendations_use_only_current_users_positive_records(world):
     assert [item.content for item in keywords.records] == ["괜찮았어요", "산책하기 좋았어요", "노을이 예쁘고 조용해서 좋았어요"]
     assert all(item.user_id == 1 for item in keywords.records)
     assert search.keywords[0].keyword == "노을"
-    assert ranking.candidates.candidates[0].source_url == "https://example.test/bridge"
+    assert ranking.candidates.candidates[0].kakao_place_id == "12345"
     result = response.json()["recommendations"]
     assert len(result) == 1 and result[0]["name"] == "광암교"
-    assert result[0]["latitude"] is None and result[0]["longitude"] is None
+    assert result[0]["kakao_place_id"] == "12345"
+    assert result[0]["latitude"] == 35.14 and result[0]["longitude"] == 126.91
 
 
 def test_no_positive_records_returns_empty_without_provider_calls(world):
@@ -115,9 +127,9 @@ def test_openrouter_ranking_rejects_outside_candidate_without_network():
     from app.openrouter_place_recommendation_service import OpenRouterPlaceRecommendationService
     class Response:
         def raise_for_status(self): pass
-        def json(self): return {"choices": [{"message": {"content": '{"recommendations":[{"name":"없는 장소","address":null,"source_url":"https://missing","match_score":1,"matched_keywords":["노을"],"reason":"실패"}]}'}}]}
+        def json(self): return {"choices": [{"message": {"content": '{"recommendations":[{"kakao_place_id":"outside","match_score":1,"matched_keywords":["노을"],"reason":"실패"}]}'}}]}
     record = type("RecordInput", (), {"content": "노을", "emotion_meaning": "최고", "place_name": "사직공원"})()
-    candidate = PlaceCandidate(name="광암교", summary="노을", source_url="https://bridge")
+    candidate = PlaceCandidate(kakao_place_id="12345", name="광암교", summary="노을", source_url="https://bridge")
     with pytest.raises(InvalidRecommendationError):
         OpenRouterPlaceRecommendationService(api_key="test", model="test", post_json=lambda *_, **__: Response()).recommend(
             [record], [PreferenceKeyword(keyword="노을", score=1)], [candidate]

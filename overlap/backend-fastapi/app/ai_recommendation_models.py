@@ -13,6 +13,7 @@ class PreferenceKeywordResponse(BaseModel):
 
 
 class PlaceCandidate(BaseModel):
+    kakao_place_id: str | None = None
     name: str = Field(min_length=1, max_length=160)
     address: str | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
@@ -27,6 +28,7 @@ class PlaceCandidateResponse(BaseModel):
 
 
 class RecommendedPlace(BaseModel):
+    kakao_place_id: str | None = None
     rank: int = Field(ge=1, le=3)
     name: str = Field(min_length=1, max_length=160)
     address: str | None = None

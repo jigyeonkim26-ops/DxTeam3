@@ -2,7 +2,8 @@ import '../../../core/network/api_transport.dart';
 import '../models/ai_place_recommendation.dart';
 
 class AiRecommendationsApi {
-  static const _responseTimeout = Duration(seconds: 75);
+  // Sequential provider calls can take up to 156 seconds at their own limits.
+  static const _responseTimeout = Duration(seconds: 180);
 
   Future<List<AiPlaceRecommendation>> load() async {
     final body = await ApiTransport.get(

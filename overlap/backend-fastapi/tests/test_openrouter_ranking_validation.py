@@ -9,7 +9,7 @@ from app.openrouter_place_recommendation_service import OpenRouterPlaceRecommend
 
 def _recommendation_content(source_url, matched_keywords):
     return json.dumps({"recommendations": [{
-        "name": "candidate", "address": None, "source_url": source_url,
+        "kakao_place_id": source_url,
         "match_score": 0.8, "matched_keywords": matched_keywords, "reason": "reason",
     }]})
 
@@ -25,7 +25,7 @@ def _recommend(content):
     record = type("RecordInput", (), {
         "content": "record", "emotion_meaning": "good", "place_name": "place",
     })()
-    candidate = PlaceCandidate(name="candidate", summary="summary", source_url="https://candidate")
+    candidate = PlaceCandidate(kakao_place_id="12345", name="candidate", summary="summary", source_url="https://candidate")
     service = OpenRouterPlaceRecommendationService(
         api_key="test", model="test", post_json=lambda *_, **__: Response(),
     )
@@ -36,13 +36,14 @@ def _recommend(content):
 
 @pytest.mark.parametrize("matched_keywords", [[], ["keyword"]])
 def test_matched_candidate_is_returned_with_optional_matched_keywords(matched_keywords):
-    result = _recommend(_recommendation_content("https://candidate", matched_keywords))
+    result = _recommend(_recommendation_content("12345", matched_keywords))
 
     assert len(result.recommendations) == 1
     assert result.recommendations[0].matched_keywords == matched_keywords
     assert result.recommendations[0].source_url == "https://candidate"
+    assert result.recommendations[0].kakao_place_id == "12345"
 
 
 def test_outside_candidate_remains_rejected():
     with pytest.raises(InvalidRecommendationError):
-        _recommend(_recommendation_content("https://outside", []))
+        _recommend(_recommendation_content("outside", []))

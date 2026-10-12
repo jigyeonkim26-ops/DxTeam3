@@ -65,7 +65,7 @@ def test_ranking_request_uses_strict_json_schema_and_non_streaming_payload():
         return Response()
 
     record = type("RecordInput", (), {"content": "record", "emotion_meaning": "good", "place_name": "place"})()
-    candidate = PlaceCandidate(name="candidate", summary="summary", source_url="https://candidate")
+    candidate = PlaceCandidate(kakao_place_id="12345", name="candidate", summary="summary", source_url="https://candidate")
     service = OpenRouterPlaceRecommendationService(api_key="test", model="test", post_json=post_json)
     assert service.recommend([record], [PreferenceKeyword(keyword="walk", score=1)], [candidate]).recommendations == []
     assert captured["response_format"]["type"] == "json_schema"

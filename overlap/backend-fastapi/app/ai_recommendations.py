@@ -12,6 +12,7 @@ from .ai_recommendation_models import PlaceRecommendationResponse
 from .config import LLM_PROVIDER, SEARCH_PROVIDER
 from .records import require_db
 from .recommendation_record_adapter import RecordRecommendationAdapter
+from .kakao_place_verification_service import KakaoPlaceVerificationService
 from .provider_factory import build_preference_service, build_recommendation_service, build_search_service
 
 # Uvicorn configures this logger with its console error handler.
@@ -38,11 +39,12 @@ def _log_provider_failure(stage: str, error: AIRecommendationError) -> None:
     )
 
 
-def router(current_user, *, adapter=None, preference_service=None, search_service=None, recommendation_service=None):
+def router(current_user, *, adapter=None, preference_service=None, search_service=None, verification_service=None, recommendation_service=None):
     api = APIRouter(tags=["AI recommendations"])
     adapter = adapter or RecordRecommendationAdapter()
     preference_service = preference_service or build_preference_service(LLM_PROVIDER)
     search_service = search_service or build_search_service(SEARCH_PROVIDER)
+    verification_service = verification_service or KakaoPlaceVerificationService()
     recommendation_service = recommendation_service or build_recommendation_service(LLM_PROVIDER)
 
     @api.get("/ai/recommendations", response_model=PlaceRecommendationResponse)
@@ -78,6 +80,14 @@ def router(current_user, *, adapter=None, preference_service=None, search_servic
             _log_provider_failure("tavily_place_search", exc)
             raise HTTPException(502, "AI recommendation provider request failed") from exc
         _log_diagnostic("tavily_candidates_count", len(candidates.candidates))
+        try:
+            candidates = verification_service.verify(candidates, keywords.keywords, records)
+        except AIConfigurationError as exc:
+            raise HTTPException(503, "AI recommendation provider is not configured") from exc
+        except AIRecommendationError as exc:
+            _log_provider_failure("kakao_place_verification", exc)
+            raise HTTPException(502, "AI recommendation provider request failed") from exc
+        _log_diagnostic("kakao_verified_candidates_count", len(candidates.candidates))
         try:
             if not candidates.candidates:
                 _log_diagnostic("ranking_output_count", 0)
