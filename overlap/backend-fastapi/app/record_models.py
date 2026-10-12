@@ -68,6 +68,11 @@ class Comment(Base):
     __tablename__ = "comments"
     id: Mapped[int] = mapped_column(Id, primary_key=True, autoincrement=True)
     record_id: Mapped[int] = mapped_column(ForeignKey("records.id"))
+    group_id: Mapped[int | None] = mapped_column(
+        Id,
+        ForeignKey("memory_groups.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     parent_comment_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id"), nullable=True)
     content: Mapped[str] = mapped_column(Text)

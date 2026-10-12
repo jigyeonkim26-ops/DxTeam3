@@ -61,7 +61,12 @@ def world(monkeypatch):
             db.add(User(id=user_id, email=f"user{user_id}@test.example", nickname=f"테스트{user_id}",
                         gender="female", birth_date=date(1990, 1, 1), password_hash=hash_password("test-password")))
         db.add_all([MemoryGroup(id=10, name="실제 가입 모임"), MemoryGroup(id=20, name="미가입 모임")])
-        db.add_all([GroupMember(group_id=10, user_id=1), GroupMember(group_id=10, user_id=2), GroupMember(group_id=20, user_id=3)])
+        db.add_all([
+            GroupMember(group_id=10, user_id=1),
+            GroupMember(group_id=10, user_id=2),
+            GroupMember(group_id=20, user_id=1),
+            GroupMember(group_id=20, user_id=3),
+        ])
         db.commit()
     api = create_app(use_db_auth=True)
     def session():
