@@ -316,20 +316,29 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.xl),
-              OutlinedButton.icon(
-                onPressed: _isLoggingOut || _isSaving ? null : _confirmLogout,
-                icon: _isLoggingOut
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.logout_rounded),
-                label: const Text('로그아웃'),
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: AppColors.surface,
-                  foregroundColor: AppColors.coral,
-                  side: const BorderSide(color: AppColors.coral),
+              const Divider(height: AppSpacing.xl, color: AppColors.divider),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  key: const Key('profile-logout'),
+                  onPressed: _isLoggingOut || _isSaving ? null : _confirmLogout,
+                  icon: _isLoggingOut
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.logout_rounded),
+                  label: const Text('로그아웃'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                    ),
+                    backgroundColor: AppColors.surface,
+                    foregroundColor: AppColors.coral,
+                    side: const BorderSide(color: AppColors.coral),
+                  ),
                 ),
               ),
             ],

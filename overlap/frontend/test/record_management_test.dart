@@ -199,6 +199,8 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+      expect(find.text('내 기록 관리'), findsOneWidget);
       await tester.tap(find.byTooltip('기록 메뉴'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('삭제'));
