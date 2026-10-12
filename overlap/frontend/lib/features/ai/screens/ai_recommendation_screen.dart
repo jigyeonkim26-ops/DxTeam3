@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_client.dart' show ApiException;
 import '../../../shared/models/place.dart';
-import '../data/mock_ai_recommendations.dart';
+import '../models/ai_place_recommendation.dart';
+import '../services/ai_recommendations_api.dart';
 import '../widgets/ai_place_recommendation_card.dart';
 
 class AiRecommendationScreen extends StatelessWidget {
@@ -43,7 +45,41 @@ class AiRecommendationContent extends StatefulWidget {
 }
 
 class _AiRecommendationContentState extends State<AiRecommendationContent> {
-  final List<AiPlaceRecommendation> _recommendations = const [];
+  final _api = AiRecommendationsApi();
+  List<AiPlaceRecommendation> _recommendations = const [];
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final items = await _api.load();
+      if (mounted) setState(() => _recommendations = items);
+    } on ApiException catch (e) {
+      if (mounted)
+        setState(
+          () => _error = e.statusCode == 401
+              ? '로그인이 필요해요.'
+              : e.statusCode == 502
+              ? 'AI 추천 서비스에 일시적인 문제가 있어요.'
+              : e.message,
+        );
+    } catch (_) {
+      if (mounted) setState(() => _error = '추천 장소를 불러오지 못했어요.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -168,10 +204,42 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
           ),
         ),
         const SizedBox(height: AppSpacing.sm),
-        const Padding(
-          padding: EdgeInsets.all(AppSpacing.lg),
-          child: Text('아직 추천 장소가 없어요.', textAlign: TextAlign.center),
-        ),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.all(AppSpacing.lg),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_error != null)
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              children: [
+                Text(_error!, textAlign: TextAlign.center),
+                TextButton(onPressed: _load, child: const Text('다시 추천받기')),
+              ],
+            ),
+          )
+        else if (_recommendations.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              children: [
+                const Text('아직 추천 장소가 없어요.', textAlign: TextAlign.center),
+                TextButton(
+                  onPressed: _loading ? null : _load,
+                  child: const Text('다시 추천받기'),
+                ),
+              ],
+            ),
+          )
+        else
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _loading ? null : _load,
+              child: const Text('다른 장소 추천받기'),
+            ),
+          ),
         for (final recommendation in _recommendations) ...[
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -179,8 +247,18 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
               recommendation: recommendation,
               onTap: () {
                 final onPlaceSelected = widget.onPlaceSelected;
-                if (onPlaceSelected != null) {
-                  onPlaceSelected(recommendation.place);
+                if (onPlaceSelected != null &&
+                    recommendation.latitude != null &&
+                    recommendation.longitude != null) {
+                  onPlaceSelected(
+                    Place(
+                      id: recommendation.sourceUrl,
+                      name: recommendation.name,
+                      address: recommendation.address,
+                      latitude: recommendation.latitude!,
+                      longitude: recommendation.longitude!,
+                    ),
+                  );
                 } else {
                   Navigator.maybePop(context);
                 }

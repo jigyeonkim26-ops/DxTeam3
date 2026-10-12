@@ -76,6 +76,7 @@ from .map_places import router as map_places_router
 from .comments import router as comments_router
 from .saved_places import router as saved_places_router
 from .notifications import router as notifications_router
+from .ai_recommendations import router as ai_recommendations_router
 
 
 Offset = Annotated[int, Query(ge=0)]
@@ -102,7 +103,15 @@ def _read_profile_photo(photo: UploadFile) -> tuple[bytes, str]:
     return raw, mime_type
 
 
-def create_app(service: MemoryService | None = None, *, use_db_auth: bool = False) -> FastAPI:
+def create_app(
+    service: MemoryService | None = None,
+    *,
+    use_db_auth: bool = False,
+    recommendation_adapter=None,
+    preference_service=None,
+    place_search_service=None,
+    place_recommendation_service=None,
+) -> FastAPI:
     service = service if service is not None else MemoryService()
 
     api = FastAPI(
@@ -760,6 +769,15 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
     api.include_router(comments_router(current_user))
     api.include_router(saved_places_router(current_user))
     api.include_router(notifications_router(current_user))
+    api.include_router(
+        ai_recommendations_router(
+            current_user,
+            adapter=recommendation_adapter,
+            preference_service=preference_service,
+            search_service=place_search_service,
+            recommendation_service=place_recommendation_service,
+        )
+    )
     return api
 
 
