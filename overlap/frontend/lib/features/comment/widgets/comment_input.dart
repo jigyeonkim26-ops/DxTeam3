@@ -12,6 +12,7 @@ class CommentInput extends StatelessWidget {
     this.replyingToName,
     this.onCancelReply,
     this.isSubmitting = false,
+    this.isEnabled = true,
   });
 
   final TextEditingController controller;
@@ -20,6 +21,7 @@ class CommentInput extends StatelessWidget {
   final String? replyingToName;
   final VoidCallback? onCancelReply;
   final bool isSubmitting;
+  final bool isEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +92,7 @@ class CommentInput extends StatelessWidget {
                   ),
                   const SizedBox(width: AppSpacing.xs),
                   IconButton.filled(
-                    onPressed: isSubmitting ? null : onSubmit,
+                    onPressed: isSubmitting || !isEnabled ? null : onSubmit,
                     style: IconButton.styleFrom(
                       backgroundColor: AppColors.coral,
                       foregroundColor: Colors.white,

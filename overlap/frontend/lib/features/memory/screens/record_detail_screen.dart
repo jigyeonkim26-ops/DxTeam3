@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart';
+import '../../../shared/models/group.dart';
 import '../../../shared/models/record.dart';
 import '../widgets/record_photo.dart';
 import '../services/record_api.dart';
@@ -34,11 +35,15 @@ class RecordDetailScreen extends StatefulWidget {
     required this.record,
     this.recordApi,
     this.canManage = false,
+    this.commentGroupId,
+    this.commentScopeAll = false,
   });
 
   final Record record;
   final RecordApi? recordApi;
   final bool canManage;
+  final String? commentGroupId;
+  final bool commentScopeAll;
 
   @override
   State<RecordDetailScreen> createState() => _RecordDetailScreenState();
@@ -56,12 +61,19 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   String? _commentsError;
   CommentItem? _replyTarget;
   bool _isDeleting = false;
+  String? _selectedCommentGroupId;
 
   @override
   void initState() {
     super.initState();
     _likeCount = widget.record.likeCount;
     _comments = [];
+    _selectedCommentGroupId = widget.record.isPrivate
+        ? null
+        : widget.commentGroupId ??
+              (widget.record.sharedGroups.length == 1
+                  ? widget.record.sharedGroups.single.id
+                  : null);
     _loadLikeState();
     _loadComments();
   }
@@ -77,6 +89,16 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     0,
     (count, comment) => count + 1 + comment.replies.length,
   );
+
+  bool get _isPrivateRecord => widget.record.isPrivate;
+
+  bool get _needsCommentGroupSelection =>
+      !_isPrivateRecord &&
+      !widget.commentScopeAll &&
+      _selectedCommentGroupId == null;
+
+  bool get _canSubmitComment =>
+      _isPrivateRecord || _selectedCommentGroupId != null;
 
   Future<void> _loadLikeState() async {
     try {
@@ -113,6 +135,14 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   }
 
   Future<void> _loadComments() async {
+    if (_needsCommentGroupSelection) {
+      setState(() {
+        _comments = [];
+        _commentsError = null;
+        _isCommentsLoading = false;
+      });
+      return;
+    }
     if (mounted) {
       setState(() {
         _isCommentsLoading = true;
@@ -120,7 +150,13 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
       });
     }
     try {
-      final items = await RecordCommentsApi.getComments(widget.record.id);
+      final items = await RecordCommentsApi.getComments(
+        widget.record.id,
+        groupId: _isPrivateRecord || widget.commentScopeAll
+            ? null
+            : _selectedCommentGroupId,
+        scopeAll: widget.commentScopeAll && !_isPrivateRecord,
+      );
       final byId = {for (final item in items) item.id: item};
       final roots = <CommentItem>[];
       for (final item in items) {
@@ -144,6 +180,10 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     if (_isSubmittingComment) return;
     final content = _commentController.text.trim();
     if (content.isEmpty) return;
+    if (!_canSubmitComment) {
+      _showMessage('댓글을 남길 모임을 먼저 선택해 주세요.');
+      return;
+    }
 
     setState(() => _isSubmittingComment = true);
     try {
@@ -151,6 +191,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         widget.record.id,
         content,
         parentCommentId: _replyTarget?.id,
+        groupId: _isPrivateRecord ? null : _selectedCommentGroupId,
       );
       if (!mounted) return;
       _commentController.clear();
@@ -164,8 +205,24 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   }
 
   void _selectReply(CommentItem comment) {
+    if (comment.groupId == null && !_isPrivateRecord) {
+      _showMessage('모임 미분류 댓글에는 답글을 작성할 수 없어요.');
+      return;
+    }
     setState(() => _replyTarget = comment);
+    if (!_isPrivateRecord) {
+      setState(() => _selectedCommentGroupId = comment.groupId);
+    }
     _commentFocusNode.requestFocus();
+  }
+
+  Future<void> _selectCommentGroup(String? groupId) async {
+    if (groupId == null || groupId == _selectedCommentGroupId) return;
+    setState(() {
+      _selectedCommentGroupId = groupId;
+      _replyTarget = null;
+    });
+    if (!widget.commentScopeAll) await _loadComments();
   }
 
   bool get _canManage => widget.canManage && widget.recordApi != null;
@@ -237,6 +294,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         focusNode: _commentFocusNode,
         onSubmit: _submitComment,
         isSubmitting: _isSubmittingComment,
+        isEnabled: _canSubmitComment,
         replyingToName: _replyTarget?.author.name,
         onCancelReply: () => setState(() => _replyTarget = null),
       ),
@@ -357,6 +415,16 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
+            if (!_isPrivateRecord &&
+                (widget.commentScopeAll || _needsCommentGroupSelection)) ...[
+              _CommentGroupSelector(
+                groups: record.sharedGroups,
+                selectedGroupId: _selectedCommentGroupId,
+                showRequiredHint: _needsCommentGroupSelection,
+                onChanged: _selectCommentGroup,
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
             Text(
               '댓글 $_commentCount',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -366,13 +434,12 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (_isCommentsLoading)
+            if (_needsCommentGroupSelection)
+              const _CommentsContextPrompt()
+            else if (_isCommentsLoading)
               const Center(child: CircularProgressIndicator())
             else if (_commentsError != null)
-              _CommentsError(
-                message: _commentsError!,
-                onRetry: _loadComments,
-              )
+              _CommentsError(message: _commentsError!, onRetry: _loadComments)
             else if (_comments.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
@@ -387,7 +454,10 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               for (final comment in _comments) ...[
                 CommentThread(
                   comment: comment,
-                  onReply: () => _selectReply(comment),
+                  showGroupLabel: widget.commentScopeAll,
+                  onReply: comment.groupId == null && !_isPrivateRecord
+                      ? null
+                      : () => _selectReply(comment),
                 ),
                 const SizedBox(height: AppSpacing.sm),
               ],
@@ -397,6 +467,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     );
   }
 }
+
 class _CommentsError extends StatelessWidget {
   const _CommentsError({required this.message, required this.onRetry});
 
@@ -411,6 +482,77 @@ class _CommentsError extends StatelessWidget {
         Text(message, style: const TextStyle(color: AppColors.muted)),
         TextButton(onPressed: onRetry, child: const Text('다시 시도')),
       ],
+    ),
+  );
+}
+
+class _CommentGroupSelector extends StatelessWidget {
+  const _CommentGroupSelector({
+    required this.groups,
+    required this.selectedGroupId,
+    required this.showRequiredHint,
+    required this.onChanged,
+  });
+
+  final List<Group> groups;
+  final String? selectedGroupId;
+  final bool showRequiredHint;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        '댓글을 남길 모임',
+        style: TextStyle(
+          color: AppColors.deepNavy,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: AppSpacing.xs),
+      DropdownButtonFormField<String>(
+        initialValue: selectedGroupId,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          filled: true,
+          fillColor: AppColors.surface,
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.xs,
+          ),
+        ),
+        hint: const Text('모임을 선택해 주세요'),
+        items: [
+          for (final group in groups)
+            DropdownMenuItem<String>(value: group.id, child: Text(group.name)),
+        ],
+        onChanged: onChanged,
+      ),
+      if (showRequiredHint)
+        const Padding(
+          padding: EdgeInsets.only(top: AppSpacing.xs),
+          child: Text(
+            '모임을 선택하면 해당 모임의 댓글만 볼 수 있어요.',
+            style: TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+        ),
+    ],
+  );
+}
+
+class _CommentsContextPrompt extends StatelessWidget {
+  const _CommentsContextPrompt();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+    child: Center(
+      child: Text(
+        '댓글을 확인할 모임을 선택해 주세요.',
+        style: TextStyle(color: AppColors.muted),
+      ),
     ),
   );
 }

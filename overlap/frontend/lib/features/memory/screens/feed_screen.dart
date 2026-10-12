@@ -199,9 +199,23 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _openRecordDetail(Record record) async {
+    final selectedGroupId = _selectedFilters.length == 1
+        ? _selectedFilters.single
+        : null;
+    final isMineOnly = selectedGroupId == 'mine';
+    final commentGroupId =
+        selectedGroupId != null &&
+            selectedGroupId != 'all' &&
+            selectedGroupId != 'mine'
+        ? selectedGroupId
+        : null;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => RecordDetailScreen(record: record),
+        builder: (_) => RecordDetailScreen(
+          record: record,
+          commentGroupId: commentGroupId,
+          commentScopeAll: isMineOnly,
+        ),
       ),
     );
     if (!mounted) return;

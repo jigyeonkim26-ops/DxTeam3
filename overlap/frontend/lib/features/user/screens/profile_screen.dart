@@ -155,6 +155,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           record: record,
           recordApi: _api,
           canManage: true,
+          commentScopeAll: true,
         ),
       ),
     );
