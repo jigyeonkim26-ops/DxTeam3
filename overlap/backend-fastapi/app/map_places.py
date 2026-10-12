@@ -17,6 +17,7 @@ class MapPlace(BaseModel):
     record_count: int
     has_mine: bool
     group_ids: list[int]
+    has_multi_group_record: bool
 
 
 def router(current_user):
@@ -37,17 +38,23 @@ def router(current_user):
         rows = [dict(row) for row in db.execute(query).mappings().all()]
         mine = set(db.scalars(select(Record.place_id).where(
             visibility(user.id), Record.author_id == user.id)))
-        memberships = db.execute(select(Record.place_id, RecordGroup.group_id)
+        memberships = db.execute(select(Record.place_id, Record.id, RecordGroup.group_id)
             .join(RecordGroup, RecordGroup.record_id == Record.id)
             .join(GroupMember, GroupMember.group_id == RecordGroup.group_id)
             .where(visibility(user.id), Record.is_private.is_(False),
                    GroupMember.user_id == user.id).distinct()).all()
         groups = {}
-        for place_id, group_id in memberships:
+        record_groups = {}
+        for place_id, record_id, group_id in memberships:
             groups.setdefault(place_id, set()).add(group_id)
+            record_groups.setdefault((place_id, record_id), set()).add(group_id)
+        # Count distinct joined groups per visible record, never per place.
+        multi_group_places = {place_id for (place_id, _), group_ids in record_groups.items()
+                              if len(group_ids) >= 2}
         for row in rows:
             row['has_mine'] = row['place_id'] in mine
             row['group_ids'] = sorted(groups.get(row['place_id'], set()))
+            row['has_multi_group_record'] = row['place_id'] in multi_group_places
         return rows
 
     return api

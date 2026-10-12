@@ -7,6 +7,8 @@ abstract final class MapGroupColors {
   static const green = '#6FAE8F';
   static const amber = '#F0B35D';
   static const purple = '#8C7BBD';
+  // User-confirmed Pear Sorbet: Color(0xFFF5EDC9).
+  static const pearSorbet = '#F5EDC9';
 
   static const fallback = deepNavy;
 }
@@ -25,6 +27,7 @@ class MapPlace {
     required this.filters,
     required this.groupColorHex,
     this.groupColorHexes = const [],
+    this.hasMultiGroupRecord = false,
   });
 
   final String id;
@@ -38,11 +41,16 @@ class MapPlace {
   final Set<MapFilter> filters;
   final String groupColorHex;
   final List<String> groupColorHexes;
+  final bool hasMultiGroupRecord;
 
   MapPlace forSelectedFilters(
     Set<MapFilter> selected,
-    List<MapFilter> available,
-  ) {
+    List<MapFilter> available, {
+    bool isAll = false,
+  }) {
+    if (isAll && hasMultiGroupRecord) {
+      return withColors([MapGroupColors.pearSorbet]);
+    }
     final colors = <String>{};
     for (final filter in available) {
       if (filter.groupId != null &&
@@ -54,7 +62,8 @@ class MapPlace {
       }
     }
     if (colors.isEmpty) colors.add(MapGroupColors.fallback);
-    return withColors(colors.toList());
+    // Multiple records at one place still produce one solid marker.
+    return withColors([colors.first]);
   }
 
   MapPlace withColors(List<String> colors) => MapPlace(
@@ -69,6 +78,7 @@ class MapPlace {
     filters: filters,
     groupColorHex: colors.isEmpty ? MapGroupColors.fallback : colors.first,
     groupColorHexes: colors,
+    hasMultiGroupRecord: hasMultiGroupRecord,
   );
 
   /// Converts the authenticated `/map/places` response into the map's
@@ -111,6 +121,7 @@ class MapPlace {
           if (id is int && id > 0) MapFilter.group(id, ''),
       },
       groupColorHex: MapGroupColors.fallback,
+      hasMultiGroupRecord: json['has_multi_group_record'] == true,
     );
   }
 
