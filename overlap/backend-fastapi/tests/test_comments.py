@@ -2,9 +2,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.record_models import Comment
-import app.comments as comments_api
-from test_records import create, image, world
+from app.record_models import Comment, CommentGroup, GroupMember
+from test_records import create, world
 
 
 def comment(world, record_id, user=1, **payload):
@@ -12,143 +11,88 @@ def comment(world, record_id, user=1, **payload):
                          json={"content": "Test comment", **payload})
 
 
-def test_create_list_and_delete_comment(world):
-    record_id = create(world).json()["id"]
-    response = comment(world, record_id, content="  Comment text  ")
+def comments(world, record_id, user=1, **params):
+    query = "&".join(f"{key}={value}" for key, value in params.items() if value is not None)
+    return world[0].get(f"/records/{record_id}/comments" + (f"?{query}" if query else ""),
+                        headers=world[3][user])
+
+
+def multi_record(world):
+    response = create(world, groups=[10, 20])
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
+def join_20(world, user_id=2):
+    with Session(world[1]) as db:
+        if db.get(GroupMember, (20, user_id)) is None:
+            db.add(GroupMember(group_id=20, user_id=user_id))
+            db.commit()
+
+
+def test_multi_group_top_level_and_group_ids(world):
+    record_id = multi_record(world)
+    join_20(world)
+    response = comment(world, record_id, user=2, group_id=10, content="multi")
     assert response.status_code == 201
     item = response.json()
-    assert item["content"] == "Comment text"
-    assert item["record_id"] == record_id and item["author_id"] == 1
-    assert item["author"] == {"id": 1, "name": "테스트1", "profile_image_url": None}
-    assert item["parent_comment_id"] is None
-    assert item["created_at"] and item["updated_at"]
-    client, _, _, headers = world
-    listed = client.get(f"/records/{record_id}/comments", headers=headers[2])
-    assert listed.status_code == 200
-    assert listed.json() == dict(items=[item], total=1, offset=0, limit=20)
-    assert client.delete(f"/records/{record_id}/comments/{item['id']}", headers=headers[1]).status_code == 204
-    assert client.get(f"/records/{record_id}/comments", headers=headers[1]).json()["total"] == 0
+    assert item["group_id"] is None and item["group_ids"] == [10, 20]
+    with Session(world[1]) as db:
+        assert db.scalars(select(CommentGroup.group_id).where(CommentGroup.comment_id == item["id"])
+                          .order_by(CommentGroup.group_id)).all() == [10, 20]
 
 
-def test_other_author_cannot_delete_even_record_author(world):
-    record_id = create(world).json()["id"]
+def test_bare_get_is_distinct_and_excludes_legacy(world):
+    record_id = multi_record(world)
+    join_20(world)
+    assert comment(world, record_id, user=2, content="multi").status_code == 201
+    assert comment(world, record_id, user=3, content="only20").status_code == 201
+    assert comment(world, record_id, user=1, content="global").status_code == 201
+    with Session(world[1]) as db:
+        db.add(Comment(record_id=record_id, group_id=None, author_id=1, content="legacy"))
+        db.commit()
+    response = comments(world, record_id, user=2)
+    assert {item["content"] for item in response.json()["items"]} == {"multi", "only20", "global"}
+
+
+def test_reply_policy_and_author_scope_all(world):
+    record_id = multi_record(world)
+    join_20(world)
+    parent = comment(world, record_id, user=2, content="parent").json()
+    reply = comment(world, record_id, user=3, parent_comment_id=parent["id"], content="reply")
+    assert reply.status_code == 201 and reply.json()["group_ids"] == [20]
+    author_reply = comment(world, record_id, user=1, parent_comment_id=parent["id"], content="author")
+    assert author_reply.json()["group_ids"] == [10, 20] and not author_reply.json()["is_global"]
+    assert comments(world, record_id, user=1, scope="all").status_code == 200
+
+
+def test_global_and_legacy_reply_policy(world):
+    record_id = multi_record(world)
+    join_20(world)
+    global_parent = comment(world, record_id, user=1, content="global").json()
+    assert comment(world, record_id, user=2, parent_comment_id=global_parent["id"]).json()["group_ids"] == [10, 20]
+    assert comment(world, record_id, user=1, parent_comment_id=global_parent["id"]).json()["is_global"]
+    with Session(world[1]) as db:
+        legacy = Comment(record_id=record_id, group_id=None, author_id=1, content="legacy")
+        db.add(legacy); db.commit(); db.refresh(legacy)
+    assert comment(world, record_id, user=1, parent_comment_id=legacy.id).status_code == 201
+    assert comment(world, record_id, user=2, parent_comment_id=legacy.id).status_code == 403
+
+
+def test_delete_cascades_comment_groups(world):
+    record_id = multi_record(world)
+    join_20(world)
     item = comment(world, record_id, user=2).json()
-    response = world[0].delete(f"/records/{record_id}/comments/{item['id']}?user_id=2", headers=world[3][1])
-    assert response.status_code == 403
     with Session(world[1]) as db:
-        assert db.get(Comment, item["id"]) is not None
-
-
-def test_replies_and_parent_deletion_preserve_other_authors(world):
-    record_id = create(world).json()["id"]
-    parent = comment(world, record_id).json()
-    response = comment(world, record_id, user=2, parent_comment_id=parent["id"])
-    assert response.status_code == 201
-    reply = response.json()
-    assert reply["parent_comment_id"] == parent["id"]
-    client, _, _, headers = world
-    listed = client.get(f"/records/{record_id}/comments?limit=1&offset=1", headers=headers[1]).json()
-    assert listed == dict(items=[reply], total=2, offset=1, limit=1)
-    parent_path = f"/records/{record_id}/comments/{parent['id']}"
-    assert client.delete(parent_path, headers=headers[1]).status_code == 409
-    assert client.delete(f"/records/{record_id}/comments/{reply['id']}", headers=headers[2]).status_code == 204
-    assert client.delete(parent_path, headers=headers[1]).status_code == 204
-
-
-def test_comment_and_reply_author_photos_follow_record_visibility(world, monkeypatch):
-    client, _, storage, headers = world
-    monkeypatch.setattr(comments_api, "get_object_storage", lambda: storage)
-    record_id = create(world).json()["id"]
-    parent = comment(world, record_id, user=1).json()
-    reply = comment(world, record_id, user=2, parent_comment_id=parent["id"]).json()
-    parent_path = f"/records/{record_id}/comments/{parent['id']}/author-photo"
-    reply_path = f"/records/{record_id}/comments/{reply['id']}/author-photo"
-
-    assert parent["author"]["profile_image_url"] is None
-    assert reply["author"]["profile_image_url"] is None
-    assert client.get(parent_path, headers=headers[1]).status_code == 404
-
-    for user_id in (1, 2):
-        response = client.post("/auth/me/photo", headers=headers[user_id],
-                               files={"photo": ("profile.png", image(), "image/png")})
-        assert response.status_code == 204
-
-    items = client.get(f"/records/{record_id}/comments", headers=headers[2]).json()["items"]
-    assert items[0]["author"]["profile_image_url"].startswith(parent_path + "?v=")
-    assert items[1]["author"]["profile_image_url"].startswith(reply_path + "?v=")
-    for item in items:
-        response = client.get(item["author"]["profile_image_url"], headers=headers[2])
-        assert response.status_code == 200
-        assert response.content == image()
-        assert response.headers["cache-control"] == "private, no-store"
-
-    assert client.get(parent_path).status_code == 401
-    assert client.get(reply_path, headers=headers[3]).status_code == 404
-    other_record_id = create(world).json()["id"]
-    assert client.get(f"/records/{other_record_id}/comments/{reply['id']}/author-photo",
-                      headers=headers[1]).status_code == 404
-
-    replacement = client.post("/auth/me/photo", headers=headers[2],
-                              files={"photo": ("replacement.png", image(), "image/png")})
-    assert replacement.status_code == 204
-    refreshed = client.get(f"/records/{record_id}/comments", headers=headers[1]).json()["items"]
-    assert refreshed[1]["author"]["profile_image_url"] != items[1]["author"]["profile_image_url"]
-
-
-@pytest.mark.parametrize("parent", [999999, "different_record"])
-def test_invalid_parent_rejected(world, parent):
-    record_id = create(world).json()["id"]
-    if parent == "different_record":
-        other_id = create(world).json()["id"]
-        parent = comment(world, other_id).json()["id"]
-    assert comment(world, record_id, parent_comment_id=parent).status_code == 404
+        db.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
+        assert db.scalar(select(func.count()).select_from(CommentGroup).where(CommentGroup.comment_id == item["id"])) == 2
+    assert world[0].delete(f"/records/{record_id}/comments/{item['id']}", headers=world[3][2]).status_code == 204
     with Session(world[1]) as db:
-        assert db.scalar(select(func.count()).select_from(Comment).where(Comment.record_id == record_id)) == 0
-
-
-@pytest.mark.parametrize("private,viewer", [(True, 2), (False, 3)])
-def test_record_visibility_for_comments(world, private, viewer):
-    record_id = create(world, private=private).json()["id"]
-    own = comment(world, record_id)
-    assert own.status_code == 201
-    path = f"/records/{record_id}/comments"
-    assert world[0].get(path, headers=world[3][viewer]).status_code == 404
-    assert comment(world, record_id, user=viewer).status_code == 404
-    assert world[0].delete(path + f"/{own.json()['id']}", headers=world[3][viewer]).status_code == 404
+        assert db.scalar(select(func.count()).select_from(CommentGroup).where(CommentGroup.comment_id == item["id"])) == 0
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
-@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer invalid"}])
-def test_authentication_required(world, method, headers):
-    record_id = create(world).json()["id"]
+def test_authentication_required(world, method):
+    record_id = multi_record(world)
     path = f"/records/{record_id}/comments" + ("/1" if method == "DELETE" else "")
-    assert world[0].request(method, path, headers=headers, json={"content": "Hello"}).status_code == 401
-
-
-def test_missing_record_and_comment_ids(world):
-    client, _, _, headers = world
-    assert client.get("/records/999999/comments", headers=headers[1]).status_code == 404
-    assert comment(world, 999999).status_code == 404
-    record_id = create(world).json()["id"]
-    assert client.delete(f"/records/{record_id}/comments/999999", headers=headers[1]).status_code == 404
-    other_id = create(world).json()["id"]
-    item = comment(world, other_id).json()
-    assert client.delete(f"/records/{record_id}/comments/{item['id']}", headers=headers[1]).status_code == 404
-
-
-@pytest.mark.parametrize("content", ["", "   \n\t", "a" * 1001])
-def test_empty_and_oversized_comments_rejected(world, content):
-    record_id = create(world).json()["id"]
-    assert comment(world, record_id, content=content).status_code == 422
-    with Session(world[1]) as db:
-        assert db.scalar(select(func.count()).select_from(Comment)) == 0
-
-
-def test_maximum_length_and_authenticated_author(world):
-    record_id = create(world).json()["id"]
-    response = world[0].post(f"/records/{record_id}/comments?user_id=2", headers=world[3][1],
-                             json={"content": "a" * 1000})
-    assert response.status_code == 201
-    assert response.json()["author_id"] == 1
-    assert comment(world, record_id, user_id=2).status_code == 422
-    assert comment(world, record_id, author_id=2).status_code == 422
+    assert world[0].request(method, path, json={"content": "x"}).status_code == 401

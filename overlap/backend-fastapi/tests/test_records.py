@@ -14,7 +14,7 @@ from app.db import Base, get_db
 from app.db_models import User
 from app.main import create_app
 from app.object_storage import UploadedPhoto, ObjectStorage
-from app.record_models import GroupMember, MemoryGroup, Record, RecordPhoto, RecordGroup
+from app.record_models import Comment, CommentGroup, GroupMember, MemoryGroup, Record, RecordPhoto, RecordGroup
 from app.security import hash_password
 import app.main as main_api
 import app.records as records_api
@@ -61,7 +61,13 @@ def world(monkeypatch):
             db.add(User(id=user_id, email=f"user{user_id}@test.example", nickname=f"테스트{user_id}",
                         gender="female", birth_date=date(1990, 1, 1), password_hash=hash_password("test-password")))
         db.add_all([MemoryGroup(id=10, name="실제 가입 모임"), MemoryGroup(id=20, name="미가입 모임")])
-        db.add_all([GroupMember(group_id=10, user_id=1), GroupMember(group_id=10, user_id=2), GroupMember(group_id=20, user_id=3)])
+        db.flush()
+        db.add_all([
+            GroupMember(group_id=10, user_id=1),
+            GroupMember(group_id=10, user_id=2),
+            GroupMember(group_id=20, user_id=1),
+            GroupMember(group_id=20, user_id=3),
+        ])
         db.commit()
     api = create_app(use_db_auth=True)
     def session():
@@ -507,6 +513,60 @@ def test_personalized_feed_and_private_visibility(world):
     assert client.get(own["photo_urls"][0], headers=headers[2]).status_code == 404
     assert client.get("/feed?group_id=20", headers=headers[1]).status_code == 403
     assert client.get("/feed").status_code == 401
+
+
+def test_feed_comment_count_respects_author_and_group_context(world):
+    client, engine, _, headers = world
+    record = create(world, user=1, groups=[10, 20]).json()
+    private_record = create(world, user=1, private=True).json()
+    with Session(engine) as db:
+        multi = Comment(record_id=record["id"], group_id=None, author_id=2, content="multi")
+        group_10 = Comment(record_id=record["id"], group_id=10, author_id=2, content="group 10")
+        group_20 = Comment(record_id=record["id"], group_id=20, author_id=3, content="group 20")
+        db.add_all([
+            multi, group_10, group_20,
+            Comment(record_id=record["id"], group_id=None, is_global=True, author_id=1, content="global"),
+            Comment(record_id=record["id"], group_id=None, author_id=2, content="legacy"),
+            Comment(record_id=private_record["id"], group_id=None, author_id=1, content="private"),
+        ])
+        db.flush()
+        db.add_all([
+            CommentGroup(comment_id=multi.id, group_id=10),
+            CommentGroup(comment_id=multi.id, group_id=20),
+            CommentGroup(comment_id=group_10.id, group_id=10),
+            CommentGroup(comment_id=group_20.id, group_id=20),
+        ])
+        db.commit()
+
+    author_items = client.get("/feed?mine=true", headers=headers[1]).json()["items"]
+    author_record = next(item for item in author_items if item["id"] == record["id"])
+    author_private = next(item for item in author_items if item["id"] == private_record["id"])
+    assert author_record["comment_count"] == 5
+    assert author_private["comment_count"] == 1
+
+    group_a_item = next(
+        item for item in client.get("/feed?group_id=10", headers=headers[2]).json()["items"]
+        if item["id"] == record["id"]
+    )
+    assert group_a_item["comment_count"] == 3
+    assert group_a_item["comment_context_group_id"] == 10
+
+    group_b_item = next(
+        item for item in client.get("/feed?group_id=20", headers=headers[3]).json()["items"]
+        if item["id"] == record["id"]
+    )
+    assert group_b_item["comment_count"] == 3
+    assert group_b_item["comment_context_group_id"] == 20
+
+    with Session(engine) as db:
+        db.add(GroupMember(group_id=20, user_id=2))
+        db.commit()
+    multi_viewer_item = next(
+        item for item in client.get("/feed", headers=headers[2]).json()["items"]
+        if item["id"] == record["id"]
+    )
+    assert multi_viewer_item["comment_count"] == 4
+    assert multi_viewer_item["comment_context_group_id"] is None
 
 
 def test_feed_filters_by_place_without_bypassing_visibility(world):

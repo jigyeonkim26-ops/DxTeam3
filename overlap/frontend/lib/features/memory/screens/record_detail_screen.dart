@@ -5,6 +5,7 @@ import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
 import '../widgets/record_author_avatar.dart';
+import '../../auth/services/auth_api_service.dart';
 import '../widgets/record_photo.dart';
 import '../services/record_api.dart';
 import '../services/record_likes_api.dart';
@@ -35,11 +36,15 @@ class RecordDetailScreen extends StatefulWidget {
     required this.record,
     this.recordApi,
     this.canManage = false,
+    this.commentGroupId,
+    this.commentScopeAll = false,
   });
 
   final Record record;
   final RecordApi? recordApi;
   final bool canManage;
+  final String? commentGroupId;
+  final bool commentScopeAll;
 
   @override
   State<RecordDetailScreen> createState() => _RecordDetailScreenState();
@@ -57,14 +62,15 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
   String? _commentsError;
   CommentItem? _replyTarget;
   bool _isDeleting = false;
-
+  String? _currentUserId;
+  bool _isResolvingCommentContext = true;
   @override
   void initState() {
     super.initState();
     _likeCount = widget.record.likeCount;
     _comments = [];
     _loadLikeState();
-    _loadComments();
+    _resolveCommentContext();
   }
 
   @override
@@ -78,6 +84,27 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
     0,
     (count, comment) => count + 1 + comment.replies.length,
   );
+
+  bool get _isPrivateRecord => widget.record.isPrivate;
+
+  bool get _isRecordAuthor => _currentUserId == widget.record.author.id;
+
+  bool get _effectiveCommentScopeAll =>
+      widget.commentScopeAll || _isRecordAuthor;
+
+  Future<void> _resolveCommentContext() async {
+    try {
+      final user = await AuthApiService.currentUser();
+      if (mounted) {
+        setState(() => _currentUserId = '${user.id}');
+      }
+    } on ApiException {
+      // Comment loading can still use the normal viewer endpoint.
+    } finally {
+      if (mounted) setState(() => _isResolvingCommentContext = false);
+      await _loadComments();
+    }
+  }
 
   Future<void> _loadLikeState() async {
     try {
@@ -121,7 +148,10 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
       });
     }
     try {
-      final items = await RecordCommentsApi.getComments(widget.record.id);
+      final items = await RecordCommentsApi.getComments(
+        widget.record.id,
+        scopeAll: _effectiveCommentScopeAll && !_isPrivateRecord,
+      );
       final byId = {for (final item in items) item.id: item};
       final roots = <CommentItem>[];
       for (final item in items) {
@@ -238,6 +268,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
         focusNode: _commentFocusNode,
         onSubmit: _submitComment,
         isSubmitting: _isSubmittingComment,
+        isEnabled: true,
         replyingToName: _replyTarget?.author.name,
         onCancelReply: () => setState(() => _replyTarget = null),
       ),
@@ -355,19 +386,6 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
                         height: 1.6,
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.md),
-                    Wrap(
-                      spacing: AppSpacing.xs,
-                      runSpacing: AppSpacing.xs,
-                      children: [
-                        _DetailChip(
-                          label:
-                              '${record.emotion.emoji} ${record.emotion.displayName}',
-                        ),
-                        for (final group in record.sharedGroups)
-                          _DetailChip(label: group.name),
-                      ],
-                    ),
                     const Divider(height: AppSpacing.lg),
                     Row(
                       children: [
@@ -413,13 +431,12 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (_isCommentsLoading)
+            if (_isResolvingCommentContext)
+              const Center(child: CircularProgressIndicator())
+            else if (_isCommentsLoading)
               const Center(child: CircularProgressIndicator())
             else if (_commentsError != null)
-              _CommentsError(
-                message: _commentsError!,
-                onRetry: _loadComments,
-              )
+              _CommentsError(message: _commentsError!, onRetry: _loadComments)
             else if (_comments.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
@@ -434,6 +451,7 @@ class _RecordDetailScreenState extends State<RecordDetailScreen> {
               for (final comment in _comments) ...[
                 CommentThread(
                   comment: comment,
+                  showGroupLabel: _effectiveCommentScopeAll,
                   onReply: () => _selectReply(comment),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -529,30 +547,6 @@ class _RecordAuthor extends StatelessWidget {
         ),
         Text(record.emotion.emoji, style: const TextStyle(fontSize: 28)),
       ],
-    );
-  }
-}
-
-class _DetailChip extends StatelessWidget {
-  const _DetailChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.paleMint,
-        borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: AppColors.deepNavy, fontSize: 12),
-      ),
     );
   }
 }

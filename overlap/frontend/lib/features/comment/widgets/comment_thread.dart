@@ -9,11 +9,13 @@ class CommentThread extends StatelessWidget {
   const CommentThread({
     super.key,
     required this.comment,
-    required this.onReply,
+    this.onReply,
+    this.showGroupLabel = false,
   });
 
   final CommentItem comment;
-  final VoidCallback onReply;
+  final VoidCallback? onReply;
+  final bool showGroupLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -23,21 +25,30 @@ class CommentThread extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _CommentContent(comment: comment, isReply: false),
-            TextButton.icon(
-              onPressed: onReply,
-              icon: const Icon(Icons.reply_outlined, size: 17),
-              label: const Text('답글'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.deepNavy,
-                padding: const EdgeInsets.only(top: AppSpacing.xs),
-              ),
+            _CommentContent(
+              comment: comment,
+              isReply: false,
+              showGroupLabel: showGroupLabel,
             ),
+            if (onReply != null)
+              TextButton.icon(
+                onPressed: onReply,
+                icon: const Icon(Icons.reply_outlined, size: 17),
+                label: const Text('답글'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.deepNavy,
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                ),
+              ),
             for (final reply in comment.replies) ...[
               const Divider(height: AppSpacing.md),
               Padding(
                 padding: const EdgeInsets.only(left: AppSpacing.md),
-                child: _CommentContent(comment: reply, isReply: true),
+                child: _CommentContent(
+                  comment: reply,
+                  isReply: true,
+                  showGroupLabel: showGroupLabel,
+                ),
               ),
             ],
           ],
@@ -48,13 +59,21 @@ class CommentThread extends StatelessWidget {
 }
 
 class _CommentContent extends StatelessWidget {
-  const _CommentContent({required this.comment, required this.isReply});
+  const _CommentContent({
+    required this.comment,
+    required this.isReply,
+    required this.showGroupLabel,
+  });
 
   final CommentItem comment;
   final bool isReply;
+  final bool showGroupLabel;
 
   @override
   Widget build(BuildContext context) {
+    final groupName = comment.groupName?.trim();
+    final shouldShowGroupLabel =
+        showGroupLabel && groupName != null && groupName.isNotEmpty;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -92,6 +111,10 @@ class _CommentContent extends StatelessWidget {
                   ),
                 ],
               ),
+              if (shouldShowGroupLabel) ...[
+                const SizedBox(height: AppSpacing.xxs),
+                _GroupLabel(name: groupName),
+              ],
               const SizedBox(height: AppSpacing.xxs),
               Text(
                 comment.content,
@@ -108,4 +131,32 @@ class _CommentContent extends StatelessWidget {
     final minute = time.minute.toString().padLeft(2, '0');
     return '오늘 ${time.hour}:$minute';
   }
+}
+
+class _GroupLabel extends StatelessWidget {
+  const _GroupLabel({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: AppColors.paleMint,
+      borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.xs,
+        vertical: 2,
+      ),
+      child: Text(
+        name,
+        style: const TextStyle(
+          color: AppColors.deepNavy,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+  );
 }

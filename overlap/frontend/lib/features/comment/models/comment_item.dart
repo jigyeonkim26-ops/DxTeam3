@@ -7,14 +7,23 @@ class CommentItem {
     required this.author,
     required this.createdAt,
     required this.content,
+    this.groupId,
+    List<String>? groupIds,
+    this.groupName,
+    this.isGlobal = false,
     this.parentCommentId,
     List<CommentItem>? replies,
-  }) : replies = replies ?? [];
+  }) : groupIds = groupIds ?? [],
+       replies = replies ?? [];
 
   final String id;
   final User author;
   final DateTime createdAt;
   final String content;
+  final String? groupId;
+  final List<String> groupIds;
+  final String? groupName;
+  final bool isGlobal;
   final String? parentCommentId;
   final List<CommentItem> replies;
 }

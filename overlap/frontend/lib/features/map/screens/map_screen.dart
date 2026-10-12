@@ -268,6 +268,15 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _openPlacePreview(MapPlace place) async {
     setState(() => _selectedPlace = place);
+    final selectedGroupIds = _selectedFilters
+        .map((filter) => filter.groupId)
+        .whereType<int>()
+        .toList(growable: false);
+    // A map filtered to one group has an unambiguous comment context.  Mixed
+    // and all-group map views deliberately preserve no context.
+    final sourceGroupId = selectedGroupIds.length == 1
+        ? '${selectedGroupIds.single}'
+        : null;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -282,6 +291,7 @@ class _MapScreenState extends State<MapScreen> {
                 name: place.name,
                 address: place.address,
                 recordCount: place.recordCount,
+                sourceGroupId: sourceGroupId,
               ),
             ),
           );

@@ -16,7 +16,7 @@ from .db import get_db
 from .db_models import User
 from .object_storage import get_object_storage
 from .notification_service import notify_group_members, notify_record_author
-from .record_models import GroupMember, MemoryGroup, Place, Record, RecordGroup, RecordLike, RecordPhoto
+from .record_models import Comment, CommentGroup, GroupMember, MemoryGroup, Place, Record, RecordGroup, RecordLike, RecordPhoto
 
 
 class RecordPlace(BaseModel):
@@ -81,7 +81,91 @@ def groups_for_user(db: Session, user_id: int):
             ).where(GroupMember.user_id == user_id).order_by(MemoryGroup.name))]
 
 
-def record_public(db: Session, record: Record, viewer_id: int):
+def _feed_comment_metadata(
+    db: Session,
+    records: list[Record],
+    viewer_id: int,
+    source_group_id: int | None,
+) -> dict[int, tuple[int, int | None]]:
+    """Return each record's viewer-safe comment count and comment context.
+
+    A record author can manage every comment on their record. A non-author
+    receives scoped comments plus the author's common (global) comments;
+    legacy NULL comments remain excluded.
+    """
+    if not records:
+        return {}
+
+    record_ids = [record.id for record in records]
+    visible_groups: dict[int, list[int]] = {record_id: [] for record_id in record_ids}
+    for record_id, group_id in db.execute(
+        select(RecordGroup.record_id, RecordGroup.group_id).join(
+            GroupMember, GroupMember.group_id == RecordGroup.group_id,
+        ).where(
+            RecordGroup.record_id.in_(record_ids),
+            GroupMember.user_id == viewer_id,
+        )
+    ):
+        visible_groups[record_id].append(group_id)
+
+    author_ids = [record.id for record in records if record.author_id == viewer_id]
+    all_counts = dict(db.execute(
+        select(Comment.record_id, func.count()).where(
+            Comment.record_id.in_(author_ids)
+        ).group_by(Comment.record_id)
+    ).all()) if author_ids else {}
+
+    contexts: dict[int, int | None] = {}
+    for record in records:
+        if record.author_id == viewer_id or record.is_private:
+            contexts[record.id] = None
+        elif source_group_id is not None:
+            contexts[record.id] = source_group_id
+        else:
+            groups = visible_groups[record.id]
+            contexts[record.id] = groups[0] if len(groups) == 1 else None
+
+    visible_comment_link = exists(select(CommentGroup.comment_id).join(
+        RecordGroup,
+        and_(
+            RecordGroup.record_id == Comment.record_id,
+            RecordGroup.group_id == CommentGroup.group_id,
+        ),
+    ).join(
+        GroupMember, GroupMember.group_id == CommentGroup.group_id,
+    ).where(
+        CommentGroup.comment_id == Comment.id,
+        GroupMember.user_id == viewer_id,
+    ))
+    viewer_record_ids = [record.id for record in records if record.author_id != viewer_id]
+    viewer_counts = dict(db.execute(
+        select(Comment.record_id, func.count(func.distinct(Comment.id))).where(
+            Comment.record_id.in_(viewer_record_ids),
+            or_(Comment.is_global.is_(True), visible_comment_link),
+        ).group_by(Comment.record_id)
+    ).all()) if viewer_record_ids else {}
+
+    metadata: dict[int, tuple[int, int | None]] = {}
+    for record in records:
+        context_group_id = contexts[record.id]
+        if record.author_id == viewer_id:
+            metadata[record.id] = (all_counts.get(record.id, 0), None)
+        else:
+            metadata[record.id] = (
+                viewer_counts.get(record.id, 0),
+                context_group_id,
+            )
+    return metadata
+
+
+def record_public(
+    db: Session,
+    record: Record,
+    viewer_id: int,
+    *,
+    comment_count: int | None = None,
+    comment_context_group_id: int | None = None,
+):
     author = db.get(User, record.author_id)
     place = db.get(Place, record.place_id)
     photos = db.scalars(select(RecordPhoto).where(RecordPhoto.record_id == record.id)
@@ -90,6 +174,10 @@ def record_public(db: Session, record: Record, viewer_id: int):
     groups = db.scalars(select(MemoryGroup).join(RecordGroup).join(
         GroupMember, GroupMember.group_id == MemoryGroup.id
     ).where(RecordGroup.record_id == record.id, GroupMember.user_id == viewer_id)).all()
+    if comment_count is None:
+        comment_count, comment_context_group_id = _feed_comment_metadata(
+            db, [record], viewer_id, None,
+        )[record.id]
     return dict(
         id=record.id,
         author=dict(
@@ -108,6 +196,8 @@ def record_public(db: Session, record: Record, viewer_id: int):
         created_at=record.created_at.isoformat() + "Z",
         photo_urls=[f"/records/{record.id}/photos/{p.id}" for p in photos],
         shared_groups=[dict(id=g.id, name=g.name) for g in groups],
+        comment_count=comment_count,
+        comment_context_group_id=comment_context_group_id,
     )
 
 
@@ -386,7 +476,22 @@ def router(current_user):
         total = db.scalar(select(func.count()).select_from(query.subquery()))
         records = db.scalars(query.order_by(Record.created_at.desc(), Record.id.desc())
                              .offset(offset).limit(limit)).all()
-        return dict(items=[record_public(db, r, user.id) for r in records], total=total, offset=offset, limit=limit)
+        comment_metadata = _feed_comment_metadata(db, records, user.id, group_id)
+        return dict(
+            items=[
+                record_public(
+                    db,
+                    record,
+                    user.id,
+                    comment_count=comment_metadata[record.id][0],
+                    comment_context_group_id=comment_metadata[record.id][1],
+                )
+                for record in records
+            ],
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
     @api.get("/records/{record_id}/photos/{photo_id}")
     def photo(record_id: int, photo_id: int, user=Depends(current_user), db: Session = Depends(require_db)):
