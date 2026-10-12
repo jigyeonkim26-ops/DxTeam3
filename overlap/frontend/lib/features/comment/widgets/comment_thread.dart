@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../memory/widgets/record_author_avatar.dart';
 import '../models/comment_item.dart';
 
 class CommentThread extends StatelessWidget {
@@ -54,23 +55,15 @@ class _CommentContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initial = comment.author.name.isEmpty
-        ? '?'
-        : comment.author.name.substring(0, 1);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        CircleAvatar(
+        RecordAuthorAvatar(
           radius: isReply ? 14 : 17,
+          name: comment.author.name,
+          profileImagePath: comment.author.profileImagePath,
           backgroundColor: isReply ? AppColors.paleMint : AppColors.softMint,
-          foregroundColor: AppColors.deepNavy,
-          child: Text(
-            initial,
-            style: TextStyle(
-              fontSize: isReply ? 12 : 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          initialFontSize: isReply ? 12 : 14,
         ),
         const SizedBox(width: AppSpacing.sm),
         Expanded(

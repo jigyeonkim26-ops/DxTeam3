@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:overlap_app/core/network/api_config.dart';
+import 'package:overlap_app/core/network/api_transport.dart';
 import 'package:overlap_app/features/memory/screens/record_detail_screen.dart';
 import 'package:overlap_app/features/memory/screens/record_edit_screen.dart';
 import 'package:overlap_app/features/memory/services/record_api.dart';
+import 'package:overlap_app/features/memory/widgets/record_author_avatar.dart';
 import 'package:overlap_app/shared/models/emotion.dart';
 import 'package:overlap_app/shared/models/record.dart';
 
@@ -34,6 +37,40 @@ Map<String, dynamic> _recordJson({
 };
 
 void main() {
+  testWidgets('record detail uses the author profile photo URL', (
+    tester,
+  ) async {
+    ApiTransport.setAccessToken('photo-token');
+    final record = Record.fromJson({
+      ..._recordJson(),
+      'author': {
+        'id': 7,
+        'name': 'Author',
+        'profile_image_url': '/records/1/author-photo?v=abc',
+      },
+      'photo_urls': <String>[],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: RecordDetailScreen(record: record)),
+    );
+
+    final avatar = tester.widget<RecordAuthorAvatar>(
+      find.byType(RecordAuthorAvatar),
+    );
+    expect(avatar.profileImagePath, '/records/1/author-photo?v=abc');
+    final image = tester.widget<Image>(
+      find.descendant(
+        of: find.byType(RecordAuthorAvatar),
+        matching: find.byType(Image),
+      ),
+    );
+    final provider = image.image as NetworkImage;
+    expect(provider.url, '${ApiConfig.baseUrl}/records/1/author-photo?v=abc');
+    expect(provider.headers?['Authorization'], 'Bearer photo-token');
+    ApiTransport.clearAccessToken();
+  });
+
   test(
     'update and delete use the authenticated API and signal record revision',
     () async {

@@ -1,7 +1,10 @@
 """Authenticated comments using the existing record visibility rules."""
 from datetime import datetime
+import hashlib
+import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +13,7 @@ from sqlalchemy.orm import Session
 from .db_models import User
 from .record_models import Comment
 from .notification_service import notify_record_author
+from .object_storage import get_object_storage
 from .records import require_db, require_visible_record
 
 
@@ -22,6 +26,7 @@ class CommentInput(BaseModel):
 class CommentAuthorPublic(BaseModel):
     id: int
     name: str
+    profile_image_url: str | None = None
 
 
 class CommentPublic(BaseModel):
@@ -43,7 +48,7 @@ class CommentPage(BaseModel):
 
 
 def comment_public(comment: Comment, author: User) -> CommentPublic:
-    return CommentPublic(
+    public = CommentPublic(
         id=comment.id,
         record_id=comment.record_id,
         author_id=comment.author_id,
@@ -53,6 +58,12 @@ def comment_public(comment: Comment, author: User) -> CommentPublic:
         updated_at=comment.updated_at,
         author=CommentAuthorPublic(id=author.id, name=author.nickname or "사용자"),
     )
+    if author.profile_image_key is not None:
+        version = hashlib.sha256(author.profile_image_key.encode()).hexdigest()[:16]
+        public.author.profile_image_url = (
+            f"/records/{comment.record_id}/comments/{comment.id}/author-photo?v={version}"
+        )
+    return public
 
 
 def router(current_user):
@@ -93,7 +104,32 @@ def router(current_user):
             db.rollback()
             raise HTTPException(409, "댓글을 저장하지 못했습니다. 다시 시도해 주세요.") from None
         db.refresh(comment)
-        return comment_public(comment, user)
+        return comment_public(comment, db.get(User, user.id))
+
+    @api.get("/records/{record_id}/comments/{comment_id}/author-photo")
+    def comment_author_photo(
+        record_id: int, comment_id: int,
+        user=Depends(current_user), db: Session = Depends(require_db),
+    ):
+        require_visible_record(db, record_id, user.id)
+        author = db.scalar(select(User).join(Comment, Comment.author_id == User.id).where(
+            Comment.id == comment_id, Comment.record_id == record_id))
+        if author is None or author.profile_image_key is None:
+            raise HTTPException(404, "등록된 프로필 사진이 없습니다.")
+        body = get_object_storage().download(author.profile_image_key)
+
+        def chunks():
+            try:
+                while chunk := body.read(64 * 1024):
+                    yield chunk
+            finally:
+                body.close()
+
+        media_type = mimetypes.guess_type(author.profile_image_key)[0] or "application/octet-stream"
+        return StreamingResponse(
+            chunks(), media_type=media_type,
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @api.delete("/records/{record_id}/comments/{comment_id}", status_code=204)
     def delete_comment(

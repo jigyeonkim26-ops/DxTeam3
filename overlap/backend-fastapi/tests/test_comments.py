@@ -3,7 +3,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.record_models import Comment
-from test_records import create, world
+import app.comments as comments_api
+from test_records import create, image, world
 
 
 def comment(world, record_id, user=1, **payload):
@@ -18,7 +19,7 @@ def test_create_list_and_delete_comment(world):
     item = response.json()
     assert item["content"] == "Comment text"
     assert item["record_id"] == record_id and item["author_id"] == 1
-    assert item["author"] == {"id": 1, "name": "테스트1"}
+    assert item["author"] == {"id": 1, "name": "테스트1", "profile_image_url": None}
     assert item["parent_comment_id"] is None
     assert item["created_at"] and item["updated_at"]
     client, _, _, headers = world
@@ -52,6 +53,46 @@ def test_replies_and_parent_deletion_preserve_other_authors(world):
     assert client.delete(parent_path, headers=headers[1]).status_code == 409
     assert client.delete(f"/records/{record_id}/comments/{reply['id']}", headers=headers[2]).status_code == 204
     assert client.delete(parent_path, headers=headers[1]).status_code == 204
+
+
+def test_comment_and_reply_author_photos_follow_record_visibility(world, monkeypatch):
+    client, _, storage, headers = world
+    monkeypatch.setattr(comments_api, "get_object_storage", lambda: storage)
+    record_id = create(world).json()["id"]
+    parent = comment(world, record_id, user=1).json()
+    reply = comment(world, record_id, user=2, parent_comment_id=parent["id"]).json()
+    parent_path = f"/records/{record_id}/comments/{parent['id']}/author-photo"
+    reply_path = f"/records/{record_id}/comments/{reply['id']}/author-photo"
+
+    assert parent["author"]["profile_image_url"] is None
+    assert reply["author"]["profile_image_url"] is None
+    assert client.get(parent_path, headers=headers[1]).status_code == 404
+
+    for user_id in (1, 2):
+        response = client.post("/auth/me/photo", headers=headers[user_id],
+                               files={"photo": ("profile.png", image(), "image/png")})
+        assert response.status_code == 204
+
+    items = client.get(f"/records/{record_id}/comments", headers=headers[2]).json()["items"]
+    assert items[0]["author"]["profile_image_url"].startswith(parent_path + "?v=")
+    assert items[1]["author"]["profile_image_url"].startswith(reply_path + "?v=")
+    for item in items:
+        response = client.get(item["author"]["profile_image_url"], headers=headers[2])
+        assert response.status_code == 200
+        assert response.content == image()
+        assert response.headers["cache-control"] == "private, no-store"
+
+    assert client.get(parent_path).status_code == 401
+    assert client.get(reply_path, headers=headers[3]).status_code == 404
+    other_record_id = create(world).json()["id"]
+    assert client.get(f"/records/{other_record_id}/comments/{reply['id']}/author-photo",
+                      headers=headers[1]).status_code == 404
+
+    replacement = client.post("/auth/me/photo", headers=headers[2],
+                              files={"photo": ("replacement.png", image(), "image/png")})
+    assert replacement.status_code == 204
+    refreshed = client.get(f"/records/{record_id}/comments", headers=headers[1]).json()["items"]
+    assert refreshed[1]["author"]["profile_image_url"] != items[1]["author"]["profile_image_url"]
 
 
 @pytest.mark.parametrize("parent", [999999, "different_record"])

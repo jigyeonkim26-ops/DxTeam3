@@ -51,7 +51,11 @@ abstract final class RecordCommentsApi {
     }
     return CommentItem(
       id: '${json['id']}',
-      author: User(id: '${author['id']}', name: author['name'] as String),
+      author: User(
+        id: '${author['id']}',
+        name: author['name'] as String,
+        profileImagePath: author['profile_image_url'] as String?,
+      ),
       createdAt: DateTime.parse(createdAt).toLocal(),
       content: json['content'] as String,
       parentCommentId: json['parent_comment_id']?.toString(),

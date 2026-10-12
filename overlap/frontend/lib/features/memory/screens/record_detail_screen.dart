@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
+import '../widgets/record_author_avatar.dart';
 import '../widgets/record_photo.dart';
 import '../services/record_api.dart';
 import '../services/record_likes_api.dart';
@@ -473,14 +474,10 @@ class _RecordAuthor extends StatelessWidget {
     final minute = record.createdAt.minute.toString().padLeft(2, '0');
     return Row(
       children: [
-        CircleAvatar(
+        RecordAuthorAvatar(
           radius: 21,
-          backgroundColor: AppColors.softMint,
-          foregroundColor: AppColors.deepNavy,
-          child: Text(
-            record.author.name.substring(0, 1),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+          name: record.author.name,
+          profileImagePath: record.author.profileImagePath,
         ),
         const SizedBox(width: AppSpacing.sm),
         Expanded(
