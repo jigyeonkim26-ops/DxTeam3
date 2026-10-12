@@ -129,6 +129,7 @@ class GroupMemberPublic(BaseModel):
     id: int
     nickname: str
     is_current_user: bool
+    profile_image_url: str | None = None
 
 
 class GroupCreated(GroupPublic):

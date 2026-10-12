@@ -1,8 +1,16 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .db_models import User
 from .notification_models import Notification, NotificationSettings
-from .record_models import Comment, GroupMember, Record, RecordGroup
+from .record_models import Comment, GroupMember, MemoryGroup, Record, RecordGroup
+
+
+def _nickname(db: Session, user_id: int) -> str:
+    user = db.get(User, user_id)
+    if user is not None and user.nickname and user.nickname.strip():
+        return user.nickname.strip()
+    return "사용자"
 
 
 def notify_record_author(db: Session, *, record_id: int, actor_id: int, event: str, parent_comment_id: int | None = None):
@@ -22,6 +30,7 @@ def notify_record_author(db: Session, *, record_id: int, actor_id: int, event: s
             if can_view:
                 recipients.add(parent.author_id)
     flag = "reactions_enabled" if event == "LIKE" else "comments_replies_enabled"
+    actor_name = _nickname(db, actor_id)
     for recipient_id in recipients - {actor_id}:
         settings = db.get(NotificationSettings, recipient_id)
         if settings is not None and not getattr(settings, flag):
@@ -29,7 +38,11 @@ def notify_record_author(db: Session, *, record_id: int, actor_id: int, event: s
         db.add(Notification(
             user_id=recipient_id, type=event,
             title="새 좋아요" if event == "LIKE" else "새 댓글",
-            message="기록에 좋아요가 추가되었습니다." if event == "LIKE" else "기록에 댓글이 작성되었습니다.",
+            message=(
+                "기록에 좋아요가 추가되었습니다."
+                if event == "LIKE"
+                else f"{actor_name}님이 회원님의 기록에 댓글을 남겼어요."
+            ),
             reference_type="RECORD", reference_id=record_id, is_read=False,
         ))
 
@@ -44,14 +57,33 @@ def notify_group_members(db: Session, *, group_ids: list[int], actor_id: int,
         GroupMember.notifications_enabled.is_(True),
     )))
     flag = "new_group_records_enabled" if record_id is not None else "group_updates_enabled"
+    actor_name = _nickname(db, actor_id)
+    group_names_by_recipient: dict[int, list[str]] = {}
+    if record_id is not None:
+        rows = db.execute(
+            select(GroupMember.user_id, MemoryGroup.name)
+            .join(MemoryGroup, MemoryGroup.id == GroupMember.group_id)
+            .where(
+                GroupMember.group_id.in_(group_ids),
+                GroupMember.user_id.in_(recipients),
+            )
+        ).all()
+        for user_id, name in rows:
+            group_names_by_recipient.setdefault(user_id, []).append(name)
     for recipient_id in recipients:
         settings = db.get(NotificationSettings, recipient_id)
         if settings is not None and not getattr(settings, flag):
             continue
+        group_names = group_names_by_recipient.get(recipient_id, [])
+        group_label = ", ".join(dict.fromkeys(group_names)) or "모임"
         db.add(Notification(
             user_id=recipient_id, type="GROUP_RECORD" if record_id is not None else "GROUP_UPDATE",
             title="새 모임 기록" if record_id is not None else "모임 업데이트",
-            message="모임에 새 기록이 공유되었습니다." if record_id is not None else "모임 정보 또는 가입자가 변경되었습니다.",
+            message=(
+                f"{actor_name}님이 {group_label} 모임에 새 기록을 남겼어요."
+                if record_id is not None
+                else "모임 정보 또는 가입자가 변경되었습니다."
+            ),
             reference_type="RECORD" if record_id is not None else "GROUP",
             reference_id=record_id if record_id is not None else group_ids[0], is_read=False,
         ))

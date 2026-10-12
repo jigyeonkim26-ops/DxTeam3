@@ -21,8 +21,10 @@ class GroupListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = isSelected ? '${group.name} · 현재 선택됨' : group.name;
-    final summary =
-        '멤버 ${group.memberCount}명 · ${group.placeCountDescription} · ${group.newRecordDescription}';
+    final summary = [
+      '멤버 ${group.memberCount}명 · ${group.placeCountDescription}',
+      if (group.newRecordDescription.isNotEmpty) group.newRecordDescription,
+    ].join(' · ');
 
     return Semantics(
       button: true,

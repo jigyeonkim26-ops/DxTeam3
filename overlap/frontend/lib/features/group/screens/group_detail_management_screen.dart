@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../../core/network/api_config.dart';
 import '../models/group_list_item_data.dart';
 import '../services/group_api_service.dart';
 import '../services/group_list_store.dart';
@@ -34,14 +35,12 @@ class _GroupDetailManagementScreenState
   ];
 
   final _nameController = TextEditingController();
-  final _descriptionController = TextEditingController();
   bool _isEditingName = false;
   bool _isSaving = false;
   bool _settingsInitialized = false;
   bool _isLoadingMembers = true;
   String? _membersError;
   int _memberLoadGeneration = 0;
-  String _visibility = 'INVITED_ONLY';
 
   @override
   void initState() {
@@ -53,7 +52,6 @@ class _GroupDetailManagementScreenState
   void dispose() {
     _memberLoadGeneration++;
     _nameController.dispose();
-    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -127,19 +125,6 @@ class _GroupDetailManagementScreenState
     });
   }
 
-  Future<void> _saveGroupDetails(GroupListItemData group) async {
-    await _runRequest(() async {
-      final updated = await GroupApiService.updateGroupDetails(
-        id: int.parse(group.id),
-        description: _descriptionController.text.trim().isEmpty
-            ? null
-            : _descriptionController.text.trim(),
-        visibility: _visibility,
-      );
-      _applyApiGroup(group, updated);
-    });
-  }
-
   Future<void> _toggleNotifications(GroupListItemData group) async {
     final isEnabled = !(group.notificationsEnabled ?? true);
     await _runRequest(() async {
@@ -207,8 +192,6 @@ class _GroupDetailManagementScreenState
     );
     if (!mounted) return;
     _nameController.text = updated.displayName ?? updated.name;
-    _descriptionController.text = updated.description ?? '';
-    _visibility = updated.visibility;
   }
 
   Future<void> _confirmLeave(GroupListItemData group) async {
@@ -255,13 +238,14 @@ class _GroupDetailManagementScreenState
 
         if (!_settingsInitialized) {
           _nameController.text = group.name;
-          _descriptionController.text = group.description ?? '';
-          _visibility = group.visibility;
           _settingsInitialized = true;
         }
         final isNotificationsEnabled = group.notificationsEnabled ?? true;
         final pinColorValue = group.pinColorValue ?? AppColors.coral.toARGB32();
-        final members = group.members;
+        final members = [
+          ...group.members.where((member) => member.isCurrentUser),
+          ...group.members.where((member) => !member.isCurrentUser),
+        ];
         final memberCount = members.isEmpty
             ? group.memberCount
             : members.length;
@@ -312,42 +296,17 @@ class _GroupDetailManagementScreenState
                       style: TextStyle(color: AppColors.muted, fontSize: 12),
                     ),
                   ),
-                  TextFormField(
-                    controller: _descriptionController,
-                    maxLength: 500,
-                    maxLines: 2,
-                    enabled: !_isSaving,
-                    decoration: const InputDecoration(labelText: '모임 소개'),
-                    onFieldSubmitted: (_) => _saveGroupDetails(group),
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: _visibility,
-                    decoration: const InputDecoration(labelText: '공유 범위'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'INVITED_ONLY',
-                        child: Text('초대받은 멤버만'),
+                  if (group.description?.trim().isNotEmpty == true) ...[
+                    Text(
+                      '모임 소개',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: AppColors.muted,
+                        fontWeight: FontWeight.w700,
                       ),
-                      DropdownMenuItem(
-                        value: 'LINK_REQUEST_ALLOWED',
-                        child: Text('링크를 가진 사람은 바로 참여 가능'),
-                      ),
-                    ],
-                    onChanged: _isSaving
-                        ? null
-                        : (value) => setState(
-                            () => _visibility = value ?? _visibility,
-                          ),
-                  ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _isSaving
-                          ? null
-                          : () => _saveGroupDetails(group),
-                      child: const Text('소개/공유 범위 저장'),
                     ),
-                  ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(group.description!.trim()),
+                  ],
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     '멤버 $memberCount명  ·  ${group.placeCountDescription}  ·  ${group.recordCountDescription}',
@@ -481,12 +440,7 @@ class _GroupMemberRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: AppColors.paleMint,
-            foregroundColor: AppColors.deepNavy,
-            child: _MemberInitial(initial: initial),
-          ),
+          _MemberAvatar(member: member, initial: initial),
           const SizedBox(width: AppSpacing.sm),
           Text(
             member.nickname,
@@ -517,6 +471,40 @@ class _GroupMemberRow extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _MemberAvatar extends StatelessWidget {
+  const _MemberAvatar({required this.member, required this.initial});
+
+  final GroupMemberData member;
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = member.profileImageUrl;
+    final token = ApiTransport.accessToken;
+    final fallback = CircleAvatar(
+      radius: 22,
+      backgroundColor: AppColors.paleMint,
+      foregroundColor: AppColors.deepNavy,
+      child: _MemberInitial(initial: initial),
+    );
+    if (path == null || path.isEmpty || token == null || token.isEmpty) {
+      return fallback;
+    }
+    return ClipOval(
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Image.network(
+          '${ApiConfig.baseUrl}$path',
+          headers: {'Authorization': 'Bearer $token'},
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => fallback,
+        ),
       ),
     );
   }

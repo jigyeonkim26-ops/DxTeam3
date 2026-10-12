@@ -44,8 +44,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
-from . import group_management_service, group_service
+from . import group_management_service, group_repository, group_service
 from .db import get_db
+from .db_models import User
 from .kakao import search_places
 from .object_storage import get_object_storage
 from .models import (
@@ -467,6 +468,32 @@ def create_app(service: MemoryService | None = None, *, use_db_auth: bool = Fals
                 detail="모임 멤버 조회는 데이터베이스 연결이 필요합니다.",
             )
         return group_service.list_members(db, user_id=user.id, group_id=group_id)
+
+    @api.get(
+        "/groups/{group_id}/members/{member_id}/photo",
+        tags=["2. 모임"],
+    )
+    def get_group_member_photo(
+        group_id: int,
+        member_id: int,
+        user: Annotated[UserPublic, Depends(current_user)],
+        db: Session | None = Depends(get_db),
+    ):
+        if db is None:
+            raise HTTPException(status_code=503, detail="데이터베이스 연결이 필요합니다.")
+        if not group_repository.is_member(db, group_id=group_id, user_id=user.id):
+            raise HTTPException(status_code=404, detail="가입한 모임을 찾을 수 없습니다.")
+        if not group_repository.is_member(db, group_id=group_id, user_id=member_id):
+            raise HTTPException(status_code=404, detail="모임 멤버를 찾을 수 없습니다.")
+        member = db.get(User, member_id)
+        if member is None or member.profile_image_key is None:
+            raise HTTPException(status_code=404, detail="프로필 사진을 찾을 수 없습니다.")
+        try:
+            body = get_object_storage().download(member.profile_image_key)
+        except Exception:
+            raise HTTPException(status_code=404, detail="프로필 사진을 찾을 수 없습니다.") from None
+        media_type = mimetypes.guess_type(member.profile_image_key)[0] or "application/octet-stream"
+        return StreamingResponse(body, media_type=media_type)
 
     @api.get(
         "/groups/{group_id}/invite",

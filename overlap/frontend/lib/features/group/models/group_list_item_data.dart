@@ -65,9 +65,7 @@ class GroupListItemData {
   }
 
   String get newRecordDescription {
-    if (newRecordCount == null) {
-      return '새 기록 기준 미정';
-    }
+    if (newRecordCount == null) return '';
     if (newRecordCount == 0) {
       return '새 기록 없음';
     }
@@ -92,9 +90,11 @@ class GroupMemberData {
     required this.id,
     required this.nickname,
     this.isCurrentUser = false,
+    this.profileImageUrl,
   });
 
   final String id;
   final String nickname;
   final bool isCurrentUser;
+  final String? profileImageUrl;
 }
