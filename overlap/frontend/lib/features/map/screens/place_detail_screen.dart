@@ -17,6 +17,7 @@ class PlaceDetailScreen extends StatefulWidget {
     required this.name,
     required this.address,
     required this.recordCount,
+    this.sourceGroupId,
     this.recordApi,
     this.savedPlacesApi,
   });
@@ -25,6 +26,7 @@ class PlaceDetailScreen extends StatefulWidget {
   final String name;
   final String? address;
   final int recordCount;
+  final String? sourceGroupId;
   final RecordApi? recordApi;
   final SavedPlacesApi? savedPlacesApi;
 
@@ -74,7 +76,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
       _hasRecordLoadError = false;
     });
     try {
-      final records = await _recordApi.feed(placeId: placeId);
+      final records = await _recordApi.feed(
+        placeId: placeId,
+        groupId: widget.sourceGroupId,
+      );
       final likeStates = await _loadLikeStates(records);
       if (!mounted) return;
       setState(() {
@@ -173,15 +178,20 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
       setState(() => _isSaved = state.saved);
     } on ApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
   Future<void> _openRecordDetail(Record record) async {
+    final commentGroupId = widget.sourceGroupId ?? record.commentContextGroupId;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => RecordDetailScreen(record: record)),
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            RecordDetailScreen(record: record, commentGroupId: commentGroupId),
+      ),
     );
     if (!mounted) return;
     try {
@@ -238,7 +248,9 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                         )
                       : Icon(
                           _isSaved ? Icons.bookmark : Icons.bookmark_border,
-                          color: _isSaved ? AppColors.coral : AppColors.deepNavy,
+                          color: _isSaved
+                              ? AppColors.coral
+                              : AppColors.deepNavy,
                         ),
                   tooltip: _isSaved ? '저장 취소' : '장소 저장',
                 ),

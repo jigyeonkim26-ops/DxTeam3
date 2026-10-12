@@ -17,6 +17,7 @@ class Record {
     this.isPrivate = false,
     this.likeCount = 0,
     this.commentCount = 0,
+    this.commentContextGroupId,
   });
 
   final String id;
@@ -30,6 +31,7 @@ class Record {
   final bool isPrivate;
   final int likeCount;
   final int commentCount;
+  final String? commentContextGroupId;
 
   factory Record.fromJson(Map<String, dynamic> json) {
     final author = json['author'] as Map;
@@ -53,6 +55,11 @@ class Record {
       emotion: Emotion.fromApi(json['emotion']),
       imagePaths: (json['photo_urls'] as List? ?? const []).cast<String>(),
       isPrivate: json['is_private'] as bool,
+      likeCount: (json['like_count'] as num?)?.toInt() ?? 0,
+      commentCount: (json['comment_count'] as num?)?.toInt() ?? 0,
+      commentContextGroupId: json['comment_context_group_id'] == null
+          ? null
+          : '${json['comment_context_group_id']}',
       sharedGroups: (json['shared_groups'] as List)
           .map((g) => Group(id: '${g['id']}', name: g['name'] as String))
           .toList(),

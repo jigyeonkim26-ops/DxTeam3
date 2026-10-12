@@ -1,7 +1,7 @@
 """Mappings for the existing MySQL record tables; no automatic schema creation."""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Integer, Boolean, DateTime, Numeric, String, Text, ForeignKey, text
+from sqlalchemy import BigInteger, Integer, Boolean, DateTime, Numeric, String, Text, ForeignKey, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -73,11 +73,34 @@ class Comment(Base):
         ForeignKey("memory_groups.id", ondelete="CASCADE"),
         nullable=True,
     )
+    is_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     parent_comment_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id"), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class CommentGroup(Base):
+    """Existing comment-to-group association table.
+
+    ``comments.group_id`` remains a compatibility field. This table is the
+    authoritative scope for shared-record comments and already exists in MySQL.
+    """
+
+    __tablename__ = "comment_groups"
+    __table_args__ = (Index("idx_comment_groups_group_comment", "group_id", "comment_id"),)
+
+    comment_id: Mapped[int] = mapped_column(
+        Id,
+        ForeignKey("comments.id", ondelete="CASCADE", onupdate="NO ACTION"),
+        primary_key=True,
+    )
+    group_id: Mapped[int] = mapped_column(
+        Id,
+        ForeignKey("memory_groups.id", ondelete="CASCADE", onupdate="NO ACTION"),
+        primary_key=True,
+    )
 
 
 class SavedPlace(Base):

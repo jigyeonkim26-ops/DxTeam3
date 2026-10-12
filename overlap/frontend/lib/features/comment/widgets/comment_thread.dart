@@ -73,6 +73,9 @@ class _CommentContent extends StatelessWidget {
     final initial = comment.author.name.isEmpty
         ? '?'
         : comment.author.name.substring(0, 1);
+    final groupName = comment.groupName?.trim();
+    final shouldShowGroupLabel =
+        showGroupLabel && groupName != null && groupName.isNotEmpty;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -115,9 +118,9 @@ class _CommentContent extends StatelessWidget {
                   ),
                 ],
               ),
-              if (showGroupLabel) ...[
+              if (shouldShowGroupLabel) ...[
                 const SizedBox(height: AppSpacing.xxs),
-                _GroupLabel(name: comment.groupName),
+                _GroupLabel(name: groupName),
               ],
               const SizedBox(height: AppSpacing.xxs),
               Text(
@@ -140,7 +143,7 @@ class _CommentContent extends StatelessWidget {
 class _GroupLabel extends StatelessWidget {
   const _GroupLabel({required this.name});
 
-  final String? name;
+  final String name;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -154,7 +157,7 @@ class _GroupLabel extends StatelessWidget {
         vertical: 2,
       ),
       child: Text(
-        name ?? '모임 미분류',
+        name,
         style: const TextStyle(
           color: AppColors.deepNavy,
           fontSize: 11,

@@ -202,13 +202,16 @@ class _FeedScreenState extends State<FeedScreen> {
     final selectedGroupId = _selectedFilters.length == 1
         ? _selectedFilters.single
         : null;
+    // The mine feed is backed by /feed?mine=true, which only returns records
+    // authored by the current user. It is therefore the explicit author-all
+    // comment-management context; other feed contexts are never scope=all.
     final isMineOnly = selectedGroupId == 'mine';
     final commentGroupId =
         selectedGroupId != null &&
             selectedGroupId != 'all' &&
             selectedGroupId != 'mine'
         ? selectedGroupId
-        : null;
+        : record.commentContextGroupId;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => RecordDetailScreen(

@@ -86,7 +86,11 @@ abstract final class RecordCommentsApi {
       createdAt: DateTime.parse(createdAt).toLocal(),
       content: json['content'] as String,
       groupId: json['group_id']?.toString(),
+      groupIds: (json['group_ids'] as List? ?? const [])
+          .map((groupId) => '$groupId')
+          .toList(growable: false),
       groupName: group == null ? null : group['name'] as String,
+      isGlobal: json['is_global'] == true,
       parentCommentId: json['parent_comment_id']?.toString(),
     );
   }
