@@ -18,7 +18,8 @@ abstract final class ApiTransport {
 
   static bool expireAccessToken() => ApiClient.expireSession();
 
-  static Future<dynamic> get(String path) => _send('GET', path);
+  static Future<dynamic> get(String path, {Duration? responseTimeout}) =>
+      _send('GET', path, responseTimeout: responseTimeout);
 
   static Future<dynamic> post(String path, {Object? body}) =>
       _send('POST', path, body: body);
@@ -35,6 +36,7 @@ abstract final class ApiTransport {
     String method,
     String path, {
     Object? body,
+    Duration? responseTimeout,
   }) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
@@ -48,7 +50,7 @@ abstract final class ApiTransport {
       if (body != null) request.write(jsonEncode(body));
 
       final response = await request.close().timeout(
-        const Duration(seconds: 15),
+        responseTimeout ?? const Duration(seconds: 15),
       );
       final responseBody = await utf8.decoder.bind(response).join();
       dynamic decoded;

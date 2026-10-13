@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/models/record.dart';
+import '../../ai/models/ai_place_recommendation.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../../memory/services/record_api.dart';
 import '../../memory/services/record_likes_api.dart';
@@ -20,6 +21,7 @@ class PlaceDetailScreen extends StatefulWidget {
     this.sourceGroupId,
     this.recordApi,
     this.savedPlacesApi,
+    this.recommendation,
   });
 
   final String placeId;
@@ -29,6 +31,7 @@ class PlaceDetailScreen extends StatefulWidget {
   final String? sourceGroupId;
   final RecordApi? recordApi;
   final SavedPlacesApi? savedPlacesApi;
+  final AiPlaceRecommendation? recommendation;
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
@@ -45,19 +48,66 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
   bool _isSaved = false;
   bool _isLoadingSavedState = true;
   bool _isSaving = false;
+  bool _lookupFailed = false;
+  int? _resolvedPlaceId;
+  int? _actualRecordCount;
 
-  int? get _placeId {
-    final placeId = int.tryParse(widget.placeId);
-    return placeId != null && placeId > 0 ? placeId : null;
-  }
+  int? get _placeId => _resolvedPlaceId;
 
   @override
   void initState() {
     super.initState();
     _recordApi = widget.recordApi ?? RecordApi();
     _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
-    _loadRecords();
-    _loadSavedState();
+    final initialId = int.tryParse(widget.placeId);
+    _resolvedPlaceId = initialId != null && initialId > 0 ? initialId : null;
+    _actualRecordCount = widget.recommendation == null ? widget.recordCount : null;
+    if (widget.recommendation != null) {
+      _loadKakaoState();
+    } else {
+      _loadRecords();
+      _loadSavedState();
+    }
+  }
+
+  Future<void> _loadKakaoState() async {
+    final kakaoId = widget.recommendation?.kakaoPlaceId;
+    if (kakaoId == null) {
+      if (mounted) {
+        setState(() {
+          _lookupFailed = true;
+          _isLoadingSavedState = false;
+          _isLoadingRecords = false;
+        });
+      }
+      return;
+    }
+    setState(() {
+      _lookupFailed = false;
+      _isLoadingSavedState = true;
+    });
+    try {
+      final lookup = await _savedPlacesApi.lookupKakao(kakaoId);
+      if (!mounted) return;
+      setState(() {
+        _resolvedPlaceId = lookup.placeId;
+        _actualRecordCount = lookup.recordCount;
+        _isSaved = lookup.saved;
+        _isLoadingSavedState = false;
+      });
+      if (lookup.placeId != null) {
+        _loadRecords();
+      } else {
+        setState(() => _isLoadingRecords = false);
+      }
+    } on ApiException {
+      if (!mounted) return;
+      setState(() {
+        _lookupFailed = true;
+        _isLoadingSavedState = false;
+        _isLoadingRecords = false;
+      });
+    }
   }
 
   Future<void> _loadRecords() async {
@@ -66,7 +116,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
       if (!mounted) return;
       setState(() {
         _isLoadingRecords = false;
-        _hasRecordLoadError = true;
+        _records = const [];
+        _hasRecordLoadError = widget.recommendation == null;
       });
       return;
     }
@@ -167,15 +218,26 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
 
   Future<void> _toggleSaved() async {
     final placeId = _placeId;
-    if (placeId == null || _isSaving || _isLoadingSavedState) return;
+    final recommendation = widget.recommendation;
+    if (_isSaving || _isLoadingSavedState || _lookupFailed ||
+        (placeId == null &&
+            (recommendation?.kakaoPlaceId == null || recommendation?.address == null))) {
+      return;
+    }
 
     setState(() => _isSaving = true);
     try {
       final state = _isSaved
-          ? await _savedPlacesApi.unsave(placeId)
-          : await _savedPlacesApi.save(placeId);
+          ? await _savedPlacesApi.unsave(placeId!)
+          : placeId != null
+          ? await _savedPlacesApi.save(placeId)
+          : await _savedPlacesApi.saveKakao(recommendation!.kakaoPlaceId!,
+              name: recommendation.name, address: recommendation.address!);
       if (!mounted) return;
-      setState(() => _isSaved = state.saved);
+      setState(() {
+        _resolvedPlaceId = state.placeId;
+        _isSaved = state.saved;
+      });
     } on ApiException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -237,7 +299,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _isSaving || _isLoadingSavedState
+                  onPressed: _isSaving || _isLoadingSavedState || _lookupFailed ||
+                          (widget.recommendation != null &&
+                              (widget.recommendation!.kakaoPlaceId == null ||
+                               widget.recommendation!.address == null))
                       ? null
                       : _toggleSaved,
                   icon: _isSaving || _isLoadingSavedState
@@ -260,8 +325,18 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
             _PlaceSummary(
               name: widget.name,
               address: widget.address,
-              recordCount: widget.recordCount,
+              recordCount: _actualRecordCount,
+              isAiRecommendation: widget.recommendation != null,
             ),
+            if (_lookupFailed)
+              TextButton(
+                onPressed: _loadKakaoState,
+                child: const Text('장소 정보를 불러오지 못했습니다. 다시 시도'),
+              ),
+            if (widget.recommendation != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              _AiRecommendationSummary(recommendation: widget.recommendation!),
+            ],
             const SizedBox(height: AppSpacing.lg),
             Text(
               '이 장소에 쌓인 기억',
@@ -293,7 +368,21 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                 ),
               )
             else if (_records.isEmpty)
-              const Center(child: Text('이 장소에 아직 기록이 없어요.'))
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
+                child: Center(
+                  child: Text(
+                    '이 장소에 아직 기록이 없어요.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 14,
+                      fontWeight: FontWeight.normal,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ),
+              )
             else
               for (final record in _records) ...[
                 RecordCard(
@@ -320,11 +409,13 @@ class _PlaceSummary extends StatelessWidget {
     required this.name,
     required this.address,
     required this.recordCount,
+    required this.isAiRecommendation,
   });
 
   final String name;
   final String? address;
-  final int recordCount;
+  final int? recordCount;
+  final bool isAiRecommendation;
 
   @override
   Widget build(BuildContext context) {
@@ -335,9 +426,9 @@ class _PlaceSummary extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'OVERLAPPED PLACE',
-              style: TextStyle(
+            Text(
+              isAiRecommendation ? 'AI 추천 장소' : 'OVERLAPPED PLACE',
+              style: const TextStyle(
                 color: AppColors.muted,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -366,16 +457,53 @@ class _PlaceSummary extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.md),
-            _SummaryChip(
-              icon: Icons.auto_stories_outlined,
-              label: '기록 $recordCount개',
-            ),
+            if (recordCount != null && (!isAiRecommendation || recordCount! > 0)) ...[
+              const SizedBox(height: AppSpacing.md),
+              _SummaryChip(
+                icon: Icons.auto_stories_outlined,
+                label: '기록 $recordCount개',
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+}
+
+class _AiRecommendationSummary extends StatelessWidget {
+  const _AiRecommendationSummary({required this.recommendation});
+
+  final AiPlaceRecommendation recommendation;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: AppColors.surface,
+    child: Padding(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('AI 추천 이유', style: TextStyle(
+            color: AppColors.deepNavy, fontSize: 16, fontWeight: FontWeight.w700,
+          )),
+          const SizedBox(height: AppSpacing.sm),
+          Text(recommendation.reason, style: const TextStyle(color: AppColors.muted)),
+          if (recommendation.matchedKeywords.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.md),
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: [
+                for (final keyword in recommendation.matchedKeywords)
+                  _SummaryChip(icon: Icons.auto_awesome, label: keyword),
+              ],
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class _SummaryChip extends StatelessWidget {

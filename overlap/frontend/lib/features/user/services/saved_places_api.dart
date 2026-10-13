@@ -5,19 +5,23 @@ import '../models/saved_place.dart';
 
 typedef SavedPlacesGet = Future<dynamic> Function(String path);
 typedef SavedPlacesMutation = Future<dynamic> Function(String path);
+typedef SavedKakaoMutation = Future<dynamic> Function(String path, Object body);
 
 class SavedPlacesApi {
   SavedPlacesApi({
     SavedPlacesGet? get,
     SavedPlacesMutation? post,
     SavedPlacesMutation? delete,
+    SavedKakaoMutation? postKakao,
   }) : _get = get ?? ApiTransport.get,
        _post = post ?? ((path) => ApiTransport.post(path)),
-       _delete = delete ?? ApiTransport.delete;
+       _delete = delete ?? ApiTransport.delete,
+       _postKakao = postKakao ?? ((path, body) => ApiTransport.post(path, body: body));
 
   final SavedPlacesGet _get;
   final SavedPlacesMutation _post;
   final SavedPlacesMutation _delete;
+  final SavedKakaoMutation _postKakao;
 
   static final revision = ValueNotifier<int>(0);
 
@@ -34,6 +38,28 @@ class SavedPlacesApi {
 
   Future<SavedPlaceState> unsave(int placeId) async {
     final state = _parseState(await _delete('/places/$placeId/saved'));
+    revision.value++;
+    return state;
+  }
+
+  Future<KakaoPlaceLookup> lookupKakao(String kakaoPlaceId) async {
+    final response = await _get('/places/kakao/${Uri.encodeComponent(kakaoPlaceId)}');
+    if (response is! Map) {
+      throw const ApiException('카카오 장소 응답을 확인할 수 없습니다.');
+    }
+    try {
+      return KakaoPlaceLookup.fromJson(Map<String, dynamic>.from(response));
+    } on FormatException {
+      throw const ApiException('카카오 장소 응답을 확인할 수 없습니다.');
+    }
+  }
+
+  Future<SavedPlaceState> saveKakao(String kakaoPlaceId, {required String name, required String address}) async {
+    final response = await _postKakao(
+      '/places/kakao/${Uri.encodeComponent(kakaoPlaceId)}/saved',
+      {'name': name, 'address': address},
+    );
+    final state = _parseState(response);
     revision.value++;
     return state;
   }

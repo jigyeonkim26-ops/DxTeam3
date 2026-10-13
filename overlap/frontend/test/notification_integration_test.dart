@@ -11,6 +11,13 @@ import 'package:overlap_app/features/notification/screens/notification_settings_
 import 'package:overlap_app/features/notification/widgets/notification_list_item.dart';
 import 'package:overlap_app/features/notification/widgets/notification_setting_tile.dart';
 import 'package:overlap_app/features/ai/screens/ai_recommendation_screen.dart';
+import 'package:overlap_app/features/ai/models/ai_place_recommendation.dart';
+import 'package:overlap_app/features/ai/services/ai_recommendations_api.dart';
+
+class _EmptyRecommendations extends AiRecommendationsApi {
+  @override
+  Future<List<AiPlaceRecommendation>> load() async => [];
+}
 
 Map<String, Object?> notification(int id, {bool read = false}) => {
   'id': id,
@@ -171,9 +178,10 @@ void main() {
     'AI displays empty results without mock recommendations or analysis',
     (tester) async {
       await tester.pumpWidget(
-        const MaterialApp(home: AiRecommendationScreen()),
+        MaterialApp(home: AiRecommendationScreen(api: _EmptyRecommendations())),
       );
-      expect(find.text('아직 추천 장소가 없어요.'), findsOneWidget);
+      await tester.pump();
+      expect(find.text('확인된 추천 장소가 없어요. 기록을 더 남긴 뒤 다시 시도해 주세요.'), findsOneWidget);
       expect(find.text('다른 장소 추천받기'), findsNothing);
       expect(find.text('최근 기록을\n분석했어요'), findsNothing);
       await tester.pumpWidget(const SizedBox());

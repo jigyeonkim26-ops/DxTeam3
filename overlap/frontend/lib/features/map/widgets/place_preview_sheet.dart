@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
+import '../../ai/models/ai_place_recommendation.dart';
 import '../models/map_place.dart';
 
 class PlacePreviewSheet extends StatelessWidget {
@@ -9,13 +10,22 @@ class PlacePreviewSheet extends StatelessWidget {
     super.key,
     required this.place,
     required this.onViewDetails,
-  });
+  }) : recommendation = null;
 
-  final MapPlace place;
+  const PlacePreviewSheet.recommendation({
+    super.key,
+    required this.recommendation,
+    required this.onViewDetails,
+  }) : place = null;
+
+  final MapPlace? place;
+  final AiPlaceRecommendation? recommendation;
   final VoidCallback onViewDetails;
 
   @override
   Widget build(BuildContext context) {
+    final recordedPlace = place;
+    final aiPlace = recommendation;
     return SafeArea(
       top: false,
       child: Container(
@@ -46,9 +56,9 @@ class PlacePreviewSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            const Text(
-              'OVERLAPPED PLACE',
-              style: TextStyle(
+            Text(
+              aiPlace == null ? 'OVERLAPPED PLACE' : 'AI 추천 장소',
+              style: const TextStyle(
                 color: AppColors.muted,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -60,7 +70,7 @@ class PlacePreviewSheet extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    place.name,
+                    aiPlace?.name ?? recordedPlace!.name,
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
@@ -68,7 +78,7 @@ class PlacePreviewSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-                Container(
+                if (recordedPlace != null) Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                     vertical: AppSpacing.xs,
@@ -77,20 +87,27 @@ class PlacePreviewSheet extends StatelessWidget {
                     color: AppColors.paleMint,
                     borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
                   ),
-                  child: Text('${place.recordCount}개의 기록'),
+                  child: Text('${recordedPlace.recordCount}개의 기록'),
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            Text(
-              place.author,
-              style: const TextStyle(
-                color: AppColors.deepNavy,
-                fontWeight: FontWeight.w700,
+            if (aiPlace != null)
+              Text(
+                aiPlace.address ?? '주소 정보 없음',
+                style: const TextStyle(color: AppColors.muted),
+              )
+            else ...[
+              Text(
+                recordedPlace!.author,
+                style: const TextStyle(
+                  color: AppColors.deepNavy,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.xxs),
-            Text(place.summary, style: const TextStyle(color: AppColors.muted)),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(recordedPlace.summary, style: const TextStyle(color: AppColors.muted)),
+            ],
             const SizedBox(height: AppSpacing.lg),
             SizedBox(
               width: double.infinity,

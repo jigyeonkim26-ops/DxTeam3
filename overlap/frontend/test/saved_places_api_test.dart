@@ -57,4 +57,23 @@ void main() {
     expect((await api.unsave(12)).saved, isFalse);
     expect(requests, ['POST /places/12/saved', 'DELETE /places/12/saved']);
   });
+
+  test('looks up a Kakao ID read-only and posts the verified snapshot only on save', () async {
+    final calls = <String>[];
+    final api = SavedPlacesApi(
+      get: (path) async {
+        calls.add('GET $path');
+        return {'place_id': null, 'saved': false, 'record_count': 0};
+      },
+      postKakao: (path, body) async {
+        calls.add('POST $path');
+        expect(body, {'name': '양림동 펭귄마을', 'address': '광주광역시 남구'});
+        return {'place_id': 77, 'saved': true, 'saved_count': 1};
+      },
+    );
+    expect((await api.lookupKakao('12345')).placeId, isNull);
+    expect(calls, ['GET /places/kakao/12345']);
+    expect((await api.saveKakao('12345', name: '양림동 펭귄마을', address: '광주광역시 남구')).placeId, 77);
+    expect(calls.last, 'POST /places/kakao/12345/saved');
+  });
 }

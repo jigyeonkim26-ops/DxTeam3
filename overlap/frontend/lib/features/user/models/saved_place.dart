@@ -77,3 +77,22 @@ class SavedPlaceState {
     );
   }
 }
+
+class KakaoPlaceLookup {
+  const KakaoPlaceLookup({required this.placeId, required this.saved, required this.recordCount});
+
+  final int? placeId;
+  final bool saved;
+  final int recordCount;
+
+  factory KakaoPlaceLookup.fromJson(Map<String, dynamic> json) {
+    final placeId = json['place_id'];
+    final saved = json['saved'];
+    final recordCount = json['record_count'];
+    if ((placeId != null && (placeId is! int || placeId <= 0)) ||
+        saved is! bool || recordCount is! int || recordCount < 0) {
+      throw const FormatException('Invalid Kakao place lookup response.');
+    }
+    return KakaoPlaceLookup(placeId: placeId as int?, saved: saved, recordCount: recordCount);
+  }
+}
