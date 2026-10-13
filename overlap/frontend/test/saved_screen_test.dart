@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:overlap_app/core/network/api_client.dart';
+import 'package:overlap_app/features/map/screens/place_detail_screen.dart';
 import 'package:overlap_app/features/user/screens/saved_screen.dart';
 import 'package:overlap_app/features/user/services/saved_places_api.dart';
 
@@ -34,9 +35,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('가보고 싶은 곳'), findsOneWidget);
+      expect(find.text('가보고 싶은 곳'), findsNothing);
+      expect(find.text('가보고 싶은 장소를 저장해두고 나중에 다시 찾아보세요.'), findsNothing);
       expect(find.text('광주실감콘텐츠큐브'), findsOneWidget);
       expect(find.text('내 기록'), findsNothing);
+      await tester.tap(find.text('광주실감콘텐츠큐브'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(PlaceDetailScreen), findsOneWidget);
     },
   );
 
@@ -83,7 +89,7 @@ void main() {
 
       expect(find.byType(AppBar), findsNothing);
       expect(find.text('Saved Park'), findsOneWidget);
-      await tester.tap(find.byTooltip('저장 취소'));
+      await tester.tap(find.text('삭제'));
       await tester.pumpAndSettle();
 
       expect(deletePath, '/places/12/saved');

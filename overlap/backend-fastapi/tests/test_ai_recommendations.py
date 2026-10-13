@@ -64,6 +64,11 @@ class Ranking:
         )])
 
 
+class NoRecommendationImages:
+    def enrich(self, db, user_id, response):
+        return response
+
+
 @pytest.fixture
 def world():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
@@ -88,7 +93,8 @@ def world():
     keywords, search, ranking = Keywords(), Search(), Ranking()
     api = create_app(use_db_auth=True, recommendation_adapter=RecordRecommendationAdapter(),
                      preference_service=keywords, place_search_service=search,
-                     place_verification_service=Verification(), place_recommendation_service=ranking)
+                     place_verification_service=Verification(), place_recommendation_service=ranking,
+                     recommendation_image_service=NoRecommendationImages())
     def session():
         with Session(engine) as db:
             yield db
@@ -114,6 +120,45 @@ def test_recommendations_use_only_current_users_positive_records(world):
     assert len(result) == 1 and result[0]["name"] == "광암교"
     assert result[0]["kakao_place_id"] == "12345"
     assert result[0]["latitude"] == 35.14 and result[0]["longitude"] == 126.91
+    assert result[0]["image_url"] is None
+    assert result[0]["image_origin_type"] == "placeholder"
+
+
+def test_refresh_excludes_previous_verified_ids_and_reuses_pool_when_exhausted(world, monkeypatch):
+    def verified_pool(self, hints, keywords, records):
+        return PlaceCandidateResponse(candidates=[
+            PlaceCandidate(
+                kakao_place_id=place_id,
+                name=f"verified-place-{index}",
+                address="region district",
+                latitude=35.0 + index / 1000,
+                longitude=126.0 + index / 1000,
+                matched_keywords=["interest"],
+                summary="Kakao-verified candidate",
+                source_url=f"https://place.map.kakao.com/{place_id}",
+            )
+            for index, place_id in enumerate(("12345", "23456", "34567", "45678"))
+        ])
+
+    monkeypatch.setattr(Verification, "verify", verified_pool)
+    client, headers, _, _, ranking = world
+    response = client.get(
+        "/ai/recommendations?exclude_place_ids=12345,23456,34567",
+        headers=headers["one"],
+    )
+    assert response.status_code == 200, response.text
+    assert [item.kakao_place_id for item in ranking.candidates.candidates] == ["45678"]
+    assert response.json()["recommendations"][0]["kakao_place_id"] == "45678"
+
+    exhausted = client.get(
+        "/ai/recommendations?exclude_place_ids=12345,23456,34567,45678&previous_place_ids=45678",
+        headers=headers["one"],
+    )
+    assert exhausted.status_code == 200, exhausted.text
+    assert [item.kakao_place_id for item in ranking.candidates.candidates] == [
+        "12345", "23456", "34567",
+    ]
+    assert response.json()["recommendations"][0]["kakao_place_id"] != exhausted.json()["recommendations"][0]["kakao_place_id"]
 
 
 def test_no_positive_records_returns_empty_without_provider_calls(world):

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_client.dart';
+import '../../map/screens/place_detail_screen.dart';
 import '../models/saved_place.dart';
 import '../services/saved_places_api.dart';
 
@@ -86,6 +87,13 @@ class _SavedScreenState extends State<SavedScreen> {
     setState(() {});
     try {
       await _savedPlacesApi.unsave(place.placeId);
+      if (mounted) {
+        setState(
+          () => _places = _places
+              .where((item) => item.placeId != place.placeId)
+              .toList(growable: false),
+        );
+      }
     } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -109,51 +117,13 @@ class _SavedScreenState extends State<SavedScreen> {
   @override
   Widget build(BuildContext context) {
     if (widget.embedded) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [_buildIntro(), _buildBody()],
-      );
+      return Column(mainAxisSize: MainAxisSize.min, children: [_buildBody()]);
     }
     return Scaffold(
       appBar: AppBar(title: const Text('저장한 장소')),
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            _buildIntro(),
-            Expanded(child: _buildBody()),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIntro() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.lg,
-        AppSpacing.lg,
-        AppSpacing.md,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '가보고 싶은 곳',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontSize: 27,
-              height: 1.25,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            '가보고 싶은 장소를 저장해두고 나중에 다시 찾아보세요.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              height: 1.65,
-            ),
-          ),
-        ],
+        child: Column(children: [Expanded(child: _buildBody())]),
       ),
     );
   }
@@ -203,6 +173,17 @@ class _SavedScreenState extends State<SavedScreen> {
         place: _places[index],
         isRemoving: _removingPlaceIds.contains(_places[index].placeId),
         onRemove: () => _removeSavedPlace(_places[index]),
+        onOpen: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => PlaceDetailScreen(
+              placeId: '${_places[index].placeId}',
+              name: _places[index].name,
+              address: _places[index].displayAddress,
+              recordCount: 0,
+              savedPlacesApi: _savedPlacesApi,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -213,66 +194,64 @@ class _SavedPlaceRow extends StatelessWidget {
     required this.place,
     required this.isRemoving,
     required this.onRemove,
+    required this.onOpen,
   });
 
   final SavedPlace place;
   final bool isRemoving;
   final VoidCallback onRemove;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: AppColors.softMint,
-              borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
+    return InkWell(
+      onTap: onOpen,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: AppColors.softMint,
+                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
+              ),
+              child: const Icon(Icons.bookmark, color: AppColors.deepNavy),
             ),
-            child: const Icon(
-              Icons.bookmark,
-              color: AppColors.deepNavy,
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  place.name,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (place.displayAddress case final address?) ...[
-                  const SizedBox(height: AppSpacing.xxs),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    address,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.muted,
-                      fontSize: 12,
-                    ),
+                    place.name,
+                    style: Theme.of(context).textTheme.bodyLarge
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
+                  if (place.displayAddress case final address?) ...[
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      address,
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: AppColors.muted, fontSize: 12),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: '저장 취소',
-            onPressed: isRemoving ? null : onRemove,
-            icon: isRemoving
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.bookmark_remove_outlined),
-          ),
-        ],
+            TextButton(
+              onPressed: isRemoving ? null : onRemove,
+              child: isRemoving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('삭제'),
+            ),
+          ],
+        ),
       ),
     );
   }

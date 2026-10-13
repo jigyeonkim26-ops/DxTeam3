@@ -112,6 +112,7 @@ def create_app(
     place_search_service=None,
     place_verification_service=None,
     place_recommendation_service=None,
+    recommendation_image_service=None,
 ) -> FastAPI:
     service = service if service is not None else MemoryService()
 
@@ -778,6 +779,7 @@ def create_app(
             search_service=place_search_service,
             verification_service=place_verification_service,
             recommendation_service=place_recommendation_service,
+            image_service=recommendation_image_service,
         )
     )
     return api

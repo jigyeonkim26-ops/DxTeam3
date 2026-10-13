@@ -21,11 +21,17 @@ from .record_models import Comment, CommentGroup, GroupMember, MemoryGroup, Plac
 
 class RecordPlace(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    kakao_place_id: str = Field(min_length=1, max_length=100, pattern=r"^\d+$")
+    kakao_place_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^\d+$")
     name: str = Field(min_length=1, max_length=150)
     address: str = Field(max_length=255)
     latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
     longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_manual_location(self):
+        if self.kakao_place_id is None and not self.address:
+            raise ValueError("직접 지정한 위치에는 확인된 주소가 필요합니다.")
+        return self
 
 
 class RecordInput(BaseModel):
@@ -291,10 +297,13 @@ def router(current_user):
         storage = get_object_storage()
         uploaded = []
         try:
+            provider = "kakao" if payload.place.kakao_place_id else "manual"
+            external_id = payload.place.kakao_place_id or (
+                f"{payload.place.latitude:.7f},{payload.place.longitude:.7f}")
             place = db.scalar(select(Place).where(
-                Place.provider == "kakao", Place.external_place_id == payload.place.kakao_place_id))
+                Place.provider == provider, Place.external_place_id == external_id))
             if place is None:
-                place = Place(provider="kakao", external_place_id=payload.place.kakao_place_id,
+                place = Place(provider=provider, external_place_id=external_id,
                               **payload.place.model_dump(exclude={"kakao_place_id"}))
                 # A concurrent record may insert the same Kakao place first.
                 try:
@@ -303,7 +312,7 @@ def router(current_user):
                         db.flush()
                 except IntegrityError:
                     place = db.scalar(select(Place).where(
-                        Place.provider == "kakao", Place.external_place_id == payload.place.kakao_place_id))
+                        Place.provider == provider, Place.external_place_id == external_id))
                     if place is None:
                         raise
             record = Record(author_id=user.id, place_id=place.id, content=payload.content,

@@ -19,6 +19,8 @@ class KakaoPlaceSelection {
     required this.roadAddress,
     required this.lotAddress,
     this.place,
+    this.nearbyPlaces = const [],
+    this.isAutoMatched = false,
   });
 
   final double latitude;
@@ -28,6 +30,8 @@ class KakaoPlaceSelection {
   final String roadAddress;
   final String lotAddress;
   final KakaoPlaceSearchResult? place;
+  final List<KakaoPlaceSearchResult> nearbyPlaces;
+  final bool isAutoMatched;
 }
 
 class KakaoPlaceSearchRequest {
@@ -109,6 +113,8 @@ class KakaoMapWebView extends StatefulWidget {
     this.selectionMode = false,
     this.initialLatitude = 37.5663,
     this.initialLongitude = 126.9779,
+    this.initialMapLevel = 5,
+    this.minimumBoundsLevel = 0,
     this.onLocationChanged,
     this.currentLocation,
     this.currentLocationRequestId = 0,
@@ -129,6 +135,8 @@ class KakaoMapWebView extends StatefulWidget {
   final bool selectionMode;
   final double initialLatitude;
   final double initialLongitude;
+  final int initialMapLevel;
+  final int minimumBoundsLevel;
   final void Function(double latitude, double longitude)? onLocationChanged;
   final ValueChanged<KakaoPlaceSelection>? onPlaceResolved;
   final KakaoPlaceSearchRequest? placeSearchRequest;
@@ -237,6 +245,8 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
               'selectionMode': widget.selectionMode.toString(),
               'latitude': widget.initialLatitude.toString(),
               'longitude': widget.initialLongitude.toString(),
+              'level': widget.initialMapLevel.toString(),
+              'minimumBoundsLevel': widget.minimumBoundsLevel.toString(),
             },
           ),
         );
@@ -271,6 +281,23 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
     if (!mounted) return;
     final decodedMessage = _decodeMessage(rawMessage);
+    if (decodedMessage case {
+      'type': 'currentLocationApplied',
+      'requestId': final int requestId,
+    }) {
+      debugPrint('[GPS_MAP] WebView applied request_id=$requestId');
+      return;
+    }
+    if (decodedMessage case {
+      'type': 'currentLocationRejected',
+      'requestId': final int requestId,
+      'reason': final String reason,
+    }) {
+      debugPrint(
+        '[GPS_MAP] WebView rejected request_id=$requestId reason=$reason',
+      );
+      return;
+    }
     if (decodedMessage case {
       'type': 'searchDebug',
       'message': final String message,
@@ -365,6 +392,13 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         roadAddress: roadAddress is String ? roadAddress : '',
         lotAddress: lotAddress is String ? lotAddress : '',
         place: _parseResolvedPlace(decodedMessage['place']),
+        nearbyPlaces: decodedMessage['nearbyPlaces'] is List
+            ? (decodedMessage['nearbyPlaces'] as List)
+                  .map(_parseResolvedPlace)
+                  .whereType<KakaoPlaceSearchResult>()
+                  .toList(growable: false)
+            : const [],
+        isAutoMatched: decodedMessage['isAutoMatched'] == true,
       );
       if (widget.selectionMode) {
         debugPrint('[PLACE_DEBUG] parsed placeName: ${selection.placeName}');
@@ -445,6 +479,13 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   }) async {
     final controller = _controller;
     if (!mounted || !_pageFinished || controller == null) {
+      if (currentLocationChanged && widget.currentLocation != null) {
+        debugPrint(
+          '[GPS_MAP] delivery deferred page_finished=$_pageFinished '
+          'controller_ready=${controller != null} '
+          'request_id=${widget.currentLocationRequestId}',
+        );
+      }
       return;
     }
     try {
@@ -475,12 +516,29 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       if (currentLocationChanged && widget.currentLocation != null) {
         final location = widget.currentLocation!;
         await controller.runJavaScript(
-          'setCurrentLocation(${jsonEncode({'latitude': location.latitude, 'longitude': location.longitude})});',
+          'setCurrentLocation('
+          '${jsonEncode({'latitude': location.latitude, 'longitude': location.longitude, 'accuracyMeters': location.accuracyMeters})}, '
+          '${widget.currentLocationRequestId});',
+        );
+        debugPrint(
+          '[GPS_MAP] delivery sent request_id=${widget.currentLocationRequestId}',
         );
       }
-    } on PlatformException {
+    } on PlatformException catch (error) {
+      if (currentLocationChanged) {
+        debugPrint(
+          '[GPS_MAP] delivery failed request_id=${widget.currentLocationRequestId} '
+          'platform_code=${error.code}',
+        );
+      }
       if (mounted) _showError('지도를 불러오지 못했습니다.');
-    } on Exception {
+    } on Exception catch (error) {
+      if (currentLocationChanged) {
+        debugPrint(
+          '[GPS_MAP] delivery failed request_id=${widget.currentLocationRequestId} '
+          'type=${error.runtimeType}',
+        );
+      }
       if (mounted) _showError('지도를 불러오지 못했습니다.');
     }
   }

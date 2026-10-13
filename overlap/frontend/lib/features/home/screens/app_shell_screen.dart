@@ -40,14 +40,6 @@ class _AppShellScreenState extends State<AppShellScreen> {
     });
   }
 
-  void _showMyMap() {
-    setState(() {
-      _selectedMapGroupId = null;
-      _requestedMapFilters = {MapFilter.mine};
-      _selectedIndex = 0;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
@@ -59,9 +51,10 @@ class _AppShellScreenState extends State<AppShellScreen> {
       RecordComposeScreen(
         onExitToMap: _showMap,
         onPublished: () => setState(() => _selectedIndex = 1),
+        isActive: _selectedIndex == 2,
       ),
       GroupsScreen(isActive: _selectedIndex == 3),
-      ProfileScreen(onShowMyMap: _showMyMap, isActive: _selectedIndex == 4),
+      ProfileScreen(isActive: _selectedIndex == 4),
     ];
     return Scaffold(
       body: Column(

@@ -18,6 +18,7 @@ class PlaceDetailScreen extends StatefulWidget {
     required this.name,
     required this.address,
     required this.recordCount,
+    this.kakaoPlaceId,
     this.sourceGroupId,
     this.recordApi,
     this.savedPlacesApi,
@@ -28,6 +29,7 @@ class PlaceDetailScreen extends StatefulWidget {
   final String name;
   final String? address;
   final int recordCount;
+  final String? kakaoPlaceId;
   final String? sourceGroupId;
   final RecordApi? recordApi;
   final SavedPlacesApi? savedPlacesApi;
@@ -61,8 +63,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
     _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
     final initialId = int.tryParse(widget.placeId);
     _resolvedPlaceId = initialId != null && initialId > 0 ? initialId : null;
-    _actualRecordCount = widget.recommendation == null ? widget.recordCount : null;
-    if (widget.recommendation != null) {
+    _actualRecordCount =
+        widget.kakaoPlaceId == null && widget.recommendation == null
+        ? widget.recordCount
+        : null;
+    if (widget.kakaoPlaceId != null || widget.recommendation != null) {
       _loadKakaoState();
     } else {
       _loadRecords();
@@ -71,7 +76,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
   }
 
   Future<void> _loadKakaoState() async {
-    final kakaoId = widget.recommendation?.kakaoPlaceId;
+    final kakaoId = widget.kakaoPlaceId ?? widget.recommendation?.kakaoPlaceId;
     if (kakaoId == null) {
       if (mounted) {
         setState(() {
@@ -117,7 +122,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
       setState(() {
         _isLoadingRecords = false;
         _records = const [];
-        _hasRecordLoadError = widget.recommendation == null;
+        _hasRecordLoadError =
+            widget.kakaoPlaceId == null && widget.recommendation == null;
       });
       return;
     }
@@ -135,6 +141,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
       if (!mounted) return;
       setState(() {
         _records = records;
+        _actualRecordCount = records.length;
         _likeStates = likeStates;
         _isLoadingRecords = false;
       });
@@ -218,10 +225,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
 
   Future<void> _toggleSaved() async {
     final placeId = _placeId;
-    final recommendation = widget.recommendation;
-    if (_isSaving || _isLoadingSavedState || _lookupFailed ||
-        (placeId == null &&
-            (recommendation?.kakaoPlaceId == null || recommendation?.address == null))) {
+    final kakaoId = widget.kakaoPlaceId ?? widget.recommendation?.kakaoPlaceId;
+    if (_isSaving ||
+        _isLoadingSavedState ||
+        _lookupFailed ||
+        (placeId == null && (kakaoId == null || widget.address == null))) {
       return;
     }
 
@@ -231,8 +239,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
           ? await _savedPlacesApi.unsave(placeId!)
           : placeId != null
           ? await _savedPlacesApi.save(placeId)
-          : await _savedPlacesApi.saveKakao(recommendation!.kakaoPlaceId!,
-              name: recommendation.name, address: recommendation.address!);
+          : await _savedPlacesApi.saveKakao(
+              kakaoId!,
+              name: widget.name,
+              address: widget.address!,
+            );
       if (!mounted) return;
       setState(() {
         _resolvedPlaceId = state.placeId;
@@ -299,10 +310,18 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _isSaving || _isLoadingSavedState || _lookupFailed ||
-                          (widget.recommendation != null &&
-                              (widget.recommendation!.kakaoPlaceId == null ||
-                               widget.recommendation!.address == null))
+                  onPressed:
+                      _isSaving ||
+                          _isLoadingSavedState ||
+                          _lookupFailed ||
+                          ((widget.kakaoPlaceId != null ||
+                                  widget.recommendation != null) &&
+                              ((widget.kakaoPlaceId ??
+                                          widget
+                                              .recommendation
+                                              ?.kakaoPlaceId) ==
+                                      null ||
+                                  widget.address == null))
                       ? null
                       : _toggleSaved,
                   icon: _isSaving || _isLoadingSavedState
@@ -457,7 +476,8 @@ class _PlaceSummary extends StatelessWidget {
                 ),
               ],
             ),
-            if (recordCount != null && (!isAiRecommendation || recordCount! > 0)) ...[
+            if (recordCount != null &&
+                (!isAiRecommendation || recordCount! > 0)) ...[
               const SizedBox(height: AppSpacing.md),
               _SummaryChip(
                 icon: Icons.auto_stories_outlined,
@@ -484,11 +504,19 @@ class _AiRecommendationSummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('AI 추천 이유', style: TextStyle(
-            color: AppColors.deepNavy, fontSize: 16, fontWeight: FontWeight.w700,
-          )),
+          const Text(
+            'AI 추천 이유',
+            style: TextStyle(
+              color: AppColors.deepNavy,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: AppSpacing.sm),
-          Text(recommendation.reason, style: const TextStyle(color: AppColors.muted)),
+          Text(
+            recommendation.reason,
+            style: const TextStyle(color: AppColors.muted),
+          ),
           if (recommendation.matchedKeywords.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.md),
             Wrap(

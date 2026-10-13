@@ -14,7 +14,7 @@ from app.db import Base, get_db
 from app.db_models import User
 from app.main import create_app
 from app.object_storage import UploadedPhoto, ObjectStorage
-from app.record_models import Comment, CommentGroup, GroupMember, MemoryGroup, Record, RecordPhoto, RecordGroup
+from app.record_models import Comment, CommentGroup, GroupMember, MemoryGroup, Place, Record, RecordPhoto, RecordGroup
 from app.security import hash_password
 import app.main as main_api
 import app.records as records_api
@@ -115,6 +115,22 @@ def test_record_save_and_photo_url(world):
         assert photo.file_size == len(image())
         assert db.scalar(select(func.count()).select_from(RecordGroup)) == 1
     assert world[0].get(response.json()["photo_urls"][0], headers=world[3][1]).content == image()
+
+
+def test_manual_coordinate_record_uses_confirmed_address_without_kakao_id(world):
+    manual_place = dict(name="선택한 위치", address="확인된 도로명 주소",
+                        latitude=35.1234567, longitude=126.7654321)
+    first = create(world, place=manual_place)
+    second = create(world, place=manual_place)
+    assert first.status_code == second.status_code == 201
+    with Session(world[1]) as db:
+        places = db.scalars(select(Place)).all()
+        assert len(places) == 1
+        assert places[0].provider == "manual"
+        assert places[0].external_place_id == "35.1234567,126.7654321"
+        assert places[0].address == manual_place["address"]
+        assert db.scalar(select(func.count()).select_from(Record)) == 2
+    assert create(world, place={**manual_place, "address": ""}).status_code == 422
 
 
 def test_author_updates_record_content_emotion_and_scope(world):

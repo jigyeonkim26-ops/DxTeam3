@@ -4,22 +4,33 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../ai/models/ai_place_recommendation.dart';
 import '../models/map_place.dart';
+import '../models/map_search_place.dart';
 
 class PlacePreviewSheet extends StatelessWidget {
   const PlacePreviewSheet({
     super.key,
     required this.place,
     required this.onViewDetails,
-  }) : recommendation = null;
+  }) : recommendation = null,
+       searchPlace = null;
+
+  const PlacePreviewSheet.search({
+    super.key,
+    required this.searchPlace,
+    required this.onViewDetails,
+  }) : place = null,
+       recommendation = null;
 
   const PlacePreviewSheet.recommendation({
     super.key,
     required this.recommendation,
     required this.onViewDetails,
-  }) : place = null;
+  }) : place = null,
+       searchPlace = null;
 
   final MapPlace? place;
   final AiPlaceRecommendation? recommendation;
+  final MapSearchPlace? searchPlace;
   final VoidCallback onViewDetails;
 
   @override
@@ -70,7 +81,7 @@ class PlacePreviewSheet extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    aiPlace?.name ?? recordedPlace!.name,
+                    aiPlace?.name ?? searchPlace?.name ?? recordedPlace!.name,
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
@@ -78,23 +89,26 @@ class PlacePreviewSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (recordedPlace != null) Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
+                if (recordedPlace != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: AppSpacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.paleMint,
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.pillRadius,
+                      ),
+                    ),
+                    child: Text('${recordedPlace.recordCount}개의 기록'),
                   ),
-                  decoration: BoxDecoration(
-                    color: AppColors.paleMint,
-                    borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-                  ),
-                  child: Text('${recordedPlace.recordCount}개의 기록'),
-                ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (aiPlace != null)
+            if (aiPlace != null || searchPlace != null)
               Text(
-                aiPlace.address ?? '주소 정보 없음',
+                aiPlace?.address ?? searchPlace?.address ?? '주소 정보 없음',
                 style: const TextStyle(color: AppColors.muted),
               )
             else ...[
@@ -106,7 +120,10 @@ class PlacePreviewSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: AppSpacing.xxs),
-              Text(recordedPlace.summary, style: const TextStyle(color: AppColors.muted)),
+              Text(
+                recordedPlace.summary,
+                style: const TextStyle(color: AppColors.muted),
+              ),
             ],
             const SizedBox(height: AppSpacing.lg),
             SizedBox(

@@ -39,6 +39,7 @@ void main() {
           currentLocation: const CurrentLocation(
             latitude: 35.1,
             longitude: 126.8,
+            accuracyMeters: 24,
           ),
           currentLocationRequestId: request,
           onLocationChanged: (latitude, longitude) {
@@ -95,7 +96,11 @@ void main() {
           null,
         );
       });
-      const a = CurrentLocation(latitude: 35.110713, longitude: 126.877803);
+      const a = CurrentLocation(
+        latitude: 35.110713,
+        longitude: 126.877803,
+        accuracyMeters: 24,
+      );
       const b = MapSearchPlace(
         id: 'B',
         name: 'Search B',
@@ -170,6 +175,9 @@ void main() {
       expect(state['activeCurrentPins'], 1);
       expect(state['activeSearchPins'], 1);
       expect(state['searchPosition'], [b.latitude, b.longitude]);
+      expect(state['accuracyRadii'], everyElement(24));
+      expect(state['accuracyRadii'], hasLength(2));
+      expect(state['boundsCalls'], 0);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() async {
         await Future<void>.delayed(Duration.zero);
@@ -181,11 +189,13 @@ void main() {
 const _harness = r'''
 const vm = require('vm');
 const payload = JSON.parse(process.env.MAP_TEST_PAYLOAD);
-const centers = [], overlays = [];
+const centers = [], overlays = [], accuracyRadii = [], bounds = [];
 const context = {
-  document: {getElementById: () => ({}), createElement: () => ({appendChild() {}, addEventListener() {}})},
+  document: {getElementById: () => ({}), createElement: () => ({appendChild() {}, addEventListener() {}, style: {setProperty() {}}})},
   kakao: {maps: {
     LatLng: function(lat, lng) {this.lat = lat; this.lng = lng;},
+    LatLngBounds: function() {this.extend = () => {}; this.getSouthWest = () => ({});},
+    Circle: function(options) {Object.assign(this, options); accuracyRadii.push(options.radius); this.setMap = map => {this.map = map;};},
     CustomOverlay: function(options) {
       Object.assign(this, options);
       this.setMap = map => {this.map = map;};
@@ -195,13 +205,15 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(payload.script, context);
-context.map = {setCenter: p => centers.push([p.lat, p.lng]), setLevel() {}};
+context.map = {setCenter: p => centers.push([p.lat, p.lng]), setLevel() {}, setBounds: value => bounds.push(value), getLevel: () => 3};
 for (const command of payload.commands) vm.runInContext(command, context);
+vm.runInContext('setPlaces([{id:"record-1", recordCount:1, latitude:35, longitude:127, groupColorHex:"#14364A"}])', context);
 const active = className => overlays.filter(o => o.map && o.content.className === className);
 console.log(JSON.stringify({centers,
   activeCurrentPins: active('current-location-marker').length,
   activeSearchPins: active('search-marker').length,
   searchPosition: [context.searchOverlay.position.lat, context.searchOverlay.position.lng],
+  accuracyRadii, boundsCalls: bounds.length,
 }));
 ''';
 

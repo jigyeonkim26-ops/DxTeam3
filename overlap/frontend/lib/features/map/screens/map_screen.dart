@@ -20,6 +20,7 @@ import '../widgets/map_view.dart';
 import '../widgets/place_preview_sheet.dart';
 import '../services/current_location_service.dart';
 import '../services/map_places_api.dart';
+import '../services/place_search_api.dart';
 import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
 
@@ -33,6 +34,7 @@ class MapScreen extends StatefulWidget {
     this.aiRecommendationsApi,
     this.savedPlacesApi,
     this.placeRecordApi,
+    this.placeSearchApi,
   });
 
   final String? selectedGroupId;
@@ -42,6 +44,7 @@ class MapScreen extends StatefulWidget {
   final AiRecommendationsApi? aiRecommendationsApi;
   final SavedPlacesApi? savedPlacesApi;
   final RecordApi? placeRecordApi;
+  final PlaceSearchApi? placeSearchApi;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -77,7 +80,14 @@ class _MapScreenState extends State<MapScreen> {
         _currentLocation = location;
         _currentLocationRequestId++;
       });
+      debugPrint(
+        '[GPS_MAP] location ready for map request_id=$_currentLocationRequestId '
+        'coordinates_valid=${location.hasValidCoordinates}',
+      );
     } on CurrentLocationFailure catch (failure) {
+      debugPrint(
+        '[GPS_MAP] location request failed reason=${failure.reason.name}',
+      );
       if (!mounted) return;
       final message = switch (failure.reason) {
         CurrentLocationFailureReason.serviceDisabled => '위치 서비스를 켜주세요.',
@@ -86,11 +96,14 @@ class _MapScreenState extends State<MapScreen> {
         CurrentLocationFailureReason.permissionPermanentlyDenied =>
           '위치 권한이 영구적으로 거부되었습니다. 설정에서 허용해주세요.',
         CurrentLocationFailureReason.timeout ||
+        CurrentLocationFailureReason.inaccurate ||
+        CurrentLocationFailureReason.stale ||
         CurrentLocationFailureReason.unavailable =>
           '현재 위치를 확인하지 못했습니다. 다시 시도해주세요.',
       };
       _showMessage(message);
     } catch (_) {
+      debugPrint('[GPS_MAP] location request failed type=unexpected');
       if (mounted) {
         _showMessage('현재 위치를 확인하지 못했습니다. 다시 시도해주세요.');
       }
@@ -312,7 +325,9 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _openPlaceSearch() async {
     final selectedPlace = await Navigator.of(context).push<Place>(
-      MaterialPageRoute<Place>(builder: (_) => const PlaceSearchScreen()),
+      MaterialPageRoute<Place>(
+        builder: (_) => PlaceSearchScreen(searchApi: widget.placeSearchApi),
+      ),
     );
     if (!mounted || selectedPlace == null) return;
     final searchPlace = MapSearchPlace.fromPlace(selectedPlace);
@@ -320,7 +335,31 @@ class _MapScreenState extends State<MapScreen> {
       _showMessage('선택한 장소의 좌표가 올바르지 않습니다.');
       return;
     }
-    setState(() => _selectedSearchPlace = searchPlace);
+    await _showPlaceOnMap(selectedPlace);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => PlacePreviewSheet.search(
+        searchPlace: searchPlace,
+        onViewDetails: () {
+          Navigator.pop(sheetContext);
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => PlaceDetailScreen(
+                placeId: '',
+                kakaoPlaceId: selectedPlace.id,
+                name: selectedPlace.name,
+                address: selectedPlace.address,
+                recordCount: 0,
+                savedPlacesApi: widget.savedPlacesApi,
+                recordApi: widget.placeRecordApi,
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _showPlaceOnMap(Place place) async {
@@ -339,18 +378,22 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  Future<void> _showRecommendedPlaceOnMap(AiPlaceRecommendation recommendation) async {
+  Future<void> _showRecommendedPlaceOnMap(
+    AiPlaceRecommendation recommendation,
+  ) async {
     final kakaoId = recommendation.kakaoPlaceId;
     final latitude = recommendation.latitude;
     final longitude = recommendation.longitude;
     if (kakaoId == null || latitude == null || longitude == null) return;
-    await _showPlaceOnMap(Place(
-      id: kakaoId,
-      name: recommendation.name,
-      address: recommendation.address,
-      latitude: latitude,
-      longitude: longitude,
-    ));
+    await _showPlaceOnMap(
+      Place(
+        id: kakaoId,
+        name: recommendation.name,
+        address: recommendation.address,
+        latitude: latitude,
+        longitude: longitude,
+      ),
+    );
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -359,17 +402,20 @@ class _MapScreenState extends State<MapScreen> {
         recommendation: recommendation,
         onViewDetails: () {
           Navigator.pop(sheetContext);
-          Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => PlaceDetailScreen(
-              placeId: '',
-              name: recommendation.name,
-              address: recommendation.address,
-              recordCount: 0,
-              recommendation: recommendation,
-              savedPlacesApi: widget.savedPlacesApi,
-              recordApi: widget.placeRecordApi,
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => PlaceDetailScreen(
+                placeId: '',
+                kakaoPlaceId: kakaoId,
+                name: recommendation.name,
+                address: recommendation.address,
+                recordCount: 0,
+                recommendation: recommendation,
+                savedPlacesApi: widget.savedPlacesApi,
+                recordApi: widget.placeRecordApi,
+              ),
             ),
-          ));
+          );
         },
       ),
     );
@@ -421,7 +467,8 @@ class _MapScreenState extends State<MapScreen> {
                   child: _RoundIconButton(
                     icon: Icons.my_location,
                     tooltip: '현재 위치',
-                    onTap: _goToCurrentLocation,
+                    isLoading: _isLocating,
+                    onTap: _isLocating ? null : _goToCurrentLocation,
                   ),
                 ),
               ),
@@ -546,11 +593,13 @@ class _RoundIconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onTap,
+    this.isLoading = false,
   });
 
   final IconData icon;
   final String tooltip;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -569,7 +618,12 @@ class _RoundIconButton extends StatelessWidget {
           child: SizedBox(
             width: 44,
             height: 44,
-            child: Icon(icon, color: foreground, size: 21),
+            child: isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(icon, color: foreground, size: 21),
           ),
         ),
       ),

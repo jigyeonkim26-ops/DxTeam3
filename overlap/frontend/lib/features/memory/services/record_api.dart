@@ -111,7 +111,7 @@ class RecordApi {
           ..headers.addAll(_headers)
           ..fields['data'] = jsonEncode({
             'place': {
-              'kakao_place_id': place.id,
+              if (place.id.isNotEmpty) 'kakao_place_id': place.id,
               'name': place.name,
               'address': place.address ?? '',
               'latitude': place.latitude,

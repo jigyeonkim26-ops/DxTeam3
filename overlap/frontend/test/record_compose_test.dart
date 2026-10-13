@@ -17,7 +17,193 @@ import 'record_api_test.dart' show recordJson;
 
 void main() {
   testWidgets(
-    'map resolution replaces a searched place with real ID and saves without a new search',
+    'a moved pin saves its confirmed address and coordinates without a Kakao ID',
+    (tester) async {
+      GroupListStore.replaceGroups(const []);
+      addTearDown(GroupListStore.clear);
+      const config = MethodChannel('overlap/kakao_config');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        config,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          config,
+          null,
+        ),
+      );
+      await tester.binding.setSurfaceSize(const Size(900, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var saves = 0;
+      final api = RecordApi(
+        tokenProvider: () => 'offline-token',
+        client: MockClient((request) async {
+          if (request.method == 'GET') return http.Response('[]', 200);
+          saves++;
+          final body = utf8.decode(request.bodyBytes, allowMalformed: true);
+          expect(body, isNot(contains('"kakao_place_id"')));
+          expect(body, contains('"latitude":35.2'));
+          expect(body, contains('"longitude":126.9'));
+          expect(body, contains('"address":"확인된 주소"'));
+          return http.Response(
+            jsonEncode(recordJson()),
+            201,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RecordComposeScreen(
+              onExitToMap: () {},
+              recordApi: api,
+              pickPhotos: (_) async => [
+                XFile.fromData(
+                  base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  ),
+                  path: 'photo.png',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('갤러리'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('좋아요'));
+      final map = tester.widget<KakaoMapWebView>(find.byType(KakaoMapWebView));
+      map.onLocationChanged!(35.2, 126.9);
+      map.onPlaceResolved!(
+        const KakaoPlaceSelection(
+          latitude: 35.2,
+          longitude: 126.9,
+          placeName: '',
+          buildingName: '',
+          roadAddress: '확인된 주소',
+          lotAddress: '',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('선택 위치'), findsNothing);
+      expect(find.text('장소 검색'), findsNothing);
+      expect(find.text('35.200000, 126.900000'), findsNothing);
+      expect(find.text('확인된 주소'), findsWidgets);
+      await tester.ensureVisible(find.byType(SwitchListTile));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.ensureVisible(find.text('기록 남기기'));
+      await tester.tap(find.text('기록 남기기'));
+      await tester.pumpAndSettle();
+      expect(saves, 1);
+    },
+  );
+
+  testWidgets(
+    'confidently matched Kakao place is shown and saved with verified ID and coordinates',
+    (tester) async {
+      GroupListStore.replaceGroups(const []);
+      addTearDown(GroupListStore.clear);
+      const config = MethodChannel('overlap/kakao_config');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        config,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          config,
+          null,
+        ),
+      );
+      await tester.binding.setSurfaceSize(const Size(900, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var saves = 0;
+      final api = RecordApi(
+        tokenProvider: () => 'offline-token',
+        client: MockClient((request) async {
+          if (request.method == 'GET') return http.Response('[]', 200);
+          saves++;
+          final body = utf8.decode(request.bodyBytes, allowMalformed: true);
+          expect(body, contains('"kakao_place_id":"456"'));
+          expect(body, contains('"latitude":35.2001'));
+          expect(body, contains('"longitude":126.9001'));
+          expect(body, contains('"address":"검증된 장소 주소"'));
+          return http.Response(
+            jsonEncode(recordJson()),
+            201,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RecordComposeScreen(
+              onExitToMap: () {},
+              recordApi: api,
+              pickPhotos: (_) async => [
+                XFile.fromData(
+                  base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  ),
+                  path: 'photo.png',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('갤러리'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('좋아요'));
+      final map = tester.widget<KakaoMapWebView>(find.byType(KakaoMapWebView));
+      map.onLocationChanged!(35.2, 126.9);
+      await tester.pumpAndSettle();
+      map.onPlaceResolved!(
+        const KakaoPlaceSelection(
+          latitude: 35.2,
+          longitude: 126.9,
+          placeName: '광주 CGI센터',
+          buildingName: '광주 CGI센터',
+          roadAddress: '검증된 장소 주소',
+          lotAddress: '',
+          isAutoMatched: true,
+          place: KakaoPlaceSearchResult(
+            id: '456',
+            placeName: '광주 CGI센터',
+            categoryName: '',
+            phone: '',
+            roadAddress: '검증된 장소 주소',
+            address: '',
+            latitude: 35.2001,
+            longitude: 126.9001,
+            distance: 8,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('광주 CGI센터'), findsOneWidget);
+      final matchedMap = tester.widget<KakaoMapWebView>(
+        find.byType(KakaoMapWebView),
+      );
+      expect(matchedMap.selectionRequest?.placeId, '456');
+      expect(matchedMap.selectionRequest?.latitude, 35.2001);
+      expect(matchedMap.selectionRequest?.longitude, 126.9001);
+      await tester.ensureVisible(find.byType(SwitchListTile));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.ensureVisible(find.text('기록 남기기'));
+      await tester.tap(find.text('기록 남기기'));
+      await tester.pumpAndSettle();
+      expect(saves, 1);
+    },
+  );
+
+  testWidgets(
+    'nearby place requires explicit selection before its Kakao ID is saved',
     (tester) async {
       GroupListStore.replaceGroups(const []);
       addTearDown(GroupListStore.clear);
@@ -109,6 +295,40 @@ void main() {
           buildingName: '',
           roadAddress: '도로명 주소',
           lotAddress: '',
+          place: null,
+          nearbyPlaces: [
+            KakaoPlaceSearchResult(
+              id: '456',
+              placeName: '자동 조회 장소',
+              categoryName: '',
+              phone: '',
+              roadAddress: '도로명 주소',
+              address: '',
+              latitude: 36.25,
+              longitude: 128.5,
+              distance: 0,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('자동 조회 장소'), findsOneWidget);
+      expect(find.text('도로명 주소'), findsWidgets);
+      expect(find.text('36.250000, 128.500000'), findsNothing);
+      await tester.tap(find.widgetWithText(ActionChip, '자동 조회 장소'));
+      await tester.pumpAndSettle();
+      final selectedMap = tester.widget<KakaoMapWebView>(
+        find.byType(KakaoMapWebView),
+      );
+      expect(selectedMap.selectionRequest?.placeId, '456');
+      selectedMap.onPlaceResolved!(
+        const KakaoPlaceSelection(
+          latitude: 36.25,
+          longitude: 128.5,
+          placeName: '자동 조회 장소',
+          buildingName: '',
+          roadAddress: '도로명 주소',
+          lotAddress: '',
           place: KakaoPlaceSearchResult(
             id: '456',
             placeName: '자동 조회 장소',
@@ -123,7 +343,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('자동 조회 장소'), findsOneWidget);
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));
       await tester.pumpAndSettle();
@@ -185,7 +405,7 @@ void main() {
   });
   for (final invalidId in <String?>[null, 'fake-coordinate-id']) {
     testWidgets(
-      'unresolved or invalid ID ($invalidId) keeps address and blocks save; search fallback works',
+      'unresolved or invalid ID ($invalidId) keeps address without adopting a Kakao ID',
       (tester) async {
         const config = MethodChannel('overlap/kakao_config');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -276,18 +496,20 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('주소만 확인됨'), findsWidgets);
-        expect(find.text('주변 장소를 찾지 못했어요. 장소 검색으로 선택해 주세요.'), findsOneWidget);
+        expect(
+          tester
+              .widget<KakaoMapWebView>(find.byType(KakaoMapWebView))
+              .selectionRequest,
+          isNull,
+        );
         await tester.ensureVisible(find.byType(SwitchListTile));
         await tester.tap(find.byType(SwitchListTile));
-        await tester.ensureVisible(find.text('기록 남기기'));
-        await tester.tap(find.text('기록 남기기'));
-        await tester.pumpAndSettle();
         expect(saves, 0);
-        expect(find.text('기록할 장소를 선택해 주세요.'), findsOneWidget);
-        await tester.ensureVisible(find.text('장소를 선택해 주세요'));
-        await tester.tap(find.text('장소를 선택해 주세요'));
+        final placeSelector = find.widgetWithText(ListTile, '주소만 확인됨').first;
+        await tester.ensureVisible(placeSelector);
+        await tester.tap(placeSelector);
         await tester.pumpAndSettle();
-        expect(find.text('검색으로 선택한 장소'), findsOneWidget);
+        expect(find.widgetWithText(ListTile, '검색으로 선택한 장소'), findsOneWidget);
         final selectedMap = tester.widget<KakaoMapWebView>(
           find.byType(KakaoMapWebView),
         );
@@ -383,6 +605,7 @@ void main() {
           roadAddress: '',
           lotAddress: '',
           place: place,
+          nearbyPlaces: [place],
         ),
       );
       await tester.pumpAndSettle();
@@ -396,10 +619,14 @@ void main() {
           roadAddress: '',
           lotAddress: '',
           place: place,
+          nearbyPlaces: [place],
         ),
       );
       await tester.pumpAndSettle();
       expect(find.text('광주CGI센터'), findsOneWidget);
+      await tester.ensureVisible(find.widgetWithText(ActionChip, '광주CGI센터'));
+      await tester.tap(find.widgetWithText(ActionChip, '광주CGI센터'));
+      await tester.pumpAndSettle();
       expect(searches, 0);
       map.onLocationChanged!(35.3, 127.0);
       await tester.pumpAndSettle();
@@ -414,8 +641,12 @@ void main() {
           roadAddress: '',
           lotAddress: '',
           place: place,
+          nearbyPlaces: [place],
         ),
       );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.widgetWithText(ActionChip, '광주CGI센터'));
+      await tester.tap(find.widgetWithText(ActionChip, '광주CGI센터'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('갤러리'));
       await tester.pumpAndSettle();

@@ -27,7 +27,7 @@ Future<Map<String, dynamic>> runResolution(String scenario) async {
 }
 
 void main() {
-  test('tap and marker movement resolve nearest real POI with ID, name, address and SDK coordinates', () async {
+  test('tap and marker movement return nearby real POIs without auto-selecting one', () async {
     final result = await runResolution(r'''
       context.updateSelectionPosition(position); address();
       categories.forEach((q, i) => q.callback(i === 0 ? [poi('123', 35.0004), poi('456', 35.0001)] : [], i === 0 ? 'OK' : 'ZERO_RESULT'));
@@ -35,13 +35,50 @@ void main() {
     ''');
     final resolved = (result['messages'] as List).last as Map;
     expect(resolved['type'], 'placeResolved');
-    expect(resolved['place']['id'], '456');
-    expect(resolved['place']['placeName'], 'Nearby real POI');
-    expect(resolved['place']['roadAddress'], 'POI road address');
-    expect(resolved['place']['latitude'], 35.0001);
+    expect(resolved['place'], isNull);
+    expect((resolved['nearbyPlaces'] as List).map((place) => place['id']), [
+      '456',
+      '123',
+    ]);
+    expect(resolved['nearbyPlaces'][0]['placeName'], 'Nearby real POI');
+    expect(resolved['nearbyPlaces'][0]['roadAddress'], 'POI road address');
+    expect(resolved['nearbyPlaces'][0]['latitude'], 35.0001);
     expect(resolved['latitude'], 35.0);
     expect((result['messages'] as List).first['type'], 'locationChanged');
   });
+  test(
+    'reverse-geocoded building name and address beat a closer adjacent POI',
+    () async {
+      final result = await runResolution(r'''
+      context.resolvePlaceName(position); address(0, 'CGI Center', 'CGI road address', 'CGI lot address');
+      categories.forEach((q, i) => q.callback(i === 0 ? [
+        poi('9001', 35.0003, 127, 'CGI Center', 'CGI road address', 'CGI lot address'),
+        poi('9002', 35.00005, 127, 'Fire Station', 'Fire road address', 'Fire lot address')
+      ] : [], i === 0 ? 'OK' : 'ZERO_RESULT'));
+      keywords[0].callback([], 'ZERO_RESULT');
+    ''');
+      final resolved = (result['messages'] as List).single as Map;
+      expect(resolved['isAutoMatched'], isTrue);
+      expect(resolved['place']['id'], '9001');
+      expect(resolved['place']['placeName'], 'CGI Center');
+      expect(resolved['place']['latitude'], 35.0003);
+      expect(resolved['nearbyPlaces'], isEmpty);
+    },
+  );
+  test(
+    'one isolated POI within twelve meters is automatically recognized',
+    () async {
+      final result = await runResolution(r'''
+      context.resolvePlaceName(position); address();
+      categories.forEach((q, i) => q.callback(i === 0 ? [poi('9003', 35.00005)] : [], i === 0 ? 'OK' : 'ZERO_RESULT'));
+      keywords[0].callback([], 'ZERO_RESULT');
+    ''');
+      final resolved = (result['messages'] as List).single as Map;
+      expect(resolved['isAutoMatched'], isTrue);
+      expect(resolved['place']['id'], '9003');
+      expect(resolved['nearbyPlaces'], isEmpty);
+    },
+  );
   test(
     'building-name keyword search finds a place outside category groups',
     () async {
@@ -51,7 +88,11 @@ void main() {
       keywords[0].callback([poi('789', 35.0002)], 'OK');
     ''');
       expect(result['keywords'], ['Building from reverse geocoding']);
-      expect((result['messages'] as List).single['place']['id'], '789');
+      expect((result['messages'] as List).single['place'], isNull);
+      expect(
+        (result['messages'] as List).single['nearbyPlaces'].single['id'],
+        '789',
+      );
       expect(result['searchRadii'], everyElement(200));
     },
   );
@@ -88,16 +129,20 @@ void main() {
     expect(result['messages'], hasLength(1));
     expect((result['messages'] as List).single['latitude'], 36);
     expect((result['messages'] as List).single['place']['id'], '222');
+    expect((result['messages'] as List).single['isAutoMatched'], isTrue);
   });
-  test('manual search selection retains its real ID when nearby lookup fails or returns a different place', () async {
-    final result = await runResolution(r'''
+  test(
+    'manual search selection retains its real ID without nearby lookup',
+    () async {
+      final result = await runResolution(r'''
       context.setSelectionLocation(35, 127, 'Explicit real place', {id: '777', placeName: 'Explicit real place', latitude: 35, longitude: 127, roadAddress: 'Explicit road address', address: ''});
-      addresses[0]([], 'ERROR'); categories.forEach(q => q.callback([poi('123', 35)], 'OK'));
     ''');
-    final resolved = (result['messages'] as List).last;
-    expect(resolved['place']['id'], '777');
-    expect(resolved['place']['roadAddress'], 'Explicit road address');
-  });
+      final resolved = (result['messages'] as List).last;
+      expect(resolved['place']['id'], '777');
+      expect(resolved['place']['roadAddress'], 'Explicit road address');
+      expect(resolved['isAutoMatched'], isFalse);
+    },
+  );
   test(
     'GPS selection reuses resolution and retains the current-location overlay',
     () async {
@@ -106,6 +151,7 @@ void main() {
       categories.forEach(q => q.callback([poi('333', 35)], 'OK')); keywords[0].callback([], 'ZERO_RESULT');
     ''');
       expect((result['messages'] as List).last['place']['id'], '333');
+      expect((result['messages'] as List).last['isAutoMatched'], isTrue);
       expect(result['currentLocationPins'], 1);
     },
   );
@@ -211,6 +257,8 @@ const context = {
   OverlapMap: {postMessage: text => messages.push(JSON.parse(text))},
   kakao: {maps: {
     LatLng: function(lat, lng) {this.getLat = () => lat; this.getLng = () => lng;},
+    Marker: function(options) {this.position = options.position; this.getPosition = () => this.position; this.setPosition = value => {this.position = value;};},
+    event: {addListener() {}},
     CustomOverlay: function(options) {Object.assign(this, options); this.setMap = map => {this.map = map;}; overlays.push(this);},
     services: {Status: {OK: 'OK', ZERO_RESULT: 'ZERO_RESULT', ERROR: 'ERROR'}, SortBy: {DISTANCE: 'DISTANCE'}},
   }},
@@ -220,8 +268,8 @@ context.selectionMode = true; context.map = {setCenter() {}, setLevel() {}};
 context.geocoder = {coord2Address(x, y, callback) {addresses.push(callback);}};
 context.places = {categorySearch(code, callback, options) {categories.push({code, callback, options});}, keywordSearch(keyword, callback, options) {keywords.push({keyword, callback, options});}};
 const position = new context.kakao.maps.LatLng(35, 127);
-const poi = (id, latitude, longitude = 127) => ({id, place_name: 'Nearby real POI', y: String(latitude), x: String(longitude), road_address_name: 'POI road address', address_name: 'POI lot address'});
-const address = (index = 0) => addresses[index]([{road_address: {building_name: 'Building from reverse geocoding', address_name: 'Reverse-geocoded road address'}, address: {address_name: 'Lot address'}}], 'OK');
+const poi = (id, latitude, longitude = 127, placeName = 'Nearby real POI', roadAddress = 'POI road address', addressName = 'POI lot address') => ({id, place_name: placeName, y: String(latitude), x: String(longitude), road_address_name: roadAddress, address_name: addressName});
+const address = (index = 0, buildingName = 'Building from reverse geocoding', roadAddress = 'Reverse-geocoded road address', lotAddress = 'Lot address') => addresses[index]([{road_address: {building_name: buildingName, address_name: roadAddress}, address: {address_name: lotAddress}}], 'OK');
 vm.runInNewContext(payload.scenario, {context, position, poi, address, addresses, categories, keywords, timers});
 console.log(JSON.stringify({messages, keywords: keywords.map(q => q.keyword), searchRadii: [...keywords, ...categories].map(q => q.options.radius), currentLocationPins: overlays.filter(o => o.map).length}));
 ''';

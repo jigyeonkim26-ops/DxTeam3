@@ -29,9 +29,11 @@ class RecordComposeScreen extends StatefulWidget {
     this.pickPhotos,
     this.pickPlace,
     this.locationService,
+    this.isActive = false,
   });
 
   final CurrentLocationService? locationService;
+  final bool isActive;
   final VoidCallback onExitToMap;
   final VoidCallback? onPublished;
   final RecordApi? recordApi;
@@ -44,7 +46,6 @@ class RecordComposeScreen extends StatefulWidget {
 
 class _RecordComposeScreenState extends State<RecordComposeScreen> {
   final _storyController = TextEditingController();
-  final _placeNameController = TextEditingController();
   CurrentLocation? _currentLocation;
   int _currentLocationRequestId = 0;
   bool _isLocating = false;
@@ -52,19 +53,12 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   final Set<String> _selectedGroupIds = {};
   Emotion? _selectedEmotion;
   Place? _selectedPlace;
+  List<KakaoPlaceSearchResult> _nearbyPlaces = const [];
   double? _selectedLatitude;
   double? _selectedLongitude;
   String? _selectedRoadAddress;
   var _isResolvingPlace = false;
-  // The compose flow now selects its location directly on the map. Keep the
-  // legacy search plumbing isolated until the map bridge is removed entirely.
-  final bool _showPlaceSearchUi = false;
-  var _isSearchingPlace = false;
-  String? _placeSearchMessage;
-  List<KakaoPlaceSearchResult> _placeSearchResults = const [];
-  KakaoPlaceSearchRequest? _placeSearchRequest;
   KakaoMapSelectionRequest? _mapSelectionRequest;
-  var _placeSearchRequestId = 0;
   var _mapSelectionRequestId = 0;
 
   bool _isPrivate = false;
@@ -80,6 +74,17 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     _api = widget.recordApi ?? RecordApi();
     GroupListStore.groupsListenable.addListener(_onGroupsChanged);
     _loadGroups();
+    if (widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _goToCurrentLocation();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant RecordComposeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) _goToCurrentLocation();
   }
 
   Future<void> _loadGroups() async {
@@ -139,7 +144,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
   void dispose() {
     GroupListStore.groupsListenable.removeListener(_onGroupsChanged);
     _storyController.dispose();
-    _placeNameController.dispose();
     if (widget.recordApi == null) _api.close();
     super.dispose();
   }
@@ -195,15 +199,11 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     }
     setState(() {
       _selectedPlace = place;
+      _nearbyPlaces = const [];
       _selectedLatitude = place.latitude;
       _selectedLongitude = place.longitude;
       _selectedRoadAddress = place.address;
-      _placeNameController.text = place.name;
       _isResolvingPlace = false;
-      _isSearchingPlace = false;
-      _placeSearchResults = const [];
-      _placeSearchRequest = null;
-      _placeSearchMessage = null;
       _mapSelectionRequest = KakaoMapSelectionRequest(
         id: ++_mapSelectionRequestId,
         latitude: place.latitude,
@@ -212,53 +212,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         placeId: place.id,
         address: place.address,
       );
-    });
-  }
-
-  void _submitPlaceSearch([String? rawKeyword]) {
-    final keyword = (rawKeyword ?? _placeNameController.text).trim();
-    debugPrint('[SEARCH_DEBUG] submit keyword: $keyword');
-    if (keyword.length < 2) {
-      setState(() {
-        _isSearchingPlace = false;
-        _placeSearchResults = const [];
-        _placeSearchMessage = '두 글자 이상 입력해 주세요.';
-        _selectedPlace = null;
-      });
-      return;
-    }
-
-    setState(() {
-      _isSearchingPlace = true;
-      _placeSearchResults = const [];
-      _placeSearchMessage = null;
-      _selectedPlace = null;
-      _placeSearchRequest = KakaoPlaceSearchRequest(
-        id: ++_placeSearchRequestId,
-        keyword: keyword,
-        latitude: _selectedLatitude ?? _currentLocation?.latitude ?? 37.5663,
-        longitude:
-            _selectedLongitude ?? _currentLocation?.longitude ?? 126.9779,
-      );
-    });
-  }
-
-  void _onPlaceSearchResults(KakaoPlaceSearchResults results) {
-    if (!mounted ||
-        !_isSearchingPlace ||
-        results.keyword != _placeSearchRequest?.keyword ||
-        results.requestId != _placeSearchRequest?.id) {
-      return;
-    }
-    debugPrint('[SEARCH_DEBUG] UI result count: ${results.places.length}');
-    setState(() {
-      _isSearchingPlace = false;
-      _placeSearchResults = results.places;
-      _placeSearchMessage = results.isError
-          ? '장소 검색에 실패했습니다. 잠시 후 다시 시도해 주세요.'
-          : results.places.isEmpty
-          ? '검색 결과가 없어요.\n다른 장소명이나 주소로 검색해보세요.'
-          : null;
     });
   }
 
@@ -285,14 +238,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         latitude: place.latitude,
         longitude: place.longitude,
       );
+      _nearbyPlaces = const [];
       _isResolvingPlace = false;
-      _isSearchingPlace = false;
-      _placeSearchResults = const [];
-      _placeSearchMessage = null;
-      _placeNameController.value = TextEditingValue(
-        text: place.placeName,
-        selection: TextSelection.collapsed(offset: place.placeName.length),
-      );
       _mapSelectionRequest = KakaoMapSelectionRequest(
         id: ++_mapSelectionRequestId,
         latitude: place.latitude,
@@ -302,25 +249,6 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         address: address,
       );
     });
-  }
-
-  void _onPlaceSearchTextChanged(String _) {
-    setState(() {
-      _selectedPlace = null;
-      _selectedRoadAddress = null;
-      _placeSearchRequest = null;
-      _mapSelectionRequest = null;
-      _placeSearchRequestId++;
-      _isSearchingPlace = false;
-      _placeSearchResults = const [];
-      _placeSearchMessage = null;
-    });
-  }
-
-  String _formatDistance(double? distance) {
-    if (distance == null) return '';
-    if (distance < 1000) return '거리 ${distance.round()}m';
-    return '거리 ${(distance / 1000).toStringAsFixed(1)}km';
   }
 
   void _onPlaceResolved(KakaoPlaceSelection selection) {
@@ -333,8 +261,13 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
     setState(() {
       _isResolvingPlace = false;
       final place = selection.place;
+      final matchesManualSelection =
+          place != null && _mapSelectionRequest?.placeId == place.id;
+      final isConfidentAutomaticMatch =
+          selection.isAutoMatched && _mapSelectionRequest?.placeId == null;
       final validPlace =
           place != null &&
+          (matchesManualSelection || isConfidentAutomaticMatch) &&
           RegExp(r'^\d+$').hasMatch(place.id) &&
           place.placeName.trim().isNotEmpty &&
           place.latitude.isFinite &&
@@ -348,6 +281,20 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
           : selection.roadAddress.isNotEmpty
           ? selection.roadAddress
           : selection.lotAddress;
+      if (validPlace) {
+        _selectedLatitude = place.latitude;
+        _selectedLongitude = place.longitude;
+        if (isConfidentAutomaticMatch) {
+          _mapSelectionRequest = KakaoMapSelectionRequest(
+            id: ++_mapSelectionRequestId,
+            latitude: place.latitude,
+            longitude: place.longitude,
+            placeName: place.placeName,
+            placeId: place.id,
+            address: _selectedRoadAddress,
+          );
+        }
+      }
       _selectedPlace = validPlace
           ? Place(
               id: place.id,
@@ -356,8 +303,16 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
               latitude: place.latitude,
               longitude: place.longitude,
             )
+          : _selectedRoadAddress != null && _selectedRoadAddress!.isNotEmpty
+          ? Place(
+              id: '',
+              name: _selectedRoadAddress!,
+              address: _selectedRoadAddress,
+              latitude: selection.latitude,
+              longitude: selection.longitude,
+            )
           : null;
-      _placeNameController.text = _selectedPlace?.name ?? '';
+      _nearbyPlaces = validPlace ? const [] : selection.nearbyPlaces;
     });
   }
 
@@ -375,8 +330,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       if (_selectedPlace?.latitude != latitude ||
           _selectedPlace?.longitude != longitude) {
         _selectedPlace = null;
+        _nearbyPlaces = const [];
         _selectedRoadAddress = null;
-        _placeNameController.clear();
         _mapSelectionRequest = null;
       }
     });
@@ -404,6 +359,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         CurrentLocationFailureReason.permissionPermanentlyDenied =>
           '위치 권한이 영구적으로 거부되었습니다. 설정에서 허용해주세요.',
         CurrentLocationFailureReason.timeout ||
+        CurrentLocationFailureReason.inaccurate ||
+        CurrentLocationFailureReason.stale ||
         CurrentLocationFailureReason.unavailable =>
           '현재 위치를 확인하지 못했습니다. 다시 시도해주세요.',
       };
@@ -452,7 +409,8 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
       return;
     }
     if (_selectedPlace == null ||
-        !RegExp(r'^\d+$').hasMatch(_selectedPlace!.id)) {
+        (_selectedPlace!.id.isNotEmpty &&
+            !RegExp(r'^\d+$').hasMatch(_selectedPlace!.id))) {
       _showMessage('기록할 장소를 선택해 주세요.');
       return;
     }
@@ -477,17 +435,13 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
         _selectedGroupIds.clear();
         _selectedEmotion = null;
         _selectedPlace = null;
-        _placeNameController.clear();
+        _nearbyPlaces = const [];
         _currentLocation = null;
         _selectedLatitude = null;
         _selectedLongitude = null;
         _selectedRoadAddress = null;
         _isResolvingPlace = false;
-        _isSearchingPlace = false;
-        _placeSearchResults = const [];
-        _placeSearchRequest = null;
         _mapSelectionRequest = null;
-        _placeSearchMessage = null;
         _isPrivate = false;
         _storyController.clear();
       });
@@ -559,17 +513,43 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
                 borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
                 child: SizedBox(
                   height: 230,
-                  child: KakaoMapWebView(
-                    selectionMode: true,
-                    initialLatitude: _currentLocation?.latitude ?? 37.5663,
-                    initialLongitude: _currentLocation?.longitude ?? 126.9779,
-                    onLocationChanged: _onLocationChanged,
-                    currentLocation: _currentLocation,
-                    currentLocationRequestId: _currentLocationRequestId,
-                    onPlaceResolved: _onPlaceResolved,
-                    placeSearchRequest: _placeSearchRequest,
-                    onPlaceSearchResults: _onPlaceSearchResults,
-                    selectionRequest: _mapSelectionRequest,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      KakaoMapWebView(
+                        selectionMode: true,
+                        initialLatitude: _currentLocation?.latitude ?? 36.5,
+                        initialLongitude: _currentLocation?.longitude ?? 127.8,
+                        onLocationChanged: _onLocationChanged,
+                        currentLocation: _currentLocation,
+                        currentLocationRequestId: _currentLocationRequestId,
+                        onPlaceResolved: _onPlaceResolved,
+                        selectionRequest: _mapSelectionRequest,
+                      ),
+                      Positioned(
+                        top: AppSpacing.xs,
+                        right: AppSpacing.xs,
+                        child: Material(
+                          color: Colors.white,
+                          elevation: 2,
+                          shape: const CircleBorder(),
+                          child: IconButton(
+                            tooltip: '현재 위치 다시 찾기',
+                            onPressed: _isLocating
+                                ? null
+                                : _goToCurrentLocation,
+                            icon: _isLocating
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.my_location_outlined),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -579,133 +559,78 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
                 '장소 정보 확인 중...',
                 style: TextStyle(color: AppColors.muted, fontSize: 12),
               ),
-              const Text(
-                '주변 장소 또는 주소를 찾고 있어요.',
-                style: TextStyle(color: AppColors.muted, fontSize: 12),
-              ),
               const SizedBox(height: AppSpacing.xs),
             ],
             if (!_isResolvingPlace &&
                 _selectedLatitude != null &&
                 _selectedPlace == null)
               const Text(
-                '주변 장소를 찾지 못했어요. 장소 검색으로 선택해 주세요.',
+                '장소를 찾지 못했어요. 위 장소 선택 영역에서 검색할 수 있어요.',
                 style: TextStyle(color: AppColors.muted, fontSize: 12),
               ),
-            const Text(
-              '핀을 드래그하거나 지도를 탭해 정확한 위치를 정해요.',
-              style: TextStyle(color: AppColors.muted),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _selectedLatitude == null || _selectedLongitude == null
-                        ? '선택 위치를 불러오는 중이에요.'
-                        : '선택 위치  '
-                              '${_selectedLatitude!.toStringAsFixed(6)}, '
-                              '${_selectedLongitude!.toStringAsFixed(6)}',
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _isLocating ? null : _goToCurrentLocation,
-                  icon: const Icon(Icons.my_location_outlined, size: 18),
-                  label: Text(_isLocating ? '위치 확인 중...' : '현재 위치 다시 찾기'),
-                ),
-              ],
-            ),
-            if (_showPlaceSearchUi) ...[
-              const SizedBox(height: AppSpacing.sm),
-              const Text(
-                '장소 검색',
-                style: TextStyle(
-                  color: AppColors.ink,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+            if (_nearbyPlaces.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.xs),
-              TextField(
-                controller: _placeNameController,
-                maxLength: 50,
-                textInputAction: TextInputAction.search,
-                onChanged: _onPlaceSearchTextChanged,
-                onSubmitted: _submitPlaceSearch,
-                decoration: InputDecoration(
-                  hintText: '장소 또는 주소를 검색해 주세요',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: '장소 검색',
-                    onPressed: _submitPlaceSearch,
-                  ),
-                ),
+              const Text(
+                '주변 장소 후보 · 장소를 선택하면 기록 위치로 지정돼요',
+                style: TextStyle(color: AppColors.muted, fontSize: 12),
               ),
-              if (_isSearchingPlace)
-                const Padding(
-                  padding: EdgeInsets.only(top: AppSpacing.xs),
-                  child: Text(
-                    '장소를 검색하고 있어요...',
-                    style: TextStyle(color: AppColors.muted, fontSize: 12),
-                  ),
-                ),
-              if (_placeSearchMessage case final String message)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs),
-                  child: Text(
-                    message,
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              if (_placeSearchResults.isNotEmpty)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 240),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: _placeSearchResults.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final place = _placeSearchResults[index];
-                      final address = place.roadAddress.isNotEmpty
-                          ? place.roadAddress
-                          : place.address;
-                      final distance = _formatDistance(place.distance);
-                      final secondary = place.categoryName.isNotEmpty
-                          ? place.categoryName
-                          : place.phone;
-                      return ListTile(
-                        dense: true,
-                        title: Text(place.placeName),
-                        subtitle: Text(
-                          [
-                            address,
-                            secondary,
-                            distance,
-                          ].where((value) => value.isNotEmpty).join('\n'),
+              SizedBox(
+                height: 84,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final place in _nearbyPlaces)
+                      Padding(
+                        padding: const EdgeInsets.only(right: AppSpacing.xs),
+                        child: ActionChip(
+                          label: SizedBox(
+                            width: 190,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  place.placeName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if ((place.roadAddress.isNotEmpty
+                                        ? place.roadAddress
+                                        : place.address)
+                                    .isNotEmpty)
+                                  Text(
+                                    place.roadAddress.isNotEmpty
+                                        ? place.roadAddress
+                                        : place.address,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                if (place.distance != null)
+                                  Text(
+                                    '약 ${place.distance!.round()}m',
+                                    style: const TextStyle(
+                                      color: AppColors.muted,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          onPressed: () => _selectPlaceSearchResult(place),
                         ),
-                        onTap: () => _selectPlaceSearchResult(place),
-                      );
-                    },
-                  ),
-                ),
-            ],
-            if (_selectedRoadAddress case final String address
-                when address.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.xs),
-                child: Text(
-                  address,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                      ),
+                  ],
                 ),
               ),
+            ],
+            const Text(
+              '지도를 탭하거나 핀을 옮겨 장소를 확인해요.',
+              style: TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
             const SizedBox(height: AppSpacing.lg),
             const _SectionTitle(title: '이 순간을 한 줄로'),
             const SizedBox(height: AppSpacing.xs),
@@ -833,6 +758,7 @@ class _PlaceSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasVerifiedPlace = place?.id.isNotEmpty == true;
     return Card(
       child: ListTile(
         onTap: onTap,
@@ -848,7 +774,8 @@ class _PlaceSelector extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        subtitle: (place?.address ?? address)?.isNotEmpty == true
+        subtitle:
+            hasVerifiedPlace && (place?.address ?? address)?.isNotEmpty == true
             ? Text(place?.address ?? address!)
             : null,
         trailing: const Icon(Icons.chevron_right),

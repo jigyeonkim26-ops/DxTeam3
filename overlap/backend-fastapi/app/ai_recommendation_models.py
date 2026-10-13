@@ -1,5 +1,7 @@
 """DTOs used only by the AI recommendation flow."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -38,6 +40,10 @@ class RecommendedPlace(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1, max_length=500)
     source_url: str = Field(min_length=1)
+    image_url: str | None = None
+    image_source: str | None = None
+    image_origin_type: Literal["record", "external", "placeholder"] = "placeholder"
+    image_credit: str | None = None
 
 
 class PlaceRecommendationResponse(BaseModel):

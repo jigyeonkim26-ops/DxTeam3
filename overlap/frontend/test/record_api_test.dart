@@ -169,7 +169,7 @@ void main() {
       expect(find.text('피드'), findsOneWidget);
       expect(find.text('표시할 기록이 없어요.'), findsOneWidget);
       expect(find.text('서연'), findsNothing);
-      await tester.tap(find.text('내 맞춤 피드'));
+      await tester.tap(find.text('전체 피드'));
       await tester.pumpAndSettle();
       expect(find.text('실제 가입 모임'), findsOneWidget);
       expect(find.text('동네 친구들'), findsNothing);

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/current_location.dart';
@@ -11,6 +10,8 @@ enum CurrentLocationFailureReason {
   permissionDenied,
   permissionPermanentlyDenied,
   timeout,
+  inaccurate,
+  stale,
   unavailable,
 }
 
@@ -27,53 +28,85 @@ abstract interface class CurrentLocationService {
 class GeolocatorCurrentLocationService implements CurrentLocationService {
   const GeolocatorCurrentLocationService();
 
-  static const _androidLocation = MethodChannel('overlap/current_location');
-
   Future<CurrentLocation> _readCoordinates() async {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      // Both geolocator_android 5.1.1+1 providers register NMEA listeners,
-      // even with useMSLAltitude=false. Read GPS without those listeners.
+    final stopwatch = Stopwatch()..start();
+    final isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    late final Position position;
+    if (isAndroid) {
+      debugPrint(
+        '[GPS] geolocator request started provider=automatic accuracy=high '
+        'timeout_ms=25000 force_location_manager=false',
+      );
       try {
-        final coordinates = await _androidLocation.invokeMapMethod<String, num>(
-          'getCurrentPosition',
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: AndroidSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 25),
+            forceLocationManager: false,
+          ),
         );
-        return CurrentLocation(
-          latitude: coordinates!['latitude']!.toDouble(),
-          longitude: coordinates['longitude']!.toDouble(),
+      } on TimeoutException {
+        debugPrint(
+          '[GPS] geolocator high-accuracy request timed out; '
+          'retrying once with balanced accuracy timeout_ms=12000',
         );
-      } on PlatformException catch (error) {
-        throw CurrentLocationFailure(switch (error.code) {
-          'serviceDisabled' => CurrentLocationFailureReason.serviceDisabled,
-          'permissionDenied' => CurrentLocationFailureReason.permissionDenied,
-          'timeout' => CurrentLocationFailureReason.timeout,
-          _ => CurrentLocationFailureReason.unavailable,
-        });
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: AndroidSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 12),
+            forceLocationManager: false,
+          ),
+        );
       }
+    } else {
+      debugPrint(
+        '[GPS] geolocator request started accuracy=high timeout_ms=25000',
+      );
+      position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 25),
+        ),
+      );
     }
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 15),
-      ),
-    );
-    return CurrentLocation(
+    final location = CurrentLocation(
       latitude: position.latitude,
       longitude: position.longitude,
+      accuracyMeters: position.accuracy,
+      timestamp: position.timestamp,
     );
+    debugPrint(
+      '[GPS] geolocator request completed elapsed_ms=${stopwatch.elapsedMilliseconds} '
+      'coordinates_valid=${location.hasValidCoordinates} '
+      'accuracy_m=${location.accuracyMeters?.toStringAsFixed(1)} '
+      'accuracy_acceptable=${location.hasAcceptableAccuracy} '
+      'reading_recent=${location.isRecent}',
+    );
+    return location;
   }
 
   @override
   Future<CurrentLocation> getCurrentLocation() async {
+    final stopwatch = Stopwatch()..start();
+    var stage = 'service_status';
+    debugPrint('[GPS] request started platform=${defaultTargetPlatform.name}');
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      debugPrint('[GPS] location_service_enabled=$serviceEnabled');
+      if (!serviceEnabled) {
         throw const CurrentLocationFailure(
           CurrentLocationFailureReason.serviceDisabled,
         );
       }
 
+      stage = 'permission_check';
       var permission = await Geolocator.checkPermission();
+      debugPrint('[GPS] permission=${permission.name}');
       if (permission == LocationPermission.denied) {
+        stage = 'permission_request';
         permission = await Geolocator.requestPermission();
+        debugPrint('[GPS] permission_after_request=${permission.name}');
       }
       if (permission == LocationPermission.denied) {
         throw const CurrentLocationFailure(
@@ -86,26 +119,59 @@ class GeolocatorCurrentLocationService implements CurrentLocationService {
         );
       }
 
+      stage = 'coordinate_request';
       final location = await _readCoordinates();
       if (!location.hasValidCoordinates) {
         throw const CurrentLocationFailure(
           CurrentLocationFailureReason.unavailable,
         );
       }
+      if (!location.hasAcceptableAccuracy) {
+        throw const CurrentLocationFailure(
+          CurrentLocationFailureReason.inaccurate,
+        );
+      }
+      if (!location.isRecent) {
+        throw const CurrentLocationFailure(CurrentLocationFailureReason.stale);
+      }
+      debugPrint(
+        '[GPS] request succeeded elapsed_ms=${stopwatch.elapsedMilliseconds} '
+        'coordinates_valid=true',
+      );
       return location;
-    } on CurrentLocationFailure {
+    } on CurrentLocationFailure catch (failure) {
+      debugPrint(
+        '[GPS] request failed stage=$stage reason=${failure.reason.name} '
+        'elapsed_ms=${stopwatch.elapsedMilliseconds}',
+      );
       rethrow;
-    } on TimeoutException {
+    } on TimeoutException catch (error) {
+      debugPrint(
+        '[GPS] request failed stage=$stage type=${error.runtimeType} '
+        'elapsed_ms=${stopwatch.elapsedMilliseconds}',
+      );
       throw const CurrentLocationFailure(CurrentLocationFailureReason.timeout);
-    } on LocationServiceDisabledException {
+    } on LocationServiceDisabledException catch (error) {
+      debugPrint(
+        '[GPS] request failed stage=$stage type=${error.runtimeType} '
+        'elapsed_ms=${stopwatch.elapsedMilliseconds}',
+      );
       throw const CurrentLocationFailure(
         CurrentLocationFailureReason.serviceDisabled,
       );
-    } on PermissionDeniedException {
+    } on PermissionDeniedException catch (error) {
+      debugPrint(
+        '[GPS] request failed stage=$stage type=${error.runtimeType} '
+        'elapsed_ms=${stopwatch.elapsedMilliseconds}',
+      );
       throw const CurrentLocationFailure(
         CurrentLocationFailureReason.permissionDenied,
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint(
+        '[GPS] request failed stage=$stage type=${error.runtimeType} '
+        'elapsed_ms=${stopwatch.elapsedMilliseconds}',
+      );
       throw const CurrentLocationFailure(
         CurrentLocationFailureReason.unavailable,
       );

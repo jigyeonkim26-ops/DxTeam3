@@ -55,10 +55,11 @@ void main() {
       );
       await tester.pumpAndSettle();
       queries.clear();
-      await tester.tap(find.text('내 맞춤 피드'));
+      await tester.tap(find.text('전체 피드'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('전체'));
       await tester.pumpAndSettle();
+      // Clear the all-selected state, then choose only the two real groups.
       await tester.tap(find.text('실제 모임 A'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('실제 모임 B'));

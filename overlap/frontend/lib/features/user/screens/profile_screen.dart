@@ -9,6 +9,10 @@ import '../../group/services/group_list_store.dart';
 import '../../memory/screens/record_detail_screen.dart';
 import '../../memory/services/record_api.dart';
 import '../../memory/widgets/record_card.dart';
+import '../../map/models/map_filter.dart';
+import '../../map/models/map_place.dart';
+import '../../map/screens/place_detail_screen.dart';
+import '../../map/widgets/kakao_map_webview.dart';
 import '../../../shared/models/record.dart';
 import '../models/profile_summary_data.dart';
 import '../models/user_profile.dart';
@@ -17,12 +21,11 @@ import '../widgets/profile_summary_card.dart';
 import 'profile_edit_screen.dart';
 import 'saved_screen.dart';
 
-enum _ProfileContentTab { feed, savedPlaces }
+enum _ProfileContentTab { feed, map, savedPlaces }
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
-    this.onShowMyMap,
     this.recordApi,
     this.savedPlacesApi,
     this.isActive = true,
@@ -31,7 +34,6 @@ class ProfileScreen extends StatefulWidget {
   final RecordApi? recordApi;
   final SavedPlacesApi? savedPlacesApi;
   final bool isActive;
-  final VoidCallback? onShowMyMap;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -50,6 +52,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _generation = 0;
   int _photoRevision = 0;
   _ProfileContentTab _selectedContentTab = _ProfileContentTab.feed;
+  bool _hasOpenedMap = false;
   final Set<String> _likedRecordIds = {};
 
   @override
@@ -274,13 +277,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: AppSpacing.md),
               _ProfileContentTabs(
                 selectedTab: _selectedContentTab,
-                onSelected: (tab) => setState(() => _selectedContentTab = tab),
-                onShowMyMap: widget.onShowMyMap ?? () {},
+                onSelected: (tab) => setState(() {
+                  _selectedContentTab = tab;
+                  if (tab == _ProfileContentTab.map) _hasOpenedMap = true;
+                }),
               ),
               const SizedBox(height: AppSpacing.sm),
+              if (_hasOpenedMap)
+                Offstage(
+                  offstage: _selectedContentTab != _ProfileContentTab.map,
+                  child: _buildMyMap(),
+                ),
               if (_selectedContentTab == _ProfileContentTab.feed)
                 _buildRecords()
-              else
+              else if (_selectedContentTab == _ProfileContentTab.savedPlaces)
                 SavedScreen(
                   embedded: true,
                   isActive: widget.isActive,
@@ -333,18 +343,83 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
   }
+
+  Widget _buildMyMap() {
+    final placesById = <String, MapPlace>{};
+    for (final record in _myRecords) {
+      final place = record.place;
+      if (!place.latitude.isFinite ||
+          !place.longitude.isFinite ||
+          place.latitude.abs() > 90 ||
+          place.longitude.abs() > 180 ||
+          (place.latitude == 0 && place.longitude == 0)) {
+        continue;
+      }
+      final previous = placesById[place.id];
+      placesById[place.id] = MapPlace(
+        id: place.id,
+        name: place.name,
+        address: place.address,
+        recordCount: (previous?.recordCount ?? 0) + 1,
+        author: '',
+        summary: '',
+        latitude: place.latitude,
+        longitude: place.longitude,
+        filters: {MapFilter.mine},
+        groupColorHex: MapGroupColors.deepNavy,
+      );
+    }
+    return Column(
+      children: [
+        if (_isRecordsLoading) const LinearProgressIndicator(),
+        if (_recordsError != null)
+          TextButton(onPressed: _reload, child: Text('$_recordsError 다시 시도')),
+        SizedBox(
+          height: 340,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+            child: KakaoMapWebView(
+              places: placesById.values.toList(growable: false),
+              initialLatitude: 36.5,
+              initialLongitude: 127.8,
+              initialMapLevel: 13,
+              minimumBoundsLevel: 9,
+              onPlaceTap: (place) => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PlaceDetailScreen(
+                    placeId: place.id,
+                    name: place.name,
+                    address: place.address,
+                    recordCount: place.recordCount,
+                    recordApi: _api,
+                    savedPlacesApi: widget.savedPlacesApi,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (!_isRecordsLoading && _recordsError == null && placesById.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(AppSpacing.md),
+            child: Text(
+              '표시할 내 기록 위치가 없어요.',
+              style: TextStyle(color: AppColors.muted),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class _ProfileContentTabs extends StatelessWidget {
   const _ProfileContentTabs({
     required this.selectedTab,
     required this.onSelected,
-    required this.onShowMyMap,
   });
 
   final _ProfileContentTab selectedTab;
   final ValueChanged<_ProfileContentTab> onSelected;
-  final VoidCallback onShowMyMap;
 
   @override
   Widget build(BuildContext context) {
@@ -362,8 +437,8 @@ class _ProfileContentTabs extends StatelessWidget {
           child: _ProfileContentTabButton(
             icon: Icons.map_outlined,
             label: '내 지도',
-            isSelected: false,
-            onTap: onShowMyMap,
+            isSelected: selectedTab == _ProfileContentTab.map,
+            onTap: () => onSelected(_ProfileContentTab.map),
           ),
         ),
         Expanded(
