@@ -274,12 +274,14 @@ class _RecommendationThumbnail extends StatefulWidget {
 
 class _RecommendationThumbnailState extends State<_RecommendationThumbnail> {
   bool _successLogged = false;
+  bool _missingLogged = false;
 
   @override
   void didUpdateWidget(covariant _RecommendationThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.recommendation.imageUrl != widget.recommendation.imageUrl) {
       _successLogged = false;
+      _missingLogged = false;
     }
   }
 
@@ -288,9 +290,14 @@ class _RecommendationThumbnailState extends State<_RecommendationThumbnail> {
     final recommendation = widget.recommendation;
     final imageUrl = recommendation.imageUrl;
     if (imageUrl == null || imageUrl.isEmpty) {
-      return _thumbnailWithCredit(
-        _PlaceholderThumbnail(recommendation: recommendation),
-      );
+      if (kDebugMode && !_missingLogged) {
+        _missingLogged = true;
+        debugPrint(
+          '[AI_IMAGE] url_missing origin=${recommendation.imageOriginType} '
+          'source=${recommendation.imageSource ?? 'unknown'}',
+        );
+      }
+      return _thumbnail(_PlaceholderThumbnail(recommendation: recommendation));
     }
 
     final isRelative = imageUrl.startsWith('/');
@@ -320,36 +327,25 @@ class _RecommendationThumbnailState extends State<_RecommendationThumbnail> {
       },
       errorBuilder: (context, error, stackTrace) {
         if (kDebugMode) {
+          final type = error.runtimeType.toString();
+          final detail = error is NetworkImageLoadException
+              ? 'http status=${error.statusCode}'
+              : type.toLowerCase().contains('codec')
+              ? 'decode error_type=$type'
+              : 'load error_type=$type';
           debugPrint(
-            '[AI_IMAGE] download_failed origin=${recommendation.imageOriginType} error=${error.runtimeType}',
+            '[AI_IMAGE] failed origin=${recommendation.imageOriginType} $detail',
           );
         }
         return _PlaceholderThumbnail(recommendation: recommendation);
       },
     );
-    return _thumbnailWithCredit(image);
+    return _thumbnail(image);
   }
 
-  Widget _thumbnailWithCredit(Widget image) => SizedBox(
-    width: 84,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppSpacing.sm),
-          child: SizedBox(width: 84, height: 84, child: image),
-        ),
-        if (widget.recommendation.imageCredit?.isNotEmpty == true) ...[
-          const SizedBox(height: 3),
-          Text(
-            widget.recommendation.imageCredit!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.muted, fontSize: 9),
-          ),
-        ],
-      ],
-    ),
+  Widget _thumbnail(Widget image) => ClipRRect(
+    borderRadius: BorderRadius.circular(AppSpacing.sm),
+    child: SizedBox(width: 84, height: 84, child: image),
   );
 }
 

@@ -5,7 +5,7 @@ import 'dart:io';
 import 'api_client.dart';
 import 'api_config.dart';
 
-export 'api_client.dart' show ApiException;
+export 'api_client.dart' show ApiException, ApiExceptionKind;
 
 abstract final class ApiTransport {
   static const String baseUrl = ApiConfig.baseUrl;
@@ -20,6 +20,17 @@ abstract final class ApiTransport {
 
   static Future<dynamic> get(String path, {Duration? responseTimeout}) =>
       _send('GET', path, responseTimeout: responseTimeout);
+
+  static Future<dynamic> getWithStatus(
+    String path, {
+    Duration? responseTimeout,
+    required void Function(int statusCode) onResponse,
+  }) => _send(
+    'GET',
+    path,
+    responseTimeout: responseTimeout,
+    onResponse: onResponse,
+  );
 
   static Future<dynamic> post(String path, {Object? body}) =>
       _send('POST', path, body: body);
@@ -37,6 +48,7 @@ abstract final class ApiTransport {
     String path, {
     Object? body,
     Duration? responseTimeout,
+    void Function(int statusCode)? onResponse,
   }) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
@@ -52,6 +64,7 @@ abstract final class ApiTransport {
       final response = await request.close().timeout(
         responseTimeout ?? const Duration(seconds: 15),
       );
+      onResponse?.call(response.statusCode);
       final responseBody = await utf8.decoder.bind(response).join();
       dynamic decoded;
       if (responseBody.isNotEmpty) {
@@ -72,11 +85,20 @@ abstract final class ApiTransport {
     } on ApiException {
       rethrow;
     } on TimeoutException {
-      throw const ApiException('서버 응답 시간이 초과되었습니다.');
+      throw const ApiException(
+        '서버 응답 시간이 초과되었습니다.',
+        kind: ApiExceptionKind.timeout,
+      );
     } on SocketException {
-      throw const ApiException('서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.');
+      throw const ApiException(
+        '서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.',
+        kind: ApiExceptionKind.network,
+      );
     } on HttpException {
-      throw const ApiException('서버와 통신할 수 없습니다.');
+      throw const ApiException(
+        '서버와 통신할 수 없습니다.',
+        kind: ApiExceptionKind.network,
+      );
     } finally {
       client.close(force: true);
     }

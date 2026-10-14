@@ -16,7 +16,8 @@ import 'package:overlap_app/features/ai/services/ai_recommendations_api.dart';
 
 class _EmptyRecommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load() async => [];
+  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async =>
+      [];
 }
 
 Map<String, Object?> notification(int id, {bool read = false}) => {
@@ -181,7 +182,7 @@ void main() {
         MaterialApp(home: AiRecommendationScreen(api: _EmptyRecommendations())),
       );
       await tester.pump();
-      expect(find.text('확인된 추천 장소가 없어요. 기록을 더 남긴 뒤 다시 시도해 주세요.'), findsOneWidget);
+      expect(find.text('이 분야에서 취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
       expect(find.text('다른 장소 추천받기'), findsNothing);
       expect(find.text('최근 기록을\n분석했어요'), findsNothing);
       await tester.pumpWidget(const SizedBox());

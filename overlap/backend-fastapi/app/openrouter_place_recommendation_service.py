@@ -26,7 +26,7 @@ class OpenRouterPlaceRecommendationService:
             "type": "object",
             "properties": {
                 "recommendations": {
-                    "type": "array", "maxItems": 3,
+                    "type": "array", "maxItems": 10,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -102,9 +102,15 @@ class OpenRouterPlaceRecommendationService:
                 {"role": "system", "content": (
                     "Return JSON only: {\"recommendations\":[{\"kakao_place_id\":string,"
                     "\"match_score\":number,\"matched_keywords\":[string],\"reason\":string}]}. "
-                    "Select at most three distinct Kakao place IDs only from place_candidates. "
-                    "Scores are 0 to 1 descending. Higher preference scores matter more. "
-                    "matched_keywords must come from preferences. Write concise Korean personalized reasons."
+                    "The supplied candidates are already real Kakao places and passed a deterministic evidence check. "
+                    "Compare their relevance and rank distinct Kakao place IDs from place_candidates, up to ten; "
+                    "return every clearly relevant candidate and do not return an empty list just because the place "
+                    "name lacks an exact preference word. Interpret paraphrases and place types from the supplied "
+                    "candidate evidence (for example, a viewpoint or riverside path can relate to sunset preferences). "
+                    "Do not add candidates or claim facts absent from the supplied records and evidence. "
+                    "Higher preference scores matter more, but are not the only relevance signal. "
+                    "matched_keywords must be exact supplied preference labels supported by candidate evidence. "
+                    "Write concise Korean personalized reasons grounded in positive records and candidate evidence."
                 )},
                 {"role": "user", "content": json.dumps({
                     "preferences": [item.model_dump() for item in keywords],
@@ -130,7 +136,7 @@ class OpenRouterPlaceRecommendationService:
             raise AIRequestError from exc
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise AIResponseError from exc
-        logger.info("AI recommendation diagnostic ranking_output_count=%d", len(raw))
+        logger.info("AI recommendation diagnostic openrouter_raw_recommendations_count=%d", len(raw))
         candidate_index = {item.kakao_place_id: item for item in candidate_list}
         preference_names = {" ".join(item.keyword.split()).casefold(): item.keyword for item in keywords}
         ranked = []
@@ -149,7 +155,7 @@ class OpenRouterPlaceRecommendationService:
                 ranked.append((float(item["match_score"]), candidate, matches, item["reason"]))
             except (KeyError, TypeError, ValueError) as exc:
                 raise AIResponseError from exc
-        logger.info("AI recommendation diagnostic validated_recommendations_count=%d", len(ranked))
+        logger.info("AI recommendation diagnostic openrouter_validated_recommendations_count=%d", len(ranked))
         ranked.sort(key=lambda item: item[0], reverse=True)
         output, seen = [], set()
         for score, candidate, matches, reason in ranked:
@@ -165,7 +171,7 @@ class OpenRouterPlaceRecommendationService:
                                                source_url=candidate.source_url))
             except ValidationError as exc:
                 raise AIResponseError("Invalid recommendation fields") from exc
-            if len(output) == 3:
+            if len(output) == 10:
                 break
-        logger.info("AI recommendation diagnostic final_response_count=%d", len(output))
+        logger.info("AI recommendation diagnostic openrouter_final_output_count=%d", len(output))
         return PlaceRecommendationResponse(recommendations=output)

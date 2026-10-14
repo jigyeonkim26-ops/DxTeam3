@@ -30,7 +30,10 @@ class RecommendationImageService:
     No recommendation ranking or place data is changed by this service.
     """
 
-    SEARCH_URL = "https://dapi.kakao.com/v2/search/image"
+    # The image-search response has no title/contents field, so its result
+    # cannot be tied back to a specific place safely. Blog search provides
+    # title, contents, locality context, and a representative thumbnail.
+    SEARCH_URL = "https://dapi.kakao.com/v2/search/blog"
     SEARCH_TIMEOUT_SECONDS = 2.5
     CACHE_TTL_SECONDS = 3600
     # A short negative cache avoids repeating failed lookups while allowing
@@ -60,13 +63,22 @@ class RecommendationImageService:
             self._cache.clear()
 
     @staticmethod
-    def _https_url(value: object) -> str | None:
+    def _safe_image_url(value: object) -> str | None:
         if not isinstance(value, str):
             return None
         parsed = urlparse(value.strip())
-        if parsed.scheme != "https" or not parsed.hostname:
+        if not parsed.hostname:
             return None
-        return value.strip()
+        if parsed.scheme == "https":
+            return value.strip()
+        # Daum Blog currently returns some thumbnails over HTTP on Kakao's
+        # CDN. Android's network_security_config already permits this host.
+        if parsed.scheme == "http" and (
+            parsed.hostname == "kakaocdn.net"
+            or parsed.hostname.endswith(".kakaocdn.net")
+        ):
+            return value.strip()
+        return None
 
     @staticmethod
     def _normalize(value: str) -> str:
@@ -133,22 +145,26 @@ class RecommendationImageService:
             documents = payload.get("documents", []) if isinstance(payload, dict) else []
             result, rejected = self._select_external_with_diagnostics(place, documents)
             logger.info(
-                "AI recommendation image lookup outcome=%s source=daum status=200 candidates=%d accepted=%d rejected_name=%d rejected_url=%d",
+                "AI recommendation image lookup outcome=%s source=daum_blog status=200 candidates=%d accepted=%d rejected_missing_metadata=%d rejected_name=%d rejected_region=%d rejected_url=%d",
                 "external" if result else "placeholder",
                 len(documents) if isinstance(documents, list) else 0,
                 1 if result else 0,
+                rejected.get("missing_metadata", 0),
                 rejected.get("name", 0),
+                rejected.get("region", 0),
                 rejected.get("url", 0),
             )
+            if not documents:
+                logger.info("AI recommendation image lookup outcome=placeholder reason=no_search_results")
         except httpx.HTTPStatusError as exc:
             logger.info(
-                "AI recommendation image lookup outcome=placeholder source=daum status=%d reason=http_error",
+                "AI recommendation image lookup outcome=placeholder source=daum_blog status=%d reason=http_error",
                 exc.response.status_code,
             )
             result = None
         except Exception as exc:
             logger.info(
-                "AI recommendation image lookup outcome=placeholder source=daum reason=%s",
+                "AI recommendation image lookup outcome=placeholder source=daum_blog reason=%s",
                 type(exc).__name__,
             )
             result = None
@@ -172,7 +188,7 @@ class RecommendationImageService:
     def _select_external_with_diagnostics(
         cls, place: RecommendedPlace, documents: object
     ) -> tuple[dict | None, dict[str, int]]:
-        rejected = {"name": 0, "url": 0}
+        rejected = {"missing_metadata": 0, "name": 0, "region": 0, "url": 0}
         if not isinstance(documents, list):
             return None, rejected
         expected_name = cls._normalize(place.name)
@@ -182,41 +198,43 @@ class RecommendationImageService:
             if not isinstance(document, dict):
                 continue
             title = str(document.get("title") or "")
-            site = str(document.get("display_sitename") or "")
-            title_text = cls._normalize(title)
-            # Daum has already searched a place-and-locality-qualified query.
-            # Search result metadata often omits the locality, so require a
-            # strong place-name signal in the title instead of rejecting every
-            # result whose blog/site metadata has no address.
-            name_tokens = [cls._normalize(token) for token in place.name.split()]
-            name_tokens = [token for token in name_tokens if len(token) >= 2]
-            exact_name = expected_name in title_text
-            token_match = bool(name_tokens) and all(token in title_text for token in name_tokens)
-            branch_tokens = ("점", "지점", "센터", "본점", "병원", "공원")
-            branch_match = any(
-                token in title_text
-                and (any(char.isdigit() for char in token) or token.endswith(branch_tokens))
-                for token in name_tokens
-            )
-            distinctive_single_name = (
-                len(name_tokens) == 1
-                and name_tokens[0] in title_text
-                and (len(name_tokens[0]) >= 4 or any(char.isdigit() for char in name_tokens[0]))
-            )
-            if not (exact_name or token_match or branch_match or distinctive_single_name):
+            contents = str(document.get("contents") or "")
+            evidence = cls._normalize(f"{title} {contents}")
+            if not evidence:
+                rejected["missing_metadata"] += 1
+                continue
+
+            # Blog search exposes content metadata unlike image search. A
+            # qualified request alone is not proof: the exact Kakao place name
+            # must also occur in the returned title or summary.
+            if expected_name not in evidence:
                 rejected["name"] += 1
                 continue
-            image_url = cls._https_url(document.get("thumbnail_url")) or cls._https_url(
-                document.get("image_url")
+
+            # The Daum API does not return Kakao Place IDs or coordinates for
+            # image/blog results. Require a matching locality as a second
+            # independent signal; if the place name itself contains the
+            # locality (for example, a city-named facility), that is usable.
+            region_terms = [cls._normalize(term) for term in cls._region_terms(place.address)]
+            place_name_evidence = cls._normalize(place.name)
+            has_region_signal = any(term and term in evidence for term in region_terms)
+            name_contains_region = any(
+                term and term in place_name_evidence for term in region_terms
             )
+            if region_terms and not (has_region_signal or name_contains_region):
+                rejected["region"] += 1
+                continue
+
+            image_url = cls._safe_image_url(document.get("thumbnail"))
             if not image_url:
                 rejected["url"] += 1
                 continue
+            site = str(document.get("blogname") or "Kakao Daum Blog").strip()
             return {
                 "image_url": image_url,
-                "image_source": "kakao_daum_image_search",
+                "image_source": "kakao_daum_blog_search",
                 "image_origin_type": "external",
-                "image_credit": (str(site).strip() or None),
+                "image_credit": site or "Kakao Daum Blog",
             }, rejected
         return None, rejected
 
@@ -259,6 +277,21 @@ class RecommendationImageService:
         except Exception as exc:
             logger.info("AI recommendation record image lookup skipped exception=%s", type(exc).__name__)
             record_photos = {}
+        finally:
+            # External Daum Blog lookups below can take several seconds.
+            # Release the read-only DB connection before starting them.
+            try:
+                db.rollback()
+            except Exception as exc:
+                logger.warning("AI recommendation image DB transaction release failed exception=%s", type(exc).__name__)
+
+        logger.info(
+            "AI recommendation record image matches candidates=%d kakao_id_missing=%d accessible_photo_matches=%d no_accessible_photo_match=%d",
+            len(recommendations),
+            sum(1 for item in recommendations if not item.kakao_place_id),
+            len(record_photos),
+            max(0, len(ids) - len(record_photos)),
+        )
 
         unresolved = [item for item in recommendations if item.kakao_place_id not in record_photos]
         external_results: dict[str, dict | None] = {}

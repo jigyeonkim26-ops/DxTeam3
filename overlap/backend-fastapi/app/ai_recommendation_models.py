@@ -31,7 +31,7 @@ class PlaceCandidateResponse(BaseModel):
 
 class RecommendedPlace(BaseModel):
     kakao_place_id: str | None = None
-    rank: int = Field(ge=1, le=3)
+    rank: int = Field(ge=1, le=10)
     name: str = Field(min_length=1, max_length=160)
     address: str | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
@@ -47,4 +47,5 @@ class RecommendedPlace(BaseModel):
 
 
 class PlaceRecommendationResponse(BaseModel):
-    recommendations: list[RecommendedPlace] = Field(default_factory=list, max_length=3)
+    # The service ranks a bounded, verified pool; the API returns at most three per page.
+    recommendations: list[RecommendedPlace] = Field(default_factory=list, max_length=10)

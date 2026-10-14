@@ -49,6 +49,8 @@ from .db import get_db
 from .db_models import User
 from .kakao import search_places
 from .object_storage import get_object_storage
+from .place_candidate_search_service import PlaceCandidateSearchService
+from .record_preference_analysis import RecordPreferenceAnalysisService
 from .models import (
     GroupCreated,
     GroupInput,
@@ -113,6 +115,9 @@ def create_app(
     place_verification_service=None,
     place_recommendation_service=None,
     recommendation_image_service=None,
+    candidate_search_service=None,
+    preference_analysis_service=None,
+    use_legacy_recommendation_pipeline: bool = False,
 ) -> FastAPI:
     service = service if service is not None else MemoryService()
 
@@ -771,6 +776,19 @@ def create_app(
     api.include_router(comments_router(current_user))
     api.include_router(saved_places_router(current_user))
     api.include_router(notifications_router(current_user))
+    # Normal app construction uses category-v3. Existing integrations that
+    # explicitly provide legacy collaborators keep their legacy test/rollout
+    # behavior unless the new candidate service is also explicitly supplied.
+    legacy_services_injected = any(value is not None for value in (
+        preference_service,
+        place_search_service,
+        place_verification_service,
+        place_recommendation_service,
+    ))
+    if candidate_search_service is None and not legacy_services_injected and not use_legacy_recommendation_pipeline:
+        candidate_search_service = PlaceCandidateSearchService()
+        preference_analysis_service = preference_analysis_service or RecordPreferenceAnalysisService()
+
     api.include_router(
         ai_recommendations_router(
             current_user,
@@ -780,6 +798,9 @@ def create_app(
             verification_service=place_verification_service,
             recommendation_service=place_recommendation_service,
             image_service=recommendation_image_service,
+            candidate_search_service=candidate_search_service,
+            preference_analysis_service=preference_analysis_service,
+            use_legacy_recommendation_pipeline=use_legacy_recommendation_pipeline,
         )
     )
     return api

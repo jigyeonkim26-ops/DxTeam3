@@ -169,21 +169,25 @@ class _RecordComposeScreenState extends State<RecordComposeScreen> {
                   case final XFile image)
                 image,
             ];
-      if (!mounted) return;
-      if (_photos.length + images.length > 5) {
-        _showMessage('사진은 최대 5장 선택해 주세요.');
-        return;
-      }
-      for (final image in images) {
-        if (await image.length() > 10 * 1024 * 1024) {
-          if (mounted) _showMessage('사진 한 장은 10MB 이하로 선택해 주세요.');
-          return;
-        }
-      }
-      if (mounted) setState(() => _photos.addAll(images));
+      await _appendPhotos(images);
     } catch (_) {
       if (mounted) _showMessage('사진을 선택하지 못했습니다. 사진 접근 권한을 확인해 주세요.');
     }
+  }
+
+  Future<void> _appendPhotos(List<XFile> images) async {
+    if (!mounted) return;
+    if (_photos.length + images.length > 5) {
+      _showMessage('사진은 최대 5장 선택해 주세요.');
+      return;
+    }
+    for (final image in images) {
+      if (await image.length() > 10 * 1024 * 1024) {
+        if (mounted) _showMessage('사진 한 장은 10MB 이하로 선택해 주세요.');
+        return;
+      }
+    }
+    if (mounted) setState(() => _photos.addAll(images));
   }
 
   Future<void> _selectPlace() async {

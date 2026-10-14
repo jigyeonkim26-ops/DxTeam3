@@ -5,11 +5,18 @@ import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
 
+enum ApiExceptionKind { http, network, timeout }
+
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode});
+  const ApiException(
+    this.message, {
+    this.statusCode,
+    this.kind = ApiExceptionKind.http,
+  });
 
   final String message;
   final int? statusCode;
+  final ApiExceptionKind kind;
 
   @override
   String toString() => message;
@@ -43,9 +50,11 @@ class ApiClient {
   static Future<void> checkHealth() async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/health');
     try {
-      await http.get(uri).timeout(const Duration(seconds: 5));
-    } catch (_) {
-      // Health check is best-effort; never log request data or exception details.
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+      debugPrint('[API] health status=${response.statusCode}');
+    } catch (error) {
+      debugPrint('[API] health failed error_type=${error.runtimeType}');
+      // Health check is best-effort; never log request data or exception text.
     }
   }
 

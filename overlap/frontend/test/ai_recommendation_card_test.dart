@@ -28,7 +28,15 @@ const recommendation = AiPlaceRecommendation(
 
 class _Recommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load() async => [recommendation];
+  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async => [
+    recommendation,
+  ];
+}
+
+class _EmptyRecommendations extends AiRecommendationsApi {
+  @override
+  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async =>
+      [];
 }
 
 Widget card(
@@ -51,6 +59,28 @@ Widget card(
 );
 
 void main() {
+  testWidgets('empty recommendation response explains how to retry', (
+    tester,
+  ) async {
+    final api = SavedPlacesApi(
+      get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AiRecommendationContent(
+            api: _EmptyRecommendations(),
+            savedPlacesApi: api,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('이 분야에서 취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
+    expect(find.text('다시 추천받기'), findsOneWidget);
+  });
+
   testWidgets(
     'small card shows text and a category placeholder without an image URL',
     (tester) async {
@@ -115,7 +145,7 @@ void main() {
       findsOneWidget,
     );
     await tester.pumpAndSettle();
-    expect(find.text('전남 여행 기록'), findsOneWidget);
+    expect(find.text('전남 여행 기록'), findsNothing);
     expect(find.byIcon(Icons.park_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -152,7 +182,7 @@ void main() {
           (image.image as ResizeImage).imageProvider as NetworkImage;
       expect(provider.url, '${ApiConfig.baseUrl}/records/7/photos/11');
       expect(provider.headers?['Authorization'], 'Bearer user-photo-token');
-      expect(find.text('OVERLAP 기록 사진'), findsOneWidget);
+      expect(find.text('OVERLAP 기록 사진'), findsNothing);
     },
   );
 
@@ -259,7 +289,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
     saved = true;
-    await tester.tap(find.text('다른 장소 추천받기'));
+    await tester.tap(find.text('다음 장소 추천받기'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.bookmark), findsOneWidget);
     expect(lookups, 2);

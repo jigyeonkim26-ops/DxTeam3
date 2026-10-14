@@ -50,7 +50,8 @@ def test_keyword_provider_failure_uses_frequency_only_fallback():
     assert all(item.keyword != "사직공원" for item in result.keywords)
 
 
-def test_ranking_request_uses_strict_json_schema_and_non_streaming_payload():
+def test_ranking_request_uses_strict_json_schema_and_non_streaming_payload(caplog):
+    caplog.set_level("INFO", logger="uvicorn.error")
     captured = {}
 
     class Response:
@@ -68,6 +69,8 @@ def test_ranking_request_uses_strict_json_schema_and_non_streaming_payload():
     candidate = PlaceCandidate(kakao_place_id="12345", name="candidate", summary="summary", source_url="https://candidate")
     service = OpenRouterPlaceRecommendationService(api_key="test", model="test", post_json=post_json)
     assert service.recommend([record], [PreferenceKeyword(keyword="walk", score=1)], [candidate]).recommendations == []
+    assert "openrouter_raw_recommendations_count=0" in caplog.text
+    assert "openrouter_validated_recommendations_count=0" in caplog.text
     assert captured["response_format"]["type"] == "json_schema"
     assert captured["response_format"]["json_schema"]["strict"] is True
     assert captured["provider"] == {"require_parameters": True}

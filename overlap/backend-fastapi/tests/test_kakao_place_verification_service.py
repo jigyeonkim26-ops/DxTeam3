@@ -16,6 +16,7 @@ def place(place_id, name, address="광주광역시 남구", latitude=35.14):
         "kakao_place_id": place_id, "name": name, "address": address,
         "latitude": latitude, "longitude": 126.91,
         "place_url": f"https://place.map.kakao.com/{place_id}",
+        "category_name": "",
     }
 
 
@@ -69,11 +70,12 @@ def test_direct_kakao_fallback_returns_only_verified_places_without_padding():
 
     def search(query):
         calls.append(query)
-        return [place("444", "양림동 펭귄마을")] if query == "광주광역시 산책" else []
+        return [{**place("444", "양림동 펭귄마을"), "category_name": "여행 > 공원"}] if query == "광주광역시 산책" else []
 
     result = KakaoPlaceVerificationService(search=search).verify(hints(), KEYWORDS, [record()])
     assert [item.name for item in result.candidates] == ["양림동 펭귄마을"]
-    assert len(calls) == 1
+    assert result.candidates[0].summary == "Kakao Local category: 여행 > 공원"
+    assert len(calls) <= KakaoPlaceVerificationService.MAX_FALLBACK_KEYWORDS
 
 
 def test_kakao_calls_are_bounded_even_with_many_hints():
@@ -81,3 +83,50 @@ def test_kakao_calls_are_bounded_even_with_many_hints():
     service = KakaoPlaceVerificationService(search=lambda query: calls.append(query) or [])
     service.verify(hints(*(f"후보{i}" for i in range(10))), KEYWORDS, [record()])
     assert len(calls) <= service.MAX_CALLS
+
+
+def test_region_alias_and_explicit_locality_prefix_are_normalized_without_branch_fuzzing():
+    def search(query):
+        if "강남점" in query:
+            return [place("556", "사직공원 강남점", "광주 남구")]
+        if "사직공원" in query:
+            return [place("555", "사직공원", "광주 남구", latitude=35.15)]
+        return []
+
+    result = KakaoPlaceVerificationService(search=search).verify(
+        hints("광주 사직공원", "사직공원 홍대점"), KEYWORDS, [record(place_name="양림동")]
+    )
+    assert [(item.kakao_place_id, item.name, item.address, item.latitude) for item in result.candidates] == [
+        ("555", "사직공원", "광주 남구", 35.15),
+    ]
+
+
+def test_rejection_counts_explain_zero_verified_results_without_logging_search_terms(caplog):
+    def search(query):
+        if "찾을수없는후보" not in query:
+            return []
+        return [
+            {**place("bad-id", "찾을수없는후보"), "kakao_place_id": "bad-id"},
+            {**place("222", "찾을수없는후보"), "latitude": 91},
+            place("333", "찾을수없는후보", "경기도 성남시"),
+            place("111", "찾을수없는후보"),
+            place("444", "방문 장소"),
+            place("555", "다른 장소"),
+        ]
+
+    caplog.set_level("INFO", logger="uvicorn.error")
+    result = KakaoPlaceVerificationService(search=search).verify(
+        hints("찾을수없는후보"), KEYWORDS,
+        [record(place_name="방문 장소", place_id="111")],
+    )
+
+    assert result.candidates == []
+    assert "raw_results=6" in caplog.text
+    assert "invalid_place_ids=1" in caplog.text
+    assert "invalid_coordinates=1" in caplog.text
+    assert "region_mismatch=1" in caplog.text
+    assert "place_name_mismatch=1" in caplog.text
+    assert "visited_ids=1" in caplog.text
+    assert "visited_names=1" in caplog.text
+    assert "verified=0" in caplog.text
+    assert "찾을수없는후보" not in caplog.text

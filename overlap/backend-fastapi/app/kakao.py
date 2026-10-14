@@ -1,8 +1,11 @@
 import json
+import logging
 
 import httpx
 
 from .config import KAKAO_REST_API_KEY
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def search_places(query: str, *, timeout: float = 10.0):
@@ -22,13 +25,20 @@ def search_places(query: str, *, timeout: float = 10.0):
         timeout=timeout,
     )
 
-    # 카카오 요청이 실패했다면 오류 표시
-    response.raise_for_status()
+    # Read only counts and status for diagnostics; never log the search term or payload.
+    if not response.is_success:
+        logger.warning("Kakao Local response http_status=%d raw_result_count=unavailable", response.status_code)
+        response.raise_for_status()
+    payload = response.json()
+    documents = payload.get("documents")
+    if not isinstance(documents, list):
+        raise ValueError("Invalid Kakao Local response")
+    logger.info("Kakao Local response http_status=%d raw_result_count=%d", response.status_code, len(documents))
 
     # 받은 장소 정보를 사용하기 편한 형태로 정리
     places = []
 
-    for item in response.json()["documents"]:
+    for item in documents:
         places.append({
             "kakao_place_id": item["id"],
             "name": item["place_name"],
@@ -36,6 +46,8 @@ def search_places(query: str, *, timeout: float = 10.0):
             "latitude": float(item["y"]),
             "longitude": float(item["x"]),
             "place_url": item["place_url"],
+            "category_group_code": item.get("category_group_code") or None,
+            "category_name": item.get("category_name", ""),
         })
 
     return places

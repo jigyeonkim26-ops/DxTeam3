@@ -10,7 +10,7 @@ import 'package:overlap_app/features/user/services/saved_places_api.dart';
 
 class _Recommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load() async => [
+  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async => [
     AiPlaceRecommendation.fromJson({
       'kakao_place_id': '12345',
       'name': '양림동 펭귄마을',
@@ -32,11 +32,21 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: MapScreen(
-            mapPlacesApi: MapPlacesApi(request: () async => http.Response('[]', 200)),
+            mapPlacesApi: MapPlacesApi(
+              request: () async => http.Response('[]', 200),
+            ),
             aiRecommendationsApi: _Recommendations(),
             savedPlacesApi: SavedPlacesApi(
-              get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
-              postKakao: (_, _) async => {'place_id': 77, 'saved': true, 'saved_count': 1},
+              get: (_) async => {
+                'place_id': null,
+                'saved': false,
+                'record_count': 0,
+              },
+              postKakao: (_, _) async => {
+                'place_id': 77,
+                'saved': true,
+                'saved_count': 1,
+              },
             ),
           ),
         ),
