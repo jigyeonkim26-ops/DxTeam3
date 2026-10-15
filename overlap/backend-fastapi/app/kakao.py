@@ -4,6 +4,7 @@ import logging
 import httpx
 
 from .config import KAKAO_REST_API_KEY
+from . import recommendation_diagnostics as diagnostics
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -26,6 +27,8 @@ def search_places(query: str, *, timeout: float = 10.0):
     )
 
     # Read only counts and status for diagnostics; never log the search term or payload.
+    if isinstance(response.status_code, int):
+        diagnostics.add_count(f"kakao_http_status_{response.status_code}")
     if not response.is_success:
         logger.warning("Kakao Local response http_status=%d raw_result_count=unavailable", response.status_code)
         response.raise_for_status()
@@ -33,6 +36,8 @@ def search_places(query: str, *, timeout: float = 10.0):
     documents = payload.get("documents")
     if not isinstance(documents, list):
         raise ValueError("Invalid Kakao Local response")
+    diagnostics.add_count("kakao_successful_responses")
+    diagnostics.add_count("kakao_response_documents", len(documents))
     logger.info("Kakao Local response http_status=%d raw_result_count=%d", response.status_code, len(documents))
 
     # 받은 장소 정보를 사용하기 편한 형태로 정리

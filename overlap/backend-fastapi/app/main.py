@@ -34,6 +34,7 @@
 
 import io
 import mimetypes
+import time
 from datetime import date
 from typing import Annotated, Literal
 
@@ -45,6 +46,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from . import group_management_service, group_repository, group_service
+from . import recommendation_diagnostics
 from .db import get_db
 from .db_models import User
 from .kakao import search_places
@@ -132,6 +134,38 @@ def create_app(
             "MySQL·사진 업로드는 다음 단계입니다."
         ),
     )
+
+    @api.middleware("http")
+    async def recommendation_diagnostic_trace(request, call_next):
+        if not recommendation_diagnostics.enabled():
+            return await call_next(request)
+        db_path_token = recommendation_diagnostics.set_db_path(
+            recommendation_diagnostics.normalized_request_path(request.url.path)
+        )
+        if request.url.path != "/ai/recommendations":
+            try:
+                return await call_next(request)
+            finally:
+                recommendation_diagnostics.reset_db_path(db_path_token)
+        started = time.perf_counter()
+        token = recommendation_diagnostics.begin()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            trace = recommendation_diagnostics.trace_id()
+            if trace:
+                response.headers["X-OVERLAP-Trace-ID"] = trace
+            return response
+        except Exception:
+            recommendation_diagnostics.error("request", "unhandled_error")
+            raise
+        finally:
+            recommendation_diagnostics.finish(
+                token, status_code=status_code,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
+            recommendation_diagnostics.reset_db_path(db_path_token)
 
     api.state.service = service
     if not use_db_auth:
@@ -779,7 +813,7 @@ def create_app(
     api.include_router(comments_router(current_user))
     api.include_router(saved_places_router(current_user))
     api.include_router(notifications_router(current_user))
-    # Normal app construction uses category-v3. Existing integrations that
+    # Normal app construction uses category-v4. Existing integrations that
     # explicitly provide legacy collaborators keep their legacy test/rollout
     # behavior unless the new candidate service is also explicitly supplied.
     legacy_services_injected = any(value is not None for value in (

@@ -1,3 +1,4 @@
+import '../../../core/network/async_request_gate.dart';
 import '../../../core/network/api_transport.dart';
 
 class RecordLikeState {
@@ -22,10 +23,17 @@ class RecordLikeState {
 /// Uses the authenticated record likes endpoints without maintaining local
 /// optimistic state. The server response is always the displayed source.
 abstract final class RecordLikesApi {
-  static Future<RecordLikeState> getState(String recordId) async =>
-      RecordLikeState.fromJson(
-        await ApiTransport.get('/records/$recordId/likes'),
-      );
+  static const int maxConcurrentStateReads = 6;
+  static final AsyncRequestGate _stateReadGate = AsyncRequestGate(
+    maxConcurrentStateReads,
+  );
+
+  static Future<RecordLikeState> getState(String recordId) =>
+      _stateReadGate.run(() async {
+        return RecordLikeState.fromJson(
+          await ApiTransport.get('/records/$recordId/likes'),
+        );
+      });
 
   static Future<RecordLikeState> like(String recordId) async =>
       RecordLikeState.fromJson(

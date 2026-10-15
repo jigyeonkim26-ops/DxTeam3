@@ -35,6 +35,26 @@ def kakao_place(place_id="100", name="다정한 카페", address="광주광역�
     }
 
 
+def test_integrated_gwangju_city_alias_does_not_admit_yeonggwang_county():
+    same_region = PlaceCandidateSearchService._same_region
+    assert same_region("전남광주통합특별시 서구 상무대로", "광주")
+    assert same_region("전남광주통합특별시 동구 문화전당로", "광주")
+    assert not same_region("전남광주통합특별시 영광군 법성면", "광주")
+    assert same_region("전남광주통합특별시 영광군 법성면", "전남광주통합특별시 영광군")
+    assert same_region("전남광주통합특별시 서구 상무대로", "전남광주통합특별시 서구")
+    assert same_region("광주광역시 동구 문화전당로", "전남광주통합특별시 동구")
+    assert same_region("전남광주통합특별시 광주광역시 서구 상무대로", "광주광역시 서구")
+    assert same_region("전남광주통합특별시 서구 상무대로", "광주광역시 서구", 36.0, 128.0)
+    assert not same_region("전남광주통합특별시 영광군 법성면", "전남광주통합특별시 서구")
+
+
+def test_coordinate_envelope_does_not_reject_address_verified_place():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "1801", "서구 카페", "전남광주통합특별시 서구 상무대로", lat="36.0", lon="128.0"
+    ))
+    assert PlaceCandidateSearchService._candidate_matches_region(place, "광주")
+
+
 def cafe_preference(record_id=1, target="매장", features=("조용하고", "넓고")):
     facet = PreferenceFacet(
         target_kind=FacetTargetKind.SPACE,
@@ -305,7 +325,30 @@ def test_tavily_feature_evidence_requires_same_place_region_and_district():
     assert "https://blog.example/wrong-branch" not in str(confirmed)
 
 
-def test_tavily_is_called_for_verified_facets_but_stays_within_three_place_budget():
+def test_tavily_identity_accepts_kakao_integrated_city_alias_but_keeps_branch_and_district():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "603", "심야식당603호", "전남광주통합특별시 광주광역시 서구 상무대로",
+        code="FD6", category="음식점 > 술집",
+    ))
+    matching = {
+        "title": "심야식당 603호 광주 서구 메뉴 소개",
+        "content": "광주 서구 심야식당603호 감바스 메뉴 안내",
+    }
+    wrong_branch = {
+        "title": "심야식당 61호 광주 서구",
+        "content": "심야식당61호에서 감바스를 판매합니다.",
+    }
+    wrong_district = {
+        "title": "심야식당603호 광주 동구",
+        "content": "심야식당603호 광주 동구 감바스 메뉴",
+    }
+
+    assert PlaceCandidateSearchService._identity_matches(place, matching)
+    assert not PlaceCandidateSearchService._identity_matches(place, wrong_branch)
+    assert not PlaceCandidateSearchService._identity_matches(place, wrong_district)
+
+
+def test_tavily_is_called_for_verified_facets_but_stays_within_six_place_budget():
     tavily_queries = []
 
     def kakao(query, **kwargs):
@@ -325,7 +368,7 @@ def test_tavily_is_called_for_verified_facets_but_stays_within_three_place_budge
     )
 
     assert len(result.candidates) == 11
-    assert 0 < len(tavily_queries) <= 3
+    assert 0 < len(tavily_queries) <= 6
     assert result.tavily_call_count == len(tavily_queries)
 
 
@@ -346,8 +389,8 @@ def test_tavily_budget_samples_candidates_from_distinct_kakao_queries():
     )
 
     assert len(result.candidates) >= 3
-    assert len(tavily_names) == 3
-    assert len(set(tavily_names)) == 3
+    assert 3 <= len(tavily_names) <= 6
+    assert len(set(tavily_names)) == len(tavily_names)
 
 
 def test_region_leading_whitespace_is_normalized_before_query_and_candidate_check():
@@ -473,13 +516,100 @@ def test_all_search_spreads_six_call_budget_across_distinct_preferences_and_norm
         RecommendationCategory.ALL, "전남광주통합특별시 동구", [duplicate, cafe, activity]
     )
 
-    assert len(queries) <= PlaceCandidateSearchService.MAX_KAKAO_CALLS == 6
+    assert len(queries) <= PlaceCandidateSearchService.MAX_KAKAO_CALLS == 12
     assert queries[0].startswith("광주 동구 ")
     assert sum(len(query.split()) >= 2 and query.split()[-2] == "하이볼" for query in queries) == 0
     assert any("꼬치" in query for query in queries)
     assert any("카페" in query for query in queries)
     assert any("농구 경기" in query for query in queries)
 
+    first_batch = queries[:6]
+    assert any("\uC774\uC790\uCE74\uC57C" in query for query in first_batch)
+    assert any("\uCE74\uD398" in query for query in first_batch)
+    assert any("\uB18D\uAD6C" in query for query in first_batch)
+
+
+
+def nature_facets_for_query_fallback(count=14):
+    return [RecordPreferenceAnalysis(
+        record_id=index + 1, place_name=f"synthetic nature visit {index}",
+        place_type=PlaceType.NATURE, categories=[RecommendationCategory.NATURE],
+        emotion=RecommendationEmotionCode.LOVE, emotion_intensity=0.9,
+        evidence_status=EvidenceStatus.VERIFIED,
+        facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.ACTIVITY, target_text=f"new nature activity {index}",
+            features=[], categories=[RecommendationCategory.NATURE], polarity="liked",
+            evidence="synthetic positive activity evidence", confidence=0.9,
+        )],
+    ) for index in range(count)]
+
+
+def test_many_dynamic_nature_facets_reserve_second_batch_for_broader_place_search():
+    preferences = nature_facets_for_query_fallback()
+    queries = PlaceCandidateSearchService._build_queries(
+        RecommendationCategory.ALL, "광주", preferences
+    )
+
+    assert len(queries) == PlaceCandidateSearchService.MAX_KAKAO_CALLS == 12
+    assert all("new nature activity" in query for query in queries[:6])
+    assert "광주 산책로" in queries[6:]
+
+
+def test_generic_nature_query_recovers_real_type_candidate_after_specific_queries_are_empty():
+    queries = []
+
+    def mocked_kakao(query, **kwargs):
+        queries.append(query)
+        if query == "광주 산책로":
+            return [kakao_place(
+                "998870001", "synthetic city walking trail", "광주광역시 서구 상무대로",
+                code="AT4", category="여행 > 공원",
+            )]
+        return []
+
+    result = service(mocked_kakao, tavily_key="").search(
+        category="all", region="광주광역시 서구",
+        preferences=nature_facets_for_query_fallback(),
+        allow_region_expansion=True, kakao_call_budget=12,
+        tavily_call_budget=0, tavily_candidate_budget=0,
+    )
+
+    assert len(queries) <= 12
+    assert queries.index("광주 산책로") >= 6
+    assert len(result.candidates) == 1
+    assert result.candidates[0].place.kakao_place_id == "998870001"
+
+
+def test_low_candidate_evidence_first_stage_uses_remaining_query_offset():
+    preferences = []
+    for record_id in range(12):
+        term = f"dish{record_id}"
+        preferences.append(RecordPreferenceAnalysis(
+            record_id=record_id + 1, place_name="restaurant", place_type=PlaceType.FOOD,
+            categories=[RecommendationCategory.FOOD], emotion=RecommendationEmotionCode.LOVE,
+            emotion_intensity=0.9, evidence_status=EvidenceStatus.VERIFIED,
+            facets=[PreferenceFacet(
+                target_kind=FacetTargetKind.MENU, target_text=term, features=[],
+                categories=[RecommendationCategory.FOOD], polarity="liked", evidence=term, confidence=0.9,
+            )],
+        ))
+    calls = []
+
+    def kakao(query, **kwargs):
+        calls.append(query)
+        return [kakao_place(str(len(calls)), f"{query} branch", "\uAD11\uC8FC\uAD11\uC5ED\uC2DC \uC11C\uAD6C", code="FD6", category="\uC74C\uC2DD\uC810 > \uD55C\uC2DD")]
+
+    search = service(kakao, tavily_key="")
+    first = search.search(category=RecommendationCategory.ALL, region="\uAD11\uC8FC\uAD11\uC5ED\uC2DC \uC11C\uAD6C", preferences=preferences,
+                          kakao_call_budget=6, tavily_call_budget=0, tavily_candidate_budget=0)
+    assert first.query_count == first.kakao_call_count == 6
+    assert len(first.candidates) == 6
+    second = search.search(category=RecommendationCategory.ALL, region="\uAD11\uC8FC\uAD11\uC5ED\uC2DC \uC11C\uAD6C", preferences=preferences,
+                           query_offset=6, kakao_call_budget=6, tavily_call_budget=0, tavily_candidate_budget=0)
+    assert second.query_count == second.kakao_call_count == 6
+    assert len(second.candidates) == 6
+    assert len(calls) == 12
+    assert set(calls[:6]).isdisjoint(calls[6:])
 
 def test_analysis_failure_type_only_fallback_builds_queries_for_all_and_nature():
     from app.place_candidate_search_service import KakaoPlaceCandidate, CategoryMatchStatus
@@ -581,6 +711,150 @@ def test_identical_kakao_and_tavily_lookups_use_short_lived_cache():
     assert len(tavily_calls) == 1
 
 
+def test_tavily_diagnostic_counts_mocked_external_call_and_unique_targets(tmp_path, monkeypatch):
+    import json
+    from app import recommendation_diagnostics as diagnostics
+
+    monkeypatch.setenv("OVERLAP_ENV", "development")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS", "1")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS_FILE", str(tmp_path / "trace.jsonl"))
+    candidate = kakao_place("998877661", "synthetic quiet cafe")
+    calls = []
+
+    def mocked_tavily(url, **kwargs):
+        calls.append(kwargs["json"]["query"])
+        return tavily_response([])
+
+    token = diagnostics.begin()
+    result = service(lambda query, **kwargs: [candidate], mocked_tavily).search(
+        category="cafe", region="광주", preferences=[cafe_preference()]
+    )
+    diagnostics.finish(token, status_code=200, elapsed_ms=1)
+
+    row = json.loads((tmp_path / "trace.jsonl").read_text(encoding="utf-8"))
+    assert len(calls) == 1
+    assert result.tavily_call_count == 1
+    assert row["counts"]["tavily_calls"] == 1
+    assert row["counts"]["tavily_external_candidate_calls"] == 1
+    assert row["counts"]["tavily_unique_targets"] == 1
+    assert row["flags"]["tavily_key_configured"] is True
+    assert row["tavily_skip_reason"] == "none"
+
+
+def test_region_filter_diagnostics_use_normalized_kakao_place_ids(tmp_path, monkeypatch):
+    import json
+    from app import recommendation_diagnostics as diagnostics
+
+    monkeypatch.setenv("OVERLAP_ENV", "development")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS", "1")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS_FILE", str(tmp_path / "trace.jsonl"))
+
+    def normalized_place(place_id):
+        return {
+            "kakao_place_id": place_id,
+            "name": f"synthetic cafe {place_id}",
+            "address": "서울특별시 종로구 세종대로 1",
+            "latitude": 37.57,
+            "longitude": 126.98,
+            "category_group_code": "CE7",
+            "category_name": "카페 > 커피전문점",
+            "place_url": f"https://place.map.kakao.com/{place_id}",
+        }
+
+    raw_places = [normalized_place("71001"), normalized_place("71002")]
+    token = diagnostics.begin()
+    result = service(lambda query, **kwargs: raw_places, tavily_key="").search(
+        category="cafe", region="광주 서구", preferences=[cafe_preference()]
+    )
+    diagnostics.finish(token, status_code=200, elapsed_ms=1)
+
+    row = json.loads((tmp_path / "trace.jsonl").read_text(encoding="utf-8"))
+    rejected_keys = {
+        decision["candidate_key"] for decision in row["candidate_decisions"]
+        if decision["stage"] == "region_filter"
+    }
+    assert result.candidates == []
+    assert row["counts"]["excluded_region_unique_places"] == 2
+    assert len(rejected_keys) == 2
+
+
+def test_tavily_diagnostic_records_safe_identity_failure_and_cache_state(tmp_path, monkeypatch):
+    import json
+    from app import recommendation_diagnostics as diagnostics
+
+    monkeypatch.setenv("OVERLAP_ENV", "development")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS", "1")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS_FILE", str(tmp_path / "trace.jsonl"))
+    private_name = "synthetic private cafe name"
+    candidate = KakaoPlaceCandidate(
+        kakao_place_id="919191", place_name=private_name, address="Gwangju Seo-gu Main Street",
+        latitude=35.15, longitude=126.85, category_group_code="CE7",
+        category_name="Cafe > Coffee", place_url="https://place.map.kakao.com/919191",
+    )
+
+    calls = []
+
+    def mocked_tavily(url, **kwargs):
+        calls.append(kwargs["json"]["query"])
+        return tavily_response([{
+            "title": private_name,
+            "content": "Gwangju Seo-gu listing without matching preference detail",
+            "url": "https://source.example/synthetic",
+        }])
+
+    subject = service(lambda query, **kwargs: [candidate.model_dump()], mocked_tavily)
+    token = diagnostics.begin()
+    first = subject.search(category="cafe", region="Gwangju", preferences=[cafe_preference()])
+    diagnostics.finish(token, status_code=200, elapsed_ms=1)
+    token = diagnostics.begin()
+    subject.search(category="cafe", region="Gwangju", preferences=[cafe_preference()])
+    diagnostics.finish(token, status_code=200, elapsed_ms=1)
+
+    rows = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert first.tavily_call_count == 1
+    assert len(rows[0]["tavily_diagnostics"]) == 1
+    assert len(rows[1]["tavily_diagnostics"]) == 1
+    result, cached_result = rows[0]["tavily_diagnostics"][0], rows[1]["tavily_diagnostics"][0]
+    assert len(calls) == 1
+    assert result["request_status"] == "response_ok"
+    assert result["result_count"] == 1
+    assert result["identity_match_count"] == 0
+    assert result["confirmed_term_count"] == 0
+    assert result["place_name_match"] is True
+    assert result["region_match"] is True
+    assert result["locality_match"] is True
+    assert result["cache_used"] is False
+    assert result["rejection_reason"] == "place_identity_not_verified"
+    assert cached_result["request_status"] == "cache_hit"
+    assert cached_result["cache_used"] is True
+    serialized = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert private_name not in serialized
+    assert "source.example" not in serialized
+
+
+def test_tavily_candidate_or_call_budget_zero_never_invokes_external_provider():
+    calls = []
+    candidate = kakao_place("998877662", "synthetic budget cafe")
+
+    def mocked_tavily(*args, **kwargs):
+        calls.append(kwargs)
+        return tavily_response([])
+
+    subject = service(lambda query, **kwargs: [candidate], mocked_tavily)
+    no_candidates = subject.search(
+        category="cafe", region="광주", preferences=[cafe_preference()],
+        tavily_call_budget=6, tavily_candidate_budget=0,
+    )
+    no_calls = subject.search(
+        category="cafe", region="광주", preferences=[cafe_preference()],
+        tavily_call_budget=0, tavily_candidate_budget=1,
+    )
+
+    assert no_candidates.tavily_call_count == 0
+    assert no_calls.tavily_call_count == 0
+    assert calls == []
+
+
 def test_missing_kakao_or_tavily_configuration_fails_closed_without_losing_place():
     no_kakao = service(lambda *a, **k: [], kakao_key="")
     missing = no_kakao.search(category="cafe", region="광주", preferences=[cafe_preference()])
@@ -633,7 +907,7 @@ def test_tavily_budget_prefers_candidates_from_strong_facet_queries():
     selected_strong = any(query.startswith("Z Strong Facet Izakaya ") for query in tavily_queries)
     strong_candidate = next(item for item in result.candidates if item.place.kakao_place_id == "9901")
     assert len(result.candidates) == 4
-    assert len(tavily_queries) == 3
+    assert 0 < len(tavily_queries) <= 6
     assert selected_strong
     assert strong_candidate.search_query_priority > min(
         item.search_query_priority for item in result.candidates if item.place.kakao_place_id != "9901"

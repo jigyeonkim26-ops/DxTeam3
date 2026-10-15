@@ -49,3 +49,4 @@ class RecommendedPlace(BaseModel):
 class PlaceRecommendationResponse(BaseModel):
     # The service ranks a bounded, verified pool; the API returns at most three per page.
     recommendations: list[RecommendedPlace] = Field(default_factory=list, max_length=10)
+    session_status: Literal["available", "exhausted", "empty"] = "available"

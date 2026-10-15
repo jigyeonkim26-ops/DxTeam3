@@ -77,7 +77,7 @@ def _result(candidates):
     )
 
 
-def test_all_ranks_verified_mixed_preferences_above_category_only_and_ignores_search_order():
+def test_only_verified_mixed_preference_matches_rank_when_categories_have_no_matching_subtype():
     analyses = RecordPreferenceAnalysisResponse(analyses=[
         _analysis(1, PlaceType.BAR, Category.BAR, "citrus highball", FacetTargetKind.DRINK),
         _analysis(5, PlaceType.BAR, Category.BAR, "skewers", FacetTargetKind.FOOD),
@@ -102,18 +102,18 @@ def test_all_ranks_verified_mixed_preferences_above_category_only_and_ignores_se
 
     ranked = _build_category_recommendations(_result(candidates), analyses, Category.ALL)
 
-    assert [item.kakao_place_id for item in ranked] == ["13", "14", "11", "12", "10"]
+    # Broad categories alone do not establish the recorded quiet-space,
+    # cheering, or scenery preferences.
+    assert [item.kakao_place_id for item in ranked] == ["13", "14"]
     assert ranked[0].matched_keywords == ["citrus highball"]
     assert "skewers" in ranked[1].reason
     assert ranked[0].reason != ranked[1].reason
     assert "Tavily" not in ranked[0].reason and "Kakao" not in ranked[0].reason
     assert all("Unrelated Parking" != item.name for item in ranked)
     assert ranked[0].match_score == ranked[1].match_score
-    assert "\uD655\uC778\uB3FC\uC11C" in ranked[0].reason
-    assert "\uAC00\uBCF4\uC154\uB3C4 \uC88B\uC744 \uAC83 \uAC19\uC544\uC694" in ranked[0].reason
 
 
-def test_type_only_is_weak_honest_level_b_and_unrelated_category_is_excluded():
+def test_generic_category_only_is_excluded_even_when_user_likes_the_broad_field():
     analyses = RecordPreferenceAnalysisResponse(analyses=[
         _analysis(1, PlaceType.CAFE, Category.CAFE, "indoor space", FacetTargetKind.SPACE,
                   features=("quiet",)),
@@ -124,12 +124,7 @@ def test_type_only_is_weak_honest_level_b_and_unrelated_category_is_excluded():
         _candidate(21, "Unrelated Restaurant", [Category.FOOD]),
     ]), analyses, Category.ALL)
 
-    assert len(ranked) == 1
-    assert ranked[0].kakao_place_id == "20"
-    assert ranked[0].matched_keywords == []
-    assert ranked[0].match_score <= 0.30
-    assert "카페" in ranked[0].reason
-    assert "조용" not in ranked[0].reason
+    assert ranked == []
 
     bar_analysis = RecordPreferenceAnalysisResponse(analyses=[
         _analysis(2, PlaceType.BAR, Category.BAR, "yuzu highball", FacetTargetKind.DRINK),
@@ -137,10 +132,8 @@ def test_type_only_is_weak_honest_level_b_and_unrelated_category_is_excluded():
     bar = _build_category_recommendations(_result([
         _candidate(22, "Izakaya without menu evidence", [Category.BAR], preference="yuzu highball",
                    evidence_status=FeatureEvidenceStatus.UNAVAILABLE),
-    ]), bar_analysis, Category.ALL)[0]
-    assert "\uC220\uC9D1" in bar.reason
-    assert "yuzu highball" not in bar.reason
-    assert bar.reason != ranked[0].reason
+    ]), bar_analysis, Category.ALL)
+    assert bar == []
 
 
 def test_known_place_type_without_concrete_preferences_does_not_create_a_recommendation():
@@ -157,7 +150,7 @@ def test_known_place_type_without_concrete_preferences_does_not_create_a_recomme
     assert ranked == []
 
 
-def test_overlapping_category_labels_do_not_double_count_one_record_type_support():
+def test_overlapping_broad_category_labels_do_not_create_type_level_support():
     analysis = RecordPreferenceAnalysis(
         record_id=90, place_name="synthetic cafe", place_type=PlaceType.CAFE,
         categories=[Category.CAFE, Category.FOOD], emotion="LOVE", emotion_intensity=1.0,
@@ -172,9 +165,7 @@ def test_overlapping_category_labels_do_not_double_count_one_record_type_support
 
     ranked = _build_category_recommendations(_result([candidate]), analyses, Category.ALL)
 
-    assert len(ranked) == 1
-    assert ranked[0].match_score == pytest.approx(0.12)
-    assert ranked[0].matched_keywords == []
+    assert ranked == []
 
 
 def test_first_page_breaks_near_ties_toward_a_distinct_verified_preference():
@@ -209,8 +200,7 @@ def test_confirmed_tavily_feature_requires_same_record_facet_for_level_a():
 
     mismatched_record = _build_category_recommendations(_result([candidate]), analyses, Category.ALL)
 
-    assert len(mismatched_record) == 1
-    assert mismatched_record[0].matched_keywords == []
+    assert mismatched_record == []
 
     matching_candidate = _candidate(92, "Synthetic Izakaya With Menu", [Category.BAR],
                                     preference="yuzu highball", record_id=91,
@@ -219,3 +209,166 @@ def test_confirmed_tavily_feature_requires_same_record_facet_for_level_a():
 
     assert len(matched) == 1
     assert matched[0].matched_keywords == ["yuzu highball"]
+
+
+def test_rejection_diagnostics_are_anonymous_and_explain_category_and_evidence_gates(tmp_path, monkeypatch):
+    import json
+    from app import recommendation_diagnostics as diagnostics
+
+    monkeypatch.setenv("OVERLAP_ENV", "development")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS", "1")
+    monkeypatch.setenv("OVERLAP_AI_DIAGNOSTICS_FILE", str(tmp_path / "trace.jsonl"))
+    private_term = "private synthetic preference"
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(501, PlaceType.CAFE, Category.CAFE, private_term, FacetTargetKind.SPACE),
+    ])
+    unknown_category = _candidate(
+        601, "private synthetic unknown venue", [], category_status=CategoryMatchStatus.UNKNOWN,
+    )
+    missing_feature = _candidate(
+        602, "private synthetic cafe", [Category.CAFE], preference=private_term,
+        evidence_status=FeatureEvidenceStatus.INSUFFICIENT,
+    )
+
+    token = diagnostics.begin()
+    assert _build_category_recommendations(_result([unknown_category, missing_feature]), analyses, Category.ALL) == []
+    diagnostics.finish(token, status_code=200, elapsed_ms=1)
+    row = json.loads((tmp_path / "trace.jsonl").read_text(encoding="utf-8"))
+
+    category = next(item for item in row["category_diagnostics"]
+                    if item["status"] == "unknown")
+    assert category["category_present"] is True
+    assert category["group_code_class"] == "food"
+    assert category["category_name_mapped"] is False
+    assert category["mapped_categories"] == []
+    assert category["reason"] == "no_recognized_category_evidence"
+
+    category_gate = next(item for item in row["personalization_diagnostics"]
+                         if item["reason"] == "category_not_confirmed")
+    assert category_gate["positive_category_present"] is None
+    assert category_gate["linkable_positive_facet_count"] is None
+
+    personalization = next(item for item in row["personalization_diagnostics"]
+                           if item["reason"] == "category_affinity_below_threshold")
+    assert personalization["positive_category_present"] is True
+    assert personalization["linkable_positive_facet_count"] == 1
+    assert personalization["matched_positive_facet_count"] == 0
+    assert personalization["type_evidence_accepted"] is False
+    assert personalization["category_affinity_record_count"] == 1
+    assert personalization["category_affinity_distinct_target_count"] == 1
+    assert private_term not in (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "private synthetic" not in (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("place_type", "category", "facet_kind", "preference", "category_path"), [
+    (PlaceType.FOOD, Category.FOOD, FacetTargetKind.MENU, "\ud55c\uc2dd", "\uc74c\uc2dd\uc810 > \ud55c\uc2dd"),
+    (PlaceType.CAFE, Category.CAFE, FacetTargetKind.SPACE, "\ucee4\ud53c\uc804\ubb38\uc810", "\uce74\ud398 > \ucee4\ud53c\uc804\ubb38\uc810"),
+    (PlaceType.ACTIVITY, Category.ACTIVITY, FacetTargetKind.ACTIVITY, "\ubbf8\uc220\uad00", "\ubb38\ud654,\uc608\uc220 > \ubbf8\uc220\uad00"),
+])
+def test_specific_kakao_subtype_matching_positive_facet_can_qualify_as_b(
+        place_type, category, facet_kind, preference, category_path):
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(701, place_type, category, preference, facet_kind),
+    ])
+    candidate = _candidate(702, "Synthetic Specific Venue", [category])
+    candidate.place.category_name = category_path
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    ranked = _build_category_recommendations(_result([candidate]), analyses, Category.ALL)
+
+    assert len(ranked) == 1
+    assert ranked[0].matched_keywords == [preference]
+    assert category_path.split(" > ")[-1] in ranked[0].reason
+    assert ranked[0].match_score < 0.5
+    assert "맛볼 수" not in ranked[0].reason
+
+
+def test_generic_kakao_business_category_does_not_qualify_as_b():
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(711, PlaceType.CAFE, Category.CAFE, "\uc870\uc6a9\ud55c \uacf5\uac04", FacetTargetKind.SPACE),
+    ])
+    candidate = _candidate(712, "Synthetic Generic Cafe", [Category.CAFE])
+    candidate.place.category_name = "\uce74\ud398 > \uce74\ud398"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    assert _build_category_recommendations(_result([candidate]), analyses, Category.ALL) == []
+
+
+def test_tourism_group_without_nature_or_activity_subtype_does_not_get_type_grade_b():
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(721, PlaceType.NATURE, Category.NATURE, "\uc0b0\ucc45", FacetTargetKind.ACTIVITY),
+    ])
+    candidate = _candidate(722, "Synthetic Tourist Attraction", [Category.NATURE])
+    candidate.place.category_group_code = "AT4"
+    candidate.place.category_name = "\uc5ec\ud589 > \uad00\uad11\uba85\uc18c"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    assert _build_category_recommendations(_result([candidate]), analyses, Category.ALL) == []
+
+
+def test_unseen_preference_subtype_is_dynamic_and_single_positive_record_can_qualify():
+    preference = "도자기 공예"
+    analysis = _analysis(
+        731, PlaceType.ACTIVITY, Category.ACTIVITY, preference, FacetTargetKind.ACTIVITY,
+        intensity=0.8,
+    )
+    analyses = RecordPreferenceAnalysisResponse(analyses=[analysis])
+    candidate = _candidate(732, "Synthetic Workshop", [Category.ACTIVITY])
+    candidate.place.category_name = "공방 > 도자기 공예"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    ranked = _build_category_recommendations(_result([candidate]), analyses, Category.ALL)
+
+    assert len(ranked) == 1
+    assert ranked[0].matched_keywords == [preference]
+    assert "도자기 공예" in ranked[0].reason
+    assert ranked[0].match_score < 0.5
+
+
+def test_explicit_disliked_matching_kakao_subtype_is_excluded():
+    analysis = _analysis(
+        741, PlaceType.FOOD, Category.FOOD, "very spicy food", FacetTargetKind.MENU,
+    )
+    analysis.facets = [analysis.facets[0].model_copy(update={"polarity": "disliked"})]
+    analyses = RecordPreferenceAnalysisResponse(analyses=[analysis])
+    candidate = _candidate(742, "Synthetic Spicy Restaurant", [Category.FOOD])
+    candidate.place.category_name = "restaurant > very spicy food"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    assert _build_category_recommendations(_result([candidate]), analyses, Category.ALL) == []
+
+
+@pytest.mark.parametrize("category", [
+    Category.FOOD, Category.BAR, Category.CAFE, Category.NATURE, Category.ACTIVITY,
+])
+def test_repeated_broad_positive_category_supports_low_priority_b_without_claiming_a_feature(category):
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(801 + index, PlaceType.NATURE if category == Category.NATURE else PlaceType.FOOD,
+                  category, f"recorded target {index}", FacetTargetKind.OTHER,
+                  intensity=(0.7 + index * 0.05))
+        for index in range(3)
+    ])
+    candidate = _candidate(811, "Synthetic Confirmed Category Venue", [category])
+    candidate.place.category_name = "synthetic broad category"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    ranked = _build_category_recommendations(_result([candidate]), analyses, Category.ALL)
+
+    assert len(ranked) == 1
+    assert ranked[0].match_score < 0.35
+    assert ranked[0].matched_keywords == []
+    assert all(f"recorded target {index}" not in ranked[0].reason for index in range(3))
+    assert "Synthetic Confirmed Category Venue" in ranked[0].reason
+
+
+def test_repeated_single_specific_preference_does_not_expand_to_broad_category_affinity():
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(821 + index, PlaceType.FOOD, Category.FOOD,
+                  "single repeated specific menu", FacetTargetKind.MENU)
+        for index in range(4)
+    ])
+    candidate = _candidate(831, "Synthetic Unrelated Restaurant", [Category.FOOD])
+    candidate.place.category_name = "restaurant > restaurant"
+    candidate.feature_search_status = FeatureEvidenceStatus.UNAVAILABLE
+
+    assert _build_category_recommendations(_result([candidate]), analyses, Category.ALL) == []

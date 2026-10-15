@@ -36,6 +36,18 @@ class _EmptyRecommendations extends AiRecommendationsApi {
   Future<List<AiPlaceRecommendation>> load() async => [];
 }
 
+class _ExhaustedRecommendations extends AiRecommendationsApi {
+  var calls = 0;
+
+  @override
+  Future<List<AiPlaceRecommendation>> load() async {
+    calls++;
+    if (calls == 1) return [recommendation];
+    sessionStatus = 'exhausted';
+    return [];
+  }
+}
+
 Widget card(
   SavedPlacesApi api,
   VoidCallback onTap, {
@@ -74,8 +86,38 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('이 분야에서 취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
+    expect(find.text('취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
     expect(find.text('다시 추천받기'), findsOneWidget);
+  });
+
+  testWidgets('exhausted refresh keeps cards and shows a separate notice', (
+    tester,
+  ) async {
+    final recommendationsApi = _ExhaustedRecommendations();
+    final savedApi = SavedPlacesApi(
+      get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AiRecommendationContent(
+            api: recommendationsApi,
+            savedPlacesApi: savedApi,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(recommendation.name), findsOneWidget);
+
+    await tester.tap(find.text('다음 장소 추천받기'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(recommendation.name), findsOneWidget);
+    expect(find.text('1곳'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsOneWidget);
+    expect(find.text('다음 장소 추천받기'), findsNothing);
+    expect(recommendationsApi.calls, 2);
   });
 
   testWidgets(

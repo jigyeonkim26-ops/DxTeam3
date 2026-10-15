@@ -157,7 +157,115 @@ def test_category_api_integrates_analysis_kakao_candidates_and_tavily_evidence()
         assert "Kakao" not in payload[0]["reason"]
         assert search.calls[0]["category"] == RecommendationCategory.ALL
         assert search.calls[0]["region"] == "광주"
+        assert search.calls[0]["allow_region_expansion"] is False
         assert search.calls[0]["preferences"][0].facets[0].target_text == "유자하이볼"
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_initially_empty_session_can_retry_after_cooldown_and_reuses_analysis(monkeypatch):
+    class CountingAnalysis(Analysis):
+        def __init__(self):
+            self.calls = 0
+
+        def analyze(self, records, *, category):
+            self.calls += 1
+            return super().analyze(records, category=category)
+
+    class NoCandidates(CandidateSearch):
+        def search(self, **kwargs):
+            self.calls.append(kwargs)
+            return CandidateSearch().search(**kwargs).model_copy(update={
+                "query_count": 6, "candidates": [],
+            })
+
+    analysis = CountingAnalysis()
+    search = NoCandidates()
+    monkeypatch.setattr(ai_recommendations, "_EMPTY_SESSION_RETRY_COOLDOWN_SECONDS", 30)
+    client, engine, headers = _client(search, preference_analysis=analysis)
+    try:
+        first = client.get("/ai/recommendations?region=%EA%B4%91%EC%A3%BC", headers=headers)
+        cached = client.get("/ai/recommendations?refresh=true&region=%EA%B4%91%EC%A3%BC", headers=headers)
+        assert first.status_code == cached.status_code == 200
+        assert first.json()["session_status"] == cached.json()["session_status"] == "empty"
+        assert len(search.calls) == 2
+        assert analysis.calls == 1
+
+        monkeypatch.setattr(ai_recommendations, "_EMPTY_SESSION_RETRY_COOLDOWN_SECONDS", 0)
+        retried = client.get("/ai/recommendations?refresh=true&region=%EA%B4%91%EC%A3%BC", headers=headers)
+        assert retried.status_code == 200
+        assert retried.json()["session_status"] == "empty"
+        assert len(search.calls) == 4
+        assert analysis.calls == 1
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_personalized_underfill_triggers_second_mock_search_stage_with_remaining_budgets():
+    class TwoStageSearch(CandidateSearch):
+        def search(self, **kwargs):
+            result = super().search(**kwargs)
+            if kwargs["query_offset"] == 0:
+                return result.model_copy(update={"query_count": 6})
+            original = result.candidates[0]
+            place = original.place.model_copy(update={
+                "kakao_place_id": "987655", "place_name": "Second verified izakaya",
+                "place_url": "https://place.map.kakao.com/987655",
+            })
+            return result.model_copy(update={"query_count": 6, "candidates": [original.model_copy(update={"place": place})]})
+
+    search = TwoStageSearch()
+    client, engine, headers = _client(search)
+    try:
+        response = client.get("/ai/recommendations?category=bar&region=%EA%B4%91%EC%A3%BC", headers=headers)
+        assert response.status_code == 200, response.text
+        assert len(response.json()["recommendations"]) == 2
+        assert [call["query_offset"] for call in search.calls] == [0, 6]
+        assert all(call["kakao_call_budget"] == 6 for call in search.calls)
+        assert all(call["tavily_call_budget"] == 3 for call in search.calls)
+        assert all(call["tavily_candidate_budget"] == 3 for call in search.calls)
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_three_eligible_personalized_places_skip_continuation_search():
+    class SufficientSearch(CandidateSearch):
+        def search(self, **kwargs):
+            result = super().search(**kwargs)
+            base = result.candidates[0]
+            candidates = []
+            for index in range(3):
+                place_id = f"98765{index}"
+                place = base.place.model_copy(update={
+                    "kakao_place_id": place_id, "place_name": f"Verified izakaya {index}",
+                    "place_url": f"https://place.map.kakao.com/{place_id}",
+                })
+                candidates.append(base.model_copy(update={"place": place}))
+            return result.model_copy(update={"query_count": 6, "candidates": candidates})
+
+    search = SufficientSearch()
+    client, engine, headers = _client(search)
+    try:
+        response = client.get("/ai/recommendations?category=bar&region=%EA%B4%91%EC%A3%BC", headers=headers)
+        assert response.status_code == 200, response.text
+        assert len(response.json()["recommendations"]) == 3
+        assert len(search.calls) == 1
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_automatically_inferred_region_enables_only_locality_broadening():
+    search = CandidateSearch()
+    client, engine, headers = _client(search)
+    try:
+        response = client.get("/ai/recommendations", headers=headers)
+        assert response.status_code == 200, response.text
+        assert search.calls[0]["region"] == "광주광역시 동구"
+        assert search.calls[0]["allow_region_expansion"] is True
     finally:
         client.close()
         engine.dispose()
@@ -170,13 +278,19 @@ def test_category_api_does_not_return_uncertain_place_classification():
         response = client.get("/ai/recommendations?category=bar&region=%EA%B4%91%EC%A3%BC", headers=headers)
         assert response.status_code == 200, response.text
         assert response.json()["recommendations"] == []
+        retry = client.get("/ai/recommendations?category=bar&region=%EA%B4%91%EC%A3%BC&refresh=true", headers=headers)
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["recommendations"] == []
+        assert len(search.calls) == 1
     finally:
         client.close()
         engine.dispose()
 
 
 def test_recommendation_response_model_remains_backward_compatible():
-    assert PlaceRecommendationResponse().model_dump() == {"recommendations": []}
+    assert PlaceRecommendationResponse().model_dump() == {
+        "recommendations": [], "session_status": "available",
+    }
 
 
 def test_analysis_fingerprint_isolated_by_user_record_identity():
@@ -297,7 +411,7 @@ def test_default_create_app_uses_category_pipeline_for_every_category_and_cache(
         cached = client.get("/ai/recommendations?refresh=true", headers=headers)
         assert cached.status_code == 200
         assert len(search_calls) == before
-        assert any("pipeline=%s" in message and "category=%s" in message and "category-v3" in args and "all" in args for message, args in log_messages)
+        assert any("pipeline=%s" in message and "category=%s" in message and "category-v6" in args and "all" in args for message, args in log_messages)
         assert not any("legacy-tavily-v2" in args for _, args in log_messages)
     finally:
         client.close()
@@ -329,12 +443,12 @@ def test_legacy_category_requests_return_one_integrated_mixed_domain_list():
         def search(self, **kwargs):
             search_calls.append(kwargs["category"])
             definitions = [
-                ("5001", "Food candidate", RecommendationCategory.FOOD, "FD6"),
-                ("5002", "Bar candidate", RecommendationCategory.BAR, "FD6"),
-                ("5003", "Cafe candidate", RecommendationCategory.CAFE, "CE7"),
+                ("5001", "Food candidate", RecommendationCategory.FOOD, "FD6", 11, "noodles"),
+                ("5002", "Bar candidate", RecommendationCategory.BAR, "FD6", 12, "highball"),
+                ("5003", "Cafe candidate", RecommendationCategory.CAFE, "CE7", 13, "quiet room"),
             ]
             candidates = []
-            for place_id, name, domain, code in definitions:
+            for place_id, name, domain, code, record_id, preference in definitions:
                 place = KakaoPlaceCandidate(
                     kakao_place_id=place_id, place_name=name, address="Gwangju Dong-gu",
                     latitude=35.1, longitude=126.9, category_group_code=code,
@@ -346,7 +460,13 @@ def test_legacy_category_requests_return_one_integrated_mixed_domain_list():
                         requested_category=RecommendationCategory.ALL, categories=[domain],
                         status=CategoryMatchStatus.CONFIRMED, evidence=["mock Kakao category"],
                     ),
-                    preference_evidence=[], feature_search_status=FeatureEvidenceStatus.UNAVAILABLE,
+                    preference_evidence=[PreferenceEvidence(
+                        record_id=record_id, preference=preference,
+                        status=FeatureEvidenceStatus.CONFIRMED,
+                        evidence_text=f"Verified {preference} at this exact place.",
+                        evidence_url=f"https://example.test/place/{place_id}",
+                    )],
+                    feature_search_status=FeatureEvidenceStatus.CONFIRMED,
                 ))
             return CandidateSearchResult(
                 category=kwargs["category"], region=kwargs["region"],

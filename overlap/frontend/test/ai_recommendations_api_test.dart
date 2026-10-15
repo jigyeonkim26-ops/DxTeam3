@@ -26,6 +26,7 @@ void main() {
         paths.add(path);
         call++;
         return {
+          'session_status': call == 1 ? 'available' : 'exhausted',
           'recommendations': [
             recommendation(call == 1 || call == 3 ? '12345' : '23456'),
           ],
@@ -34,7 +35,9 @@ void main() {
     );
 
     expect((await api.load()).single.kakaoPlaceId, '12345');
+    expect(api.sessionStatus, 'available');
     expect((await api.load()).single.kakaoPlaceId, '23456');
+    expect(api.sessionStatus, 'exhausted');
     expect((await api.load()).single.kakaoPlaceId, '12345');
     expect(paths, [
       '/ai/recommendations',

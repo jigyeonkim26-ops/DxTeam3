@@ -3,6 +3,7 @@ from app.place_candidate_search_service import (
     CandidateSearchResult,
     CategoryMatchStatus,
     FeatureEvidenceStatus,
+    PreferenceEvidence,
     KakaoPlaceCandidate,
     PlaceCandidateEvidence,
     PlaceCategoryClassification,
@@ -58,8 +59,14 @@ def test_tie_break_prefers_facet_search_provenance_without_changing_score_or_evi
                 status=CategoryMatchStatus.CONFIRMED,
                 evidence=["synthetic Kakao category"],
             ),
-            preference_evidence=[],
-            feature_search_status=FeatureEvidenceStatus.UNAVAILABLE,
+            preference_evidence=[PreferenceEvidence(
+                record_id=7,
+                preference="quiet",
+                status=FeatureEvidenceStatus.CONFIRMED,
+                evidence_text="A quiet room was verified.",
+                evidence_url=f"https://example.test/place/{place_id}",
+            )],
+            feature_search_status=FeatureEvidenceStatus.CONFIRMED,
             search_query_priority=priority,
         )
 
@@ -80,5 +87,5 @@ def test_tie_break_prefers_facet_search_provenance_without_changing_score_or_evi
 
     assert [item.kakao_place_id for item in ranked] == ["2", "1"]
     assert ranked[0].match_score == ranked[1].match_score
-    assert ranked[0].matched_keywords == ranked[1].matched_keywords == []
-    assert ranked[0].match_score <= 0.30
+    assert ranked[0].matched_keywords == ranked[1].matched_keywords == ["quiet"]
+    assert ranked[0].match_score > 0.30

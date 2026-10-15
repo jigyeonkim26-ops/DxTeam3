@@ -76,8 +76,9 @@ def test_thirteen_record_analysis_failure_still_searches_all_and_nature_and_rank
         assert result.candidates
         recommendations = _build_category_recommendations(result, analyses, selected_category)
         assert recommendations
-        assert recommendations[0].match_score <= 0.30
-        assert "자연·산책" in recommendations[0].reason
+        assert recommendations[0].match_score <= 0.45
+        assert "산책" in recommendations[0].matched_keywords
+        assert "공원" in recommendations[0].reason
 
     assert any("산책로" in query for query in kakao_queries)
     assert any("유자하이볼" in query for query in kakao_queries)

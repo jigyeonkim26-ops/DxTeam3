@@ -1,6 +1,6 @@
 """Evidence-grounded analysis and bounded offline fallback for record preferences.
 
-The category-v3 recommendation API consumes this module. Optional trusted
+The category-v4 recommendation API consumes this module. Optional trusted
 place-category metadata can be supplied without a database schema change.
 """
 
@@ -17,6 +17,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
+from . import recommendation_diagnostics as diagnostics
 from .recommendation_record_adapter import RecommendationEmotionCode, RecommendationRecord
 
 logger = logging.getLogger("uvicorn.error")
@@ -123,6 +124,42 @@ _SAFE_PROVIDER_PARAM_COMPONENTS = frozenset({
     "confidence", "provider", "require_parameters", "messages", "model",
     "temperature", "max_tokens", "stream",
 })
+_ARRAY_FIELDS = frozenset({"categories", "facets", "features"})
+
+
+def _normalize_singleton_arrays(raw_item: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """Repair only unambiguous singleton arrays returned as scalars/objects."""
+    item = dict(raw_item)
+    repairs = 0
+
+    def singleton(value: Any, *, object_only: bool = False) -> Any:
+        nonlocal repairs
+        if isinstance(value, list):
+            return value
+        if object_only and not isinstance(value, dict):
+            return value
+        if not object_only and not isinstance(value, str):
+            return value
+        repairs += 1
+        return [value]
+
+    for field in ("categories", "facets"):
+        if field in item:
+            item[field] = singleton(item[field], object_only=(field == "facets"))
+    facets = item.get("facets")
+    if isinstance(facets, list):
+        normalized_facets = []
+        for facet in facets:
+            if not isinstance(facet, dict):
+                normalized_facets.append(facet)
+                continue
+            facet = dict(facet)
+            for field in ("categories", "features"):
+                if field in facet:
+                    facet[field] = singleton(facet[field])
+            normalized_facets.append(facet)
+        item["facets"] = normalized_facets
+    return item, repairs
 
 # Local names are treated as a hint only. Ambiguous terms such as "마켓" and
 # "라운지" deliberately remain unknown and can be resolved by structured LLM.
@@ -191,6 +228,13 @@ _FALLBACK_TERMS = (
     ("풍경", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
     ("노을", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
     ("산책", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
+    ("산책로", FacetTargetKind.ACTIVITY, RecommendationCategory.NATURE),
+    ("등산", FacetTargetKind.ACTIVITY, RecommendationCategory.NATURE),
+    ("트레킹", FacetTargetKind.ACTIVITY, RecommendationCategory.NATURE),
+    ("숲길", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
+    ("수목원", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
+    ("전망", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
+    ("자연경관", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
     ("공원", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
     ("무등산", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
     ("자연", FacetTargetKind.SCENERY, RecommendationCategory.NATURE),
@@ -413,6 +457,8 @@ class RecordPreferenceAnalysisService:
                     "Analyze each memory independently. Return one JSON object with a top-level records array. "
                     "Each record object must contain record_id, place_type, place_type_label, place_type_evidence, categories, and facets. "
                     "Each facet object must contain target_kind, target_text, features, categories, polarity, evidence, and confidence. "
+                    "categories, facets, and features are ALWAYS JSON arrays, even with one item; use [] when empty. "
+                    "Example shapes: categories=[\"food\"], features=[\"literal phrase\"], facets=[{...}]. Never emit a scalar for these fields. "
                     "Use place_type from food, bar, cafe, nature, activity, unknown; categories from all, food, bar, cafe, nature, activity; "
                     "target_kind from menu, drink, food, ambience, space, activity, scenery, service, facility, other; "
                     "polarity from liked, disliked, neutral. Use null for an unknown place type label or evidence. "
@@ -432,7 +478,7 @@ class RecordPreferenceAnalysisService:
             ],
             "response_format": {"type": "json_object"},
             "provider": {"require_parameters": True},
-            "temperature": 0,
+                "temperature": 0,
             "max_tokens": self._max_output_tokens(len(selected)),
             "stream": False,
         }
@@ -502,9 +548,11 @@ class RecordPreferenceAnalysisService:
                 "pydantic_validation_error": 0,
             }
             pydantic_error_types: Counter[str] = Counter()
+            pydantic_error_fields: Counter[str] = Counter()
             missing_required_names: Counter[str] = Counter()
             evidence_rejected_facets = 0
             evidence_failure_counts: Counter[str] = Counter()
+            singleton_array_repairs = 0
             stage = "record_validation"
             for raw_item in raw["records"]:
                 if not isinstance(raw_item, dict):
@@ -517,6 +565,8 @@ class RecordPreferenceAnalysisService:
                 if record_id in parsed_by_id:
                     record_failures["duplicate_record_id"] += 1
                     continue
+                raw_item, repaired = _normalize_singleton_arrays(raw_item)
+                singleton_array_repairs += repaired
                 if not required_fields.issubset(raw_item):
                     record_failures["required_fields_missing"] += 1
                     for missing_name in required_fields.difference(raw_item):
@@ -540,6 +590,9 @@ class RecordPreferenceAnalysisService:
                         error_type = validation_error.get("type")
                         if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,60}", error_type):
                             pydantic_error_types[error_type] += 1
+                        loc = validation_error.get("loc", ())
+                        if loc and all(isinstance(part, int) or part in _SAFE_PROVIDER_PARAM_COMPONENTS for part in loc):
+                            pydantic_error_fields[".".join(str(part) for part in loc)[:180]] += 1
                     continue
                 pydantic_validated_count += 1
                 source = source_by_id[record_id]
@@ -592,6 +645,16 @@ class RecordPreferenceAnalysisService:
                     update={"evidence_status": EvidenceStatus.UNAVAILABLE}
                 ))
             fallback_count = len(selected) - len(parsed_by_id)
+            diagnostics.add_count("analysis_provider_success_records", len(parsed_by_id))
+            diagnostics.add_count("analysis_local_fallback_records", fallback_count)
+            diagnostics.add_count("analysis_pydantic_validated_records", pydantic_validated_count)
+            diagnostics.add_count("analysis_evidence_accepted_facets", evidence_accepted_facet_count)
+            diagnostics.add_count("analysis_evidence_rejected_facets", evidence_rejected_facets)
+            for error_type, count in pydantic_error_types.items():
+                if re.fullmatch(r"[a-z_]{1,40}", str(error_type)):
+                    diagnostics.add_count(f"analysis_validation_error_{error_type}", count)
+            if pydantic_error_types:
+                diagnostics.add_count("analysis_pydantic_validation_errors", sum(pydantic_error_types.values()))
             if any(record_failures.values()) or fallback_count or evidence_rejected_facets:
                 failure_summary = ",".join(
                     f"{name}:{count}" for name, count in record_failures.items() if count
@@ -605,9 +668,11 @@ class RecordPreferenceAnalysisService:
                 logger.info(
                     "record preference analysis degraded stage=record_validation finish_reason=%s "
                     "record_failure_counts=%s missing_required_fields=%s pydantic_error_types=%s "
+                    "pydantic_error_fields=%s singleton_array_repairs=%d "
                     "evidence_rejected_facets=%d provider_analyzed=%d local_fallback=%d",
                     finish_reason, failure_summary, missing_summary, pydantic_summary,
-                    evidence_rejected_facets, len(parsed_by_id), fallback_count,
+                    ",".join(f"{name}:{count}" for name, count in sorted(pydantic_error_fields.items())) or "none",
+                    singleton_array_repairs, evidence_rejected_facets, len(parsed_by_id), fallback_count,
                 )
             logger.info(
                 "record preference analysis complete http_status=%s finish_reason=%s json_parse=ok "
@@ -620,6 +685,8 @@ class RecordPreferenceAnalysisService:
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
             response = getattr(exc, "response", None)
             status = getattr(response, "status_code", None)
+            if isinstance(status, int) and 100 <= status <= 599:
+                diagnostics.set_value("preference_provider_http_status", status)
             provider_error_code = "unavailable"
             provider_error_param = "unavailable"
             provider_error_schema_keyword = "unavailable"
@@ -634,6 +701,7 @@ class RecordPreferenceAnalysisService:
                 except (ValueError, TypeError, AttributeError):
                     pass
             error_category = (
+                "payment_required" if status == 402 else
                 "rate_limited" if status == 429 else
                 "authentication_or_authorization" if status in {401, 403} else
                 "invalid_request_or_schema_compatibility" if status == 400 else
@@ -643,6 +711,9 @@ class RecordPreferenceAnalysisService:
             )
             failure_stage = exc.stage if isinstance(exc, _AnalysisResponseFailure) else stage
             failure_reason = exc.reason if isinstance(exc, _AnalysisResponseFailure) else type(exc).__name__
+            diagnostics.error("preference_analysis", error_category)
+            if "timeout" in type(exc).__name__.lower():
+                diagnostics.set_flag("llm_timeout")
             logger.info("record preference analysis unavailable source=local_fallback stage=%s reason=%s finish_reason=%s "
                         "http_status=%s "
                         "provider_error_category=%s provider_error_code=%s provider_error_param=%s "
@@ -749,8 +820,10 @@ class RecordPreferenceAnalysisService:
             type_quote = _norm(analysis.place_type_evidence)
             # LLM evidence must quote record content. Place-name type evidence
             # is accepted only through the conservative local name rules above.
-            type_supported = bool(type_quote and (type_quote in _norm(record.content)
-                                                  or type_quote == _norm(record.place_name)))
+            # The model cannot establish a venue type by echoing the entire
+            # venue name. Place-name type hints are accepted only through the
+            # conservative local rules above; model quotes must come from text.
+            type_supported = bool(type_quote and type_quote in _norm(record.content))
             if analysis.place_type != PlaceType.UNKNOWN and not type_supported and diagnostics is not None:
                 diagnostics["place_type_evidence_not_in_record"] += 1
             place_type = analysis.place_type if type_supported else PlaceType.UNKNOWN
@@ -789,30 +862,37 @@ class RecordPreferenceAnalysisService:
             valid_facets.append(facet)
 
         categories = cls._categories_for(place_type)
-        literal_facets = cls._literal_fallback_facets(record, PlaceType.UNKNOWN)
-        literal_category_support: dict[str, set[RecommendationCategory]] = {}
-        for literal in literal_facets:
-            literal_category_support.setdefault(_norm(literal.target_text), set()).update(literal.categories)
-        # Keep LLM facets only where their categories agree with a trusted
-        # place type or a literal, category-bearing term in this record.
+        # A model's category labels and a finite food/activity vocabulary are
+        # not category evidence. Once the target and verbatim quote have been
+        # checked above, the facet's semantic kind provides a broad retrieval
+        # domain without asserting that a candidate offers the target.
+        def dynamic_categories(facet: PreferenceFacet) -> list[RecommendationCategory]:
+            if place_type != PlaceType.UNKNOWN:
+                return categories[:]
+            if facet.target_kind in {FacetTargetKind.MENU, FacetTargetKind.FOOD}:
+                return [RecommendationCategory.FOOD]
+            if facet.target_kind == FacetTargetKind.DRINK:
+                # A drink can be served by a restaurant, cafe, or bar. Actual
+                # candidate fit still requires place-specific verified evidence.
+                return [RecommendationCategory.BAR, RecommendationCategory.CAFE,
+                        RecommendationCategory.FOOD]
+            if facet.target_kind == FacetTargetKind.ACTIVITY:
+                return [RecommendationCategory.ACTIVITY]
+            if facet.target_kind == FacetTargetKind.SCENERY:
+                return [RecommendationCategory.NATURE]
+            return []
+
         filtered_facets = []
         for facet in valid_facets:
-            if place_type != PlaceType.UNKNOWN:
-                facet_categories = categories[:]
-            else:
-                facet_terms = {_norm(facet.target_text), *(_norm(value) for value in facet.features)}
-                supported_categories = set().union(*(
-                    values for target, values in literal_category_support.items()
-                    if target and any(target in term or term in target for term in facet_terms if term)
-                )) if literal_category_support else set()
-                facet_categories = sorted(supported_categories, key=lambda value: value.value)
-                if facet_categories and diagnostics is not None:
-                    diagnostics["facet_domain_recovered_from_literal_term"] += 1
+            facet_categories = dynamic_categories(facet)
+            if facet_categories and place_type == PlaceType.UNKNOWN and diagnostics is not None:
+                diagnostics["facet_domain_recovered_from_verified_kind"] += 1
             if facet_categories:
                 filtered_facets.append(facet.model_copy(update={"categories": facet_categories}))
             elif place_type == PlaceType.UNKNOWN:
-                # Provider-supplied category labels alone are not evidence of
-                # the venue or preference domain.
+                # Keep a source-verified but unscoped preference visible to
+                # diagnostics and future category-independent analysis. It is
+                # not eligible to generate a category search by itself.
                 filtered_facets.append(facet.model_copy(update={"categories": []}))
         if place_type == PlaceType.UNKNOWN:
             categories = sorted({value for facet in filtered_facets for value in facet.categories},

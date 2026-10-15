@@ -5,8 +5,11 @@ import pytest
 
 from app.record_preference_analysis import (
     EvidenceStatus,
+    FacetTargetKind,
     PlaceType,
+    PreferenceFacet,
     RecommendationCategory,
+    RecordPreferenceAnalysis,
     RecordPlaceMetadata,
     RecordPreferenceAnalysisService,
 )
@@ -77,6 +80,49 @@ def test_izakaya_extracts_drink_and_food_individually_and_keeps_bar_context():
     assert result.place_type == PlaceType.BAR
     assert {f.target_text for f in result.facets} == {"유자하이볼", "꼬치"}
     assert all(RecommendationCategory.BAR in f.categories for f in result.facets)
+
+
+def test_thirteen_record_gemini_response_repairs_only_singleton_list_shapes():
+    source_records = [make_record(i, f"Ramen shop {i}", f"I liked ramen {i}.") for i in range(1, 14)]
+    model_rows = []
+    for record in source_records:
+        row = {
+            "record_id": record.record_id,
+            "place_type": "food",
+            "place_type_label": None,
+            "place_type_evidence": None,
+            "categories": "food",
+            "facets": {
+                "target_kind": "menu",
+                "target_text": f"ramen {record.record_id}",
+                "features": "liked",
+                "categories": "food",
+                "polarity": "liked",
+                "evidence": f"I liked ramen {record.record_id}.",
+                "confidence": 0.9,
+            },
+        }
+        if record.record_id <= 5:
+            row["categories"] = ["food"]
+            row["facets"] = [dict(row["facets"], features=["liked"], categories=["food"])]
+        model_rows.append(row)
+
+    result = service_for(model_rows).analyze(source_records)
+    assert len(result.analyses) == 13
+    assert all(item.evidence_status != EvidenceStatus.UNAVAILABLE for item in result.analyses)
+    assert all(item.facets for item in result.analyses)
+
+
+def test_analysis_prompt_explicitly_requires_json_arrays_for_singletons():
+    captured = {}
+    record = make_record(42, "ramen shop", "I liked ramen.")
+    service_for([{
+        "record_id": 42, "place_type": "food", "place_type_label": None,
+        "place_type_evidence": None, "categories": ["food"], "facets": [],
+    }], captured).analyze([record])
+    prompt = captured["messages"][0]["content"]
+    assert "ALWAYS JSON arrays" in prompt
+    assert captured["response_format"] == {"type": "json_object"}
 
 
 def test_cafe_quiet_and_spacious_aspects_keep_cafe_context():
@@ -254,7 +300,7 @@ def test_thirteen_positive_records_keep_eight_detailed_tastes_and_ignore_empty_n
     assert all(not item.facets and not item.categories for item in result[8:])
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 429, 500, 503])
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 429, 500, 503])
 def test_http_status_errors_are_classified_without_logging_payload_or_credentials(status, caplog):
     caplog.set_level("INFO", logger="uvicorn.error")
     record = make_record(31, "광주 무등산 공원", "풍경이 아름다웠다.")
@@ -274,6 +320,8 @@ def test_http_status_errors_are_classified_without_logging_payload_or_credential
     assert result.analyses[0].categories == [RecommendationCategory.NATURE]
     assert "http_status=" + str(status) in caplog.text
     assert "provider_error_category=" in caplog.text
+    if status == 402:
+        assert "provider_error_category=payment_required" in caplog.text
     if status == 400:
         assert "provider_error_code=schema_keyword_not_supported" in caplog.text
     assert "secret-test-token" not in caplog.text
@@ -547,9 +595,9 @@ def test_model_facets_with_unsupported_record_evidence_are_rejected(caplog):
     ).analyze([record]).analyses[0]
 
     assert result.facets == []
-    assert result.evidence_status == EvidenceStatus.PARTIAL
+    assert result.evidence_status == EvidenceStatus.UNKNOWN
     assert "evidence_rejected_facets=1" in caplog.text
-    assert "stage=evidence_validation reason=source_evidence_rejected failure_counts=target_not_in_record:1" in caplog.text
+    assert "place_type_evidence_not_in_record:1,target_not_in_record:1" in caplog.text
     assert "source=provider" in caplog.text
 
 
@@ -698,3 +746,23 @@ def test_korean_feature_inflection_requires_literal_source_wording(caplog):
     assert analyses[1].evidence_status == EvidenceStatus.VERIFIED
     assert "feature_not_in_record:1" in caplog.text
     assert "provider_analyzed=2 local_fallback=0" in caplog.text
+
+
+def test_unregistered_preference_term_gets_domain_from_verified_facet_kind():
+    record = make_record(901, "공간 이름", "바질크림뇨끼를 처음 먹었는데 정말 맛있었다.")
+    analysis = RecordPreferenceAnalysis(
+        record_id=901, place_name="공간 이름", place_type=PlaceType.UNKNOWN,
+        emotion=RecommendationEmotionCode.LOVE, emotion_intensity=1,
+        facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.MENU, target_text="바질크림뇨끼",
+            features=[], categories=[], polarity="liked",
+            evidence="바질크림뇨끼를 처음 먹었는데 정말 맛있었다.", confidence=0.9,
+        )],
+    )
+    result = RecordPreferenceAnalysisService._validate_evidence(
+        analysis, record, None
+    )
+
+    assert result.facets[0].target_text == "바질크림뇨끼"
+    assert result.facets[0].categories == [RecommendationCategory.FOOD]
+    assert result.categories == [RecommendationCategory.FOOD]

@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import QueuePool, StaticPool
 
 from app.ai_recommendation_errors import AIResponseError, InvalidRecommendationError
-from app.ai_recommendations import _infer_region, _invalidate_empty_session
+from app.ai_recommendations import (
+    _analysis_cache_decision, _empty_session_retry_state, _infer_region, _invalidate_empty_session,
+    _natural_personalized_reason,
+)
 from app.ai_recommendation_models import (
     PlaceCandidate, PlaceCandidateResponse, PlaceRecommendationResponse, PreferenceKeyword, PreferenceKeywordResponse,
     RecommendedPlace,
@@ -85,6 +88,17 @@ def test_inferred_region_keeps_the_most_frequent_second_level_locality():
     assert _infer_region(records) == "전남광주통합특별시 광산구"
 
 
+def test_inferred_region_skips_redundant_former_city_component():
+    from types import SimpleNamespace
+
+    records = [
+        SimpleNamespace(address="전남광주통합특별시 광주광역시 서구 상무대로"),
+        SimpleNamespace(address="전남광주통합특별시 광주광역시 서구 치평동"),
+        SimpleNamespace(address="전남광주통합특별시 영광군 법성면"),
+    ]
+    assert _infer_region(records) == "전남광주통합특별시 광주광역시 서구"
+
+
 def test_legacy_empty_recommendation_session_is_invalidated():
     key = (7, "fingerprint")
     sessions = {key: {"recommendations": [], "first": []}}
@@ -100,6 +114,64 @@ def test_populated_recommendation_session_is_not_invalidated():
 
     assert _invalidate_empty_session(sessions, key) is False
     assert sessions[key] is entry
+
+
+def test_empty_session_explicit_retry_uses_cooldown_and_attempt_limit():
+    can_retry, state = _empty_session_retry_state(
+        {"created_at": 100.0, "empty_retry_count": 0, "last_empty_retry_at": 100.0}, 129.0
+    )
+    assert not can_retry and state["empty_retry_count"] == 0
+    can_retry, state = _empty_session_retry_state(
+        {"created_at": 100.0, "empty_retry_count": 0, "last_empty_retry_at": 100.0}, 130.0
+    )
+    assert can_retry and state == {"empty_retry_count": 1, "last_empty_retry_at": 130.0}
+    can_retry, _ = _empty_session_retry_state(
+        {"created_at": 100.0, "empty_retry_count": 2, "last_empty_retry_at": 100.0}, 1000.0
+    )
+    assert not can_retry
+
+
+@pytest.mark.parametrize("keyword,place,kind", [
+    ("간장새우", "강화식당", "menu"),
+    ("감바스", "심야식당603호", "food"),
+    ("롤케이크", "달콤카페", "menu"),
+    ("유자하이볼", "밤산책", "drink"),
+    ("조용한", "느린카페", "space"),
+    ("농구", "시민체육관", "activity"),
+    ("산책", "강변산책로", "nature"),
+])
+def test_personalized_copy_uses_recorded_keyword_and_verified_place_type(
+    keyword, place, kind,
+):
+    reason = _natural_personalized_reason(
+        keyword, place, kind, "산책로" if kind == "nature" else "",
+    )
+    assert keyword in reason
+    assert place in reason
+    assert "확인돼서" not in reason
+    if kind == "nature":
+        assert "산책하며 보냈던 시간이 좋으셨죠?" in reason
+    if kind == "space":
+        assert "조용한 공간" in reason
+
+
+def test_nature_copy_does_not_claim_a_trail_without_verified_trail_type():
+    reason = _natural_personalized_reason("산책", "도심공원", "nature", "공원")
+    assert "도심공원" in reason
+    assert "산책로" not in reason
+    assert "걸어보는" not in reason
+
+
+def test_severely_degraded_preference_analysis_is_not_cached():
+    from app.record_preference_analysis import EvidenceStatus, RecordPreferenceAnalysis, RecordPreferenceAnalysisResponse
+
+    rows = [RecordPreferenceAnalysis(
+        record_id=index, emotion="LOVE", emotion_intensity=1.0,
+        evidence_status=EvidenceStatus.VERIFIED if index <= 5 else EvidenceStatus.UNAVAILABLE,
+    ) for index in range(1, 14)]
+    reusable, reason = _analysis_cache_decision(RecordPreferenceAnalysisResponse(analyses=rows))
+    assert reusable is False
+    assert reason == "provider_coverage_below_40_percent"
 
 
 @pytest.fixture
@@ -157,7 +229,7 @@ def test_recommendations_use_only_current_users_positive_records(world):
     assert result[0]["image_origin_type"] == "placeholder"
 
 
-def test_refresh_uses_only_suitable_candidates_then_returns_original_in_order(world, monkeypatch):
+def test_refresh_uses_only_unseen_suitable_candidates_then_stops_when_exhausted(world, monkeypatch):
     def verified_pool(self, hints, keywords, records):
         return PlaceCandidateResponse(candidates=[
             PlaceCandidate(
@@ -200,12 +272,8 @@ def test_refresh_uses_only_suitable_candidates_then_returns_original_in_order(wo
 
     returned = client.get("/ai/recommendations?refresh=true", headers=headers["one"])
     assert returned.status_code == 200, returned.text
-    assert [item["kakao_place_id"] for item in returned.json()["recommendations"]] == ["12345", "23456", "34567"]
-    assert [item["reason"] for item in returned.json()["recommendations"]] == [item["reason"] for item in first.json()["recommendations"]]
-    assert [(item["kakao_place_id"], item["latitude"], item["longitude"]) for item in returned.json()["recommendations"]] == [
-        (item["kakao_place_id"], item["latitude"], item["longitude"])
-        for item in first.json()["recommendations"]
-    ]
+    assert returned.json()["recommendations"] == []
+    assert returned.json()["session_status"] == "exhausted"
 
 
 def test_unsuitable_verified_places_are_not_recommended(world, monkeypatch):
@@ -316,7 +384,8 @@ def test_empty_ranking_uses_verified_evidence_fallback_and_caches_nonempty_resul
     second = client.get("/ai/recommendations?refresh=true", headers=headers["one"])
 
     assert first.status_code == second.status_code == 200
-    assert len(first.json()["recommendations"]) == len(second.json()["recommendations"]) == 1
+    assert len(first.json()["recommendations"]) == 1
+    assert second.json()["recommendations"] == []
     assert first.json()["recommendations"][0]["kakao_place_id"] == "12345"
     assert first.json()["recommendations"][0]["matched_keywords"]
     assert calls["ranking"] == 1
@@ -376,7 +445,9 @@ def test_recommendation_session_is_isolated_by_authenticated_user(world):
 def test_no_positive_records_returns_empty_without_provider_calls(world):
     client, headers, keywords, _, _ = world
     response = client.get("/ai/recommendations", headers=headers["three"])
-    assert response.status_code == 200 and response.json() == {"recommendations": []}
+    assert response.status_code == 200 and response.json() == {
+        "recommendations": [], "session_status": "empty",
+    }
     assert keywords.records is None
 
 

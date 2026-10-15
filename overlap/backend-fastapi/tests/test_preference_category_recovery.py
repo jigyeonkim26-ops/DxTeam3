@@ -75,7 +75,7 @@ def test_unknown_provider_type_recovers_cafe_from_explicit_record_wording():
     ).analyses
 
 
-def test_unknown_type_keeps_literal_menu_domains_and_scopes_facets_separately():
+def test_unknown_type_uses_verified_facet_kind_and_scopes_facets_separately():
     content = "\uC720\uC790\uD558\uC774\uBCFC\uACFC \uAF2C\uCE58\uAC00 \uB9DB\uC788\uC5C8\uB2E4."
     record = make_record(102, "Example Venue", content)
     result = run_analysis(record, {"records": [{
@@ -92,11 +92,15 @@ def test_unknown_type_keeps_literal_menu_domains_and_scopes_facets_separately():
 
     analysis = result.analyses[0]
     assert analysis.place_type == PlaceType.UNKNOWN
-    assert set(analysis.categories) == {RecommendationCategory.BAR, RecommendationCategory.FOOD}
+    assert set(analysis.categories) == {
+        RecommendationCategory.BAR, RecommendationCategory.CAFE, RecommendationCategory.FOOD,
+    }
     bar = RecordPreferenceAnalysisService._filter_category(result, RecommendationCategory.BAR)
     food = RecordPreferenceAnalysisService._filter_category(result, RecommendationCategory.FOOD)
     assert [item.target_text for item in bar.analyses[0].facets] == ["\uC720\uC790\uD558\uC774\uBCFC"]
-    assert [item.target_text for item in food.analyses[0].facets] == ["\uAF2C\uCE58"]
+    assert [item.target_text for item in food.analyses[0].facets] == [
+        "\uC720\uC790\uD558\uC774\uBCFC", "\uAF2C\uCE58",
+    ]
 
 
 def test_unknown_generic_facet_does_not_trust_model_category_or_create_category():

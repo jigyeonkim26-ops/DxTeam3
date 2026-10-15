@@ -76,3 +76,24 @@ class RecordRecommendationAdapter:
             .order_by(Record.created_at.desc(), Record.id.desc())
         )
         return [self.to_recommendation_record(record, place) for record, place in db.execute(statement)]
+
+    def list_visited_places(self, db: Session, user_id: int) -> tuple[set[str], set[str]]:
+        """Return this user's visited Kakao IDs and names across all emotions.
+
+        Only place identity is selected; private stories and other users' records
+        are never read into recommendation input.
+        """
+        statement = (
+            select(Place.provider, Place.external_place_id, Place.name)
+            .select_from(Record)
+            .outerjoin(Place, Record.place_id == Place.id)
+            .where(Record.author_id == user_id)
+        )
+        ids: set[str] = set()
+        names: set[str] = set()
+        for provider, place_id, name in db.execute(statement):
+            if provider == "kakao" and place_id:
+                ids.add(str(place_id))
+            elif name:
+                names.add(str(name))
+        return ids, names

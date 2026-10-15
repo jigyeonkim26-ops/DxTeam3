@@ -29,6 +29,7 @@ class AiRecommendationsApi {
   String? _ownerToken;
   bool _loaded = false;
   Future<List<AiPlaceRecommendation>>? _pending;
+  String sessionStatus = 'available';
 
   Future<List<AiPlaceRecommendation>> load() {
     final token = ApiTransport.accessToken;
@@ -36,6 +37,7 @@ class AiRecommendationsApi {
       _ownerToken = token;
       _loaded = false;
       _pending = null;
+      sessionStatus = 'available';
     }
     final inFlight = _pending;
     if (inFlight != null) return inFlight;
@@ -55,7 +57,9 @@ class AiRecommendationsApi {
     final stopwatch = Stopwatch()..start();
     final query = <String, String>{};
     if (refresh) query['refresh'] = 'true';
-    final path = Uri(path: _endpoint, queryParameters: query).toString();
+    final path = query.isEmpty
+        ? _endpoint
+        : Uri(path: _endpoint, queryParameters: query).toString();
     var httpStatus = 'unknown';
     try {
       final statusAwareGet = _getWithStatus;
@@ -66,9 +70,17 @@ class AiRecommendationsApi {
               responseTimeout: _responseTimeout,
               onResponse: (statusCode) => httpStatus = '$statusCode',
             );
+      final responseBody = body as Map<String, dynamic>;
       final items =
-          (body as Map<String, dynamic>)['recommendations'] as List<dynamic>? ??
-          const [];
+          responseBody['recommendations'] as List<dynamic>? ?? const [];
+      final rawStatus = responseBody['session_status'];
+      if (_ownerToken == ownerToken &&
+          ApiTransport.accessToken == ownerToken) {
+        sessionStatus = rawStatus is String &&
+                const {'available', 'exhausted', 'empty'}.contains(rawStatus)
+            ? rawStatus
+            : 'available';
+      }
       final recommendations = items
           .whereType<Map<String, dynamic>>()
           .map(AiPlaceRecommendation.fromJson)

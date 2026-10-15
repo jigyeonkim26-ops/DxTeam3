@@ -63,6 +63,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
   List<AiPlaceRecommendation> _recommendations = const [];
   int _recommendationsRevision = 0;
   bool _loading = false;
+  bool _sessionExhausted = false;
   String? _error;
   int _requestGeneration = 0;
 
@@ -96,8 +97,14 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
         return;
       }
       setState(() {
-        _recommendations = items;
-        _recommendationsRevision++;
+        _sessionExhausted = _api.sessionStatus == 'exhausted';
+        // Exhaustion is a normal session outcome. Keep the last visible cards
+        // and signal that no unseen candidates remain instead of replacing
+        // them with an empty list.
+        if (!_sessionExhausted || items.isNotEmpty) {
+          _recommendations = items;
+          _recommendationsRevision++;
+        }
       });
     } on ApiException catch (e) {
       if (!mounted || generation != _requestGeneration) {
@@ -281,6 +288,14 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
                   child: const Text('\uB2E4\uC2DC \uCD94\uCC9C\uBC1B\uAE30'),
                 ),
               ],
+            ),
+          )
+        else if (_sessionExhausted)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: Text(
+              '\uC9C0\uAE08\uC740 \uC0C8\uB85C\uC6B4 \uCD94\uCC9C \uC7A5\uC18C\uAC00 \uB354 \uC5C6\uC5B4\uC694.',
+              textAlign: TextAlign.center,
             ),
           )
         else
