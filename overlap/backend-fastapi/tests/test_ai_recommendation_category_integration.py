@@ -155,7 +155,7 @@ def test_category_api_integrates_analysis_kakao_candidates_and_tavily_evidence()
         assert payload[0]["matched_keywords"]
         assert "Tavily" not in payload[0]["reason"]
         assert "Kakao" not in payload[0]["reason"]
-        assert search.calls[0]["category"] == RecommendationCategory.BAR
+        assert search.calls[0]["category"] == RecommendationCategory.ALL
         assert search.calls[0]["region"] == "광주"
         assert search.calls[0]["preferences"][0].facets[0].target_text == "유자하이볼"
     finally:
@@ -282,28 +282,16 @@ def test_default_create_app_uses_category_pipeline_for_every_category_and_cache(
     try:
         # Missing category must take the default `all` v3 branch. Then every
         # supported category is passed through to the same injected default service.
-        for query, expected in [
-            ("", RecommendationCategory.ALL),
-            ("?category=all", RecommendationCategory.ALL),
-            ("?category=food", RecommendationCategory.FOOD),
-            ("?category=bar", RecommendationCategory.BAR),
-            ("?category=cafe", RecommendationCategory.CAFE),
-            ("?category=nature", RecommendationCategory.NATURE),
-            ("?category=activity", RecommendationCategory.ACTIVITY),
+        for query in [
+            "", "?category=all", "?category=food", "?category=bar",
+            "?category=cafe", "?category=nature", "?category=activity",
         ]:
             response = client.get("/ai/recommendations" + query, headers=headers)
             assert response.status_code == 200, response.text
-            assert search_calls[-1] == expected
-        # First request analyzed once; other categories reuse that analysis.
+            assert response.json()["recommendations"]
+        # Legacy category parameters no longer split the analysis or session.
         assert analysis_calls == [RecommendationCategory.ALL]
-        assert search_calls == [
-            RecommendationCategory.ALL,
-            RecommendationCategory.FOOD,
-            RecommendationCategory.BAR,
-            RecommendationCategory.CAFE,
-            RecommendationCategory.NATURE,
-            RecommendationCategory.ACTIVITY,
-        ]
+        assert search_calls == [RecommendationCategory.ALL]
         # The all session is cached and refresh preserves the response contract.
         before = len(search_calls)
         cached = client.get("/ai/recommendations?refresh=true", headers=headers)
@@ -311,6 +299,74 @@ def test_default_create_app_uses_category_pipeline_for_every_category_and_cache(
         assert len(search_calls) == before
         assert any("pipeline=%s" in message and "category=%s" in message and "category-v3" in args and "all" in args for message, args in log_messages)
         assert not any("legacy-tavily-v2" in args for _, args in log_messages)
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_legacy_category_requests_return_one_integrated_mixed_domain_list():
+    search_calls = []
+
+    class MixedAnalysis:
+        def analyze(self, records, *, category):
+            assert category == RecommendationCategory.ALL
+            definitions = [
+                (11, PlaceType.FOOD, RecommendationCategory.FOOD, "noodles"),
+                (12, PlaceType.BAR, RecommendationCategory.BAR, "highball"),
+                (13, PlaceType.CAFE, RecommendationCategory.CAFE, "quiet room"),
+            ]
+            return RecordPreferenceAnalysisResponse(analyses=[RecordPreferenceAnalysis(
+                record_id=record_id, place_name=f"synthetic {place_type.value}",
+                place_type=place_type, categories=[domain], emotion="LOVE",
+                emotion_intensity=1.0, evidence_status=EvidenceStatus.VERIFIED,
+                facets=[PreferenceFacet(
+                    target_kind=FacetTargetKind.OTHER, target_text=target, features=[],
+                    categories=[domain], polarity="liked", evidence="synthetic source", confidence=0.9,
+                )],
+            ) for record_id, place_type, domain, target in definitions])
+
+    class MixedCandidateSearch:
+        def search(self, **kwargs):
+            search_calls.append(kwargs["category"])
+            definitions = [
+                ("5001", "Food candidate", RecommendationCategory.FOOD, "FD6"),
+                ("5002", "Bar candidate", RecommendationCategory.BAR, "FD6"),
+                ("5003", "Cafe candidate", RecommendationCategory.CAFE, "CE7"),
+            ]
+            candidates = []
+            for place_id, name, domain, code in definitions:
+                place = KakaoPlaceCandidate(
+                    kakao_place_id=place_id, place_name=name, address="Gwangju Dong-gu",
+                    latitude=35.1, longitude=126.9, category_group_code=code,
+                    category_name=f"verified {domain.value}", place_url=f"https://place.map.kakao.com/{place_id}",
+                )
+                candidates.append(PlaceCandidateEvidence(
+                    place=place,
+                    classification=PlaceCategoryClassification(
+                        requested_category=RecommendationCategory.ALL, categories=[domain],
+                        status=CategoryMatchStatus.CONFIRMED, evidence=["mock Kakao category"],
+                    ),
+                    preference_evidence=[], feature_search_status=FeatureEvidenceStatus.UNAVAILABLE,
+                ))
+            return CandidateSearchResult(
+                category=kwargs["category"], region=kwargs["region"],
+                kakao_status=ProviderStatus.COMPLETE, tavily_status=ProviderStatus.PARTIAL,
+                kakao_call_count=3, tavily_call_count=3, candidates=candidates,
+            )
+
+    client, engine, headers = _client(
+        MixedCandidateSearch(), preference_analysis=MixedAnalysis(),
+    )
+    try:
+        food_legacy = client.get("/ai/recommendations?category=food&region=Gwangju", headers=headers)
+        cafe_legacy = client.get("/ai/recommendations?category=cafe&region=Gwangju", headers=headers)
+        assert food_legacy.status_code == cafe_legacy.status_code == 200, (food_legacy.text, cafe_legacy.text)
+        assert len(food_legacy.json()["recommendations"]) == 3
+        assert {item["kakao_place_id"] for item in food_legacy.json()["recommendations"]} == {
+            "5001", "5002", "5003",
+        }
+        assert cafe_legacy.json() == food_legacy.json()
+        assert search_calls == [RecommendationCategory.ALL]
     finally:
         client.close()
         engine.dispose()

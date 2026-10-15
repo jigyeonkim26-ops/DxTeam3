@@ -508,14 +508,19 @@ def router(current_user):
         photo = db.get(RecordPhoto, photo_id)
         if record is None or photo is None or photo.record_id != record_id:
             raise HTTPException(404, "사진을 찾을 수 없습니다.")
-        body = get_object_storage().download(photo.object_key)
+        object_key = photo.object_key
+        media_type = photo.mime_type or "image/jpeg"
+        # Return the read connection before Object Storage network I/O. The
+        # values used below are plain scalars, not lazy ORM attributes.
+        db.rollback()
+        body = get_object_storage().download(object_key)
         def chunks():
             try:
                 while chunk := body.read(64 * 1024):
                     yield chunk
             finally:
                 body.close()
-        return StreamingResponse(chunks(), media_type=photo.mime_type or "image/jpeg",
+        return StreamingResponse(chunks(), media_type=media_type,
                                  headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @api.get("/records/{record_id}/author-photo")
@@ -526,7 +531,10 @@ def router(current_user):
         author = db.get(User, record.author_id)
         if author is None or author.profile_image_key is None:
             raise HTTPException(404, "등록된 프로필 사진이 없습니다.")
-        body = get_object_storage().download(author.profile_image_key)
+        object_key = author.profile_image_key
+        media_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+        db.rollback()
+        body = get_object_storage().download(object_key)
 
         def chunks():
             try:
@@ -535,7 +543,6 @@ def router(current_user):
             finally:
                 body.close()
 
-        media_type = mimetypes.guess_type(author.profile_image_key)[0] or "application/octet-stream"
         return StreamingResponse(
             chunks(),
             media_type=media_type,

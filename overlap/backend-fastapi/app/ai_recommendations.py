@@ -178,6 +178,22 @@ def _records_fingerprint(records) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _analysis_cache_decision(analyses) -> tuple[bool, str]:
+    """Cache reusable successful records, but not all-empty category analysis."""
+    rows = getattr(analyses, "analyses", [])
+    reusable = [item for item in rows if item.evidence_status != EvidenceStatus.UNAVAILABLE]
+    if not reusable:
+        return False, "all_records_unavailable"
+    has_specific_category = any(
+        any(value != RecommendationCategory.ALL for value in item.categories)
+        for item in reusable
+    )
+    has_unscoped_facets = any(item.facets and not item.categories for item in reusable)
+    if not has_specific_category and has_unscoped_facets:
+        return False, "all_categories_unresolved_with_facets"
+    return True, "partial_or_complete_analysis"
+
+
 def _invalidate_empty_session(sessions, key) -> bool:
     session = sessions.get(key)
     if session is None or session.get("recommendations"):
@@ -260,13 +276,34 @@ def _build_category_recommendations(search_result, analyses, category: Recommend
             and (category == RecommendationCategory.ALL or category in facet.categories)
             and (category == RecommendationCategory.ALL or category in analysis.categories)
             and place_categories.intersection(facet.categories)]
-        type_records = [(analysis, value) for analysis in analyses.analyses
-            for value in set(analysis.categories).intersection(place_categories)
-            if value != RecommendationCategory.ALL
-            and (category == RecommendationCategory.ALL or value == category)
-            and (analysis.place_type != PlaceType.UNKNOWN or any(
-                facet.polarity == "liked" and value in facet.categories for facet in analysis.facets
-            ))]
+        type_records = []
+        for analysis in analyses.analyses:
+            values = set(analysis.categories).intersection(place_categories)
+            values.discard(RecommendationCategory.ALL)
+            if category != RecommendationCategory.ALL:
+                values.intersection_update({category})
+            else:
+                primary = {
+                    PlaceType.BAR: RecommendationCategory.BAR,
+                    PlaceType.CAFE: RecommendationCategory.CAFE,
+                    PlaceType.FOOD: RecommendationCategory.FOOD,
+                    PlaceType.NATURE: RecommendationCategory.NATURE,
+                    PlaceType.ACTIVITY: RecommendationCategory.ACTIVITY,
+                }.get(analysis.place_type)
+                if primary in values:
+                    values = {primary}
+            for value in values:
+                concrete_preference_exists = any(
+                    facet.polarity == "liked"
+                    and value in facet.categories
+                    and any(len(term.strip()) >= 2 and term.strip() not in {
+                        "\uC74C\uC2DD", "\uBA54\uB274", "\uC74C\uB8CC", "\uC220",
+                        "\uB9E4\uC7A5", "\uBD84\uC704\uAE30", "\uACF5\uAC04", "\uC7A5\uC18C",
+                    } for term in [facet.target_text, *facet.features])
+                    for facet in analysis.facets
+                )
+                if concrete_preference_exists:
+                    type_records.append((analysis, value))
         if not facets and not type_records:
             category_only_excluded += 1
             _log_place_decision(pipeline=_CATEGORY_PIPELINE_VERSION, stage="personalized_relevance_gate",
@@ -292,33 +329,53 @@ def _build_category_recommendations(search_result, analyses, category: Recommend
         matched = [(analysis, facet) for analysis, facet in facets if any(
             analysis.record_id == record_id and term in {facet.target_text.casefold(), *(value.casefold() for value in facet.features)}
             for record_id, term in verified)]
-        facet_type_weight = sum(analysis.emotion_intensity * facet.confidence for analysis, facet in facets)
         # A single record can map to overlapping labels (e.g. bar + food).
         # Count its type-level support once per candidate, not once per label.
         type_record_weights = {
             analysis.record_id: analysis.emotion_intensity * 0.5
             for analysis, _ in type_records
         }
-        type_weight = max(facet_type_weight, sum(type_record_weights.values()))
-        feature_weight = sum(analysis.emotion_intensity * facet.confidence for analysis, facet in matched)
+        type_weight = min(1.5, sum(type_record_weights.values()))
+        feature_by_record: dict[int, float] = {}
+        for analysis, facet in matched:
+            feature_by_record[analysis.record_id] = min(
+                1.0,
+                feature_by_record.get(analysis.record_id, 0.0)
+                + analysis.emotion_intensity * facet.confidence,
+            )
+        feature_weight = sum(feature_by_record.values())
         matches = list(dict.fromkeys(term for _, term in verified))
         evidence_level = "A" if matched else "B"
-        score = (min(1.0, 0.55 + min(0.35, feature_weight * 0.12) + min(0.10, len(matched) * 0.025))
+        score = (min(1.0, 0.55 + min(0.35, feature_weight * 0.12)
+                      + min(0.10, len(feature_by_record) * 0.025))
                  if matched else min(0.30, 0.10 + type_weight * 0.04))
+        place_label = place.place_name[:36]
         if matched:
-            # These terms have confirmed, URL-backed candidate evidence.
-            # Naming them keeps distinct candidates from receiving one generic reason.
-            reason = f"\uC774\uC804\uC5D0 \uC88B\uC544\uD558\uC168\uB358 \u2018{', '.join(matches)}\u2019\uC5D0 \uAD00\uD55C \uC815\uBCF4\uAC00 \uD655\uC778\uB41C \uACF3\uC774\uC5D0\uC694."
+            # Candidate-side claims are limited to exact, linked, confirmed
+            # evidence. The remembered preference itself comes from the record.
+            matched_facets = [facet for _, facet in matched]
+            kind = matched_facets[0].target_kind.value
+            if kind in {"menu", "drink", "food"}:
+                reason = f"\u2018{matches[0]}\u2019\uB97C \uB9DB\uC788\uAC8C \uB4DC\uC168\uC8E0? {place_label}\uC5D0\uC11C\uB3C4 \uAD00\uB828 \uBA54\uB274\uAC00 \uD655\uC778\uB3FC\uC11C \uAC00\uBCF4\uC154\uB3C4 \uC88B\uC744 \uAC83 \uAC19\uC544\uC694."
+            else:
+                reason = f"\uC88B\uC544\uD558\uC168\uB358 \u2018{matches[0]}\u2019 \uCDE8\uD5A5\uC774 \uC0DD\uAC01\uB098\uC11C\uC694. {place_label}\uC5D0\uC11C\uB3C4 \uAC19\uC740 \uD2B9\uC9D5\uC774 \uD655\uC778\uB410\uC5B4\uC694."
         else:
-            types = list(dict.fromkeys(label(value) for _, value in type_records if value in place_categories))
-            type_label = ", ".join(types) or "\uC774 \uBD84\uC57C"
-            reason = f"\uC774\uC804\uC5D0 {type_label}\uC5D0\uC11C\uC758 \uACBD\uD5D8\uC744 \uC88B\uC544\uD558\uC168\uB358 \uAE30\uB85D\uC744 \uBC14\uD0D5\uC73C\uB85C \uCD94\uCC9C\uD574\uC694."
+            matched_type = type_records[0][1] if type_records else RecommendationCategory.FOOD
+            openings = {
+                RecommendationCategory.FOOD: "\uC74C\uC2DD\uC810\uC5D0\uC11C \uC88B\uC740 \uC2DC\uAC04\uC744 \uBCF4\uB0B4\uC168\uC8E0?",
+                RecommendationCategory.BAR: "\uC220\uC9D1\uC5D0\uC11C \uC990\uAC70\uC6B4 \uC2DC\uAC04\uC744 \uBCF4\uB0B4\uC168\uC8E0?",
+                RecommendationCategory.CAFE: "\uCE74\uD398\uC5D0\uC11C \uC88B\uC558\uB358 \uC2DC\uAC04\uC774 \uC788\uC73C\uC168\uC8E0?",
+                RecommendationCategory.NATURE: "\uC790\uC5F0\uC744 \uC990\uACBC\uB358 \uAE30\uC5B5\uC774 \uC788\uC73C\uC2DC\uC8E0?",
+                RecommendationCategory.ACTIVITY: "\uACBD\uAE30\uC640 \uD589\uC0AC\uB97C \uC990\uAE30\uC168\uC8E0?",
+            }
+            reason = f"{openings.get(matched_type, '\uC88B\uC740 \uAE30\uC5B5\uC774 \uC788\uC73C\uC2DC\uC8E0?')} {place_label}\uC740 \uC5B4\uB54C\uC694?"
         _log_place_decision(pipeline=_CATEGORY_PIPELINE_VERSION, stage="personalized_relevance_gate",
             kakao_place_id=place.kakao_place_id, place_name=place.place_name,
             category_name=place.category_name, category_group_code=place.category_group_code,
             category_status=item.classification.status.value, decision="accepted", reason=f"personalized_evidence_{evidence_level}")
-        ranked.append((score, place.place_name.casefold(), item, matches, reason, evidence_level,
-                       feature_weight, type_weight, len(type_records), len(type_record_weights)))
+        ranked.append((score, item.search_query_priority, place.place_name.casefold(), item, matches,
+                       reason, evidence_level, feature_weight, type_weight,
+                       len(type_records), len(type_record_weights)))
     logger.info(
         "AI_RECOMMENDATION_EVIDENCE_LINK category=%s confirmed_evidence_count=%d "
         "same_record_evidence_count=%d linked_facet_evidence_count=%d "
@@ -326,20 +383,38 @@ def _build_category_recommendations(search_result, analyses, category: Recommend
         category.value, confirmed_evidence_count, same_record_evidence_count,
         linked_facet_evidence_count, max(0, confirmed_evidence_count - linked_facet_evidence_count),
     )
-    ranked.sort(key=lambda row: (-row[0], row[1]))
+    # Evidence-backed score stays primary. For near ties on the first page,
+    # prefer coverage of a distinct verified preference instead of repeating
+    # several venues tied to the same item. This is a tie-break, not a category quota.
+    ranked.sort(key=lambda row: (-row[0], -row[1], row[2]))
+    if len(ranked) > _PAGE_SIZE:
+        head = ranked[:_PAGE_SIZE]
+        tail = ranked[_PAGE_SIZE:]
+        diversified = [head.pop(0)]
+        while head and len(diversified) < _PAGE_SIZE:
+            covered = {term for row in diversified for term in row[4]}
+            best = head[0]
+            alternatives = [row for row in head
+                            if row[0] >= best[0] - 0.04
+                            and set(row[4]).difference(covered)]
+            choice = max(alternatives, key=lambda row: (len(set(row[4]).difference(covered)),
+                                                        row[0], row[1], row[2]), default=best)
+            diversified.append(choice)
+            head.remove(choice)
+        ranked = diversified + head + tail
     output = []
-    for (score, _, item, matches, reason, level, feature_weight, type_weight,
+    for (score, search_query_priority, _, item, matches, reason, level, feature_weight, type_weight,
          type_category_match_count, type_support_record_count) in ranked[:_MAX_POOL_SIZE]:
         place = item.place
-        logger.info("AI_RECOMMENDATION_RANK rank=%d kakao_place_id=%s place_name=%r categories=%s evidence_level=%s score=%.4f feature_support=%.4f type_support=%.4f type_category_match_count=%d type_support_record_count=%d matched_term_count=%d",
+        logger.info("AI_RECOMMENDATION_RANK rank=%d kakao_place_id=%s place_name=%r categories=%s evidence_level=%s score=%.4f feature_support=%.4f type_support=%.4f type_category_match_count=%d type_support_record_count=%d matched_term_count=%d search_query_priority=%d",
             len(output) + 1, place.kakao_place_id, " ".join(place.place_name.split())[:120],
             ",".join(value.value for value in item.classification.categories), level, score, feature_weight,
-            type_weight, type_category_match_count, type_support_record_count, len(matches))
+            type_weight, type_category_match_count, type_support_record_count, len(matches), search_query_priority)
         output.append(RecommendedPlace(rank=len(output) + 1, kakao_place_id=place.kakao_place_id,
             name=place.place_name, address=place.address, latitude=place.latitude, longitude=place.longitude,
-            match_score=score, matched_keywords=matches, reason=reason[:500], source_url=place.place_url))
+            match_score=score, matched_keywords=matches, reason=reason[:180], source_url=place.place_url))
     evidence_distribution = {
-        level: sum(row[5] == level for row in ranked)
+        level: sum(row[6] == level for row in ranked)
         for level in ("A", "B")
     }
     evidence_distribution["C_excluded"] = category_only_excluded
@@ -417,11 +492,21 @@ def router(
         user=Depends(current_user),
         db: Session = Depends(require_db),
     ):
+        # Keep accepting the legacy query parameter for older clients, but
+        # recommendation results are now always ranked across the full profile.
+        requested_category = category
+        category = RecommendationCategory.ALL
+        if requested_category != RecommendationCategory.ALL:
+            logger.info("AI_RECOMMENDATION_DIAGNOSTIC event=legacy_category_ignored requested_category=%s",
+                        requested_category.value)
+        record_read_started = time.perf_counter()
         records = adapter.list_positive_records(db, user.id)
         # Authentication and record lookup share the request Session. The
         # recommendation records are detached DTOs, so release the read-only
         # transaction before calling OpenRouter, Tavily, or Kakao.
         db.rollback()
+        logger.info("AI_RECOMMENDATION_TIMING stage=record_db_read elapsed_ms=%d record_count=%d",
+                    int((time.perf_counter() - record_read_started) * 1000), len(records))
         pipeline_version = _CATEGORY_PIPELINE_VERSION if use_category_pipeline else _LEGACY_PIPELINE_VERSION
         logger.info(
             "AI_RECOMMENDATION_DIAGNOSTIC event=request pipeline=%s category=%s "
@@ -443,7 +528,7 @@ def router(
         if use_category_pipeline and not selected_region:
             raise HTTPException(422, "추천 지역을 지정해 주세요.")
         key_fingerprint = _records_fingerprint(records)
-        session_fingerprint = f"{key_fingerprint}:{category.value}:{selected_region or ''}:v3" if use_category_pipeline else key_fingerprint
+        session_fingerprint = f"{key_fingerprint}:{selected_region or ''}:v3" if use_category_pipeline else key_fingerprint
         key = (int(user.id), session_fingerprint)
         now = time.monotonic()
         for old_key, session in list(sessions.items()):
@@ -499,14 +584,12 @@ def router(
             _log_diagnostic("recommendation_session_cache_hit", 0)
             analysis_key = (int(user.id), key_fingerprint)
             cached_analysis = analysis_cache.get(analysis_key)
-            cached_analysis_is_usable = bool(
-                cached_analysis
-                and not any(item.evidence_status == EvidenceStatus.UNAVAILABLE
-                            for item in cached_analysis["analyses"].analyses)
+            cached_analysis_is_usable, cache_reason = _analysis_cache_decision(
+                cached_analysis["analyses"] if cached_analysis else None
             )
             if cached_analysis and not cached_analysis_is_usable:
                 analysis_cache.pop(analysis_key, None)
-                logger.info("AI_RECOMMENDATION_DIAGNOSTIC event=record_analysis_cache_bypass reason=previous_analysis_unavailable")
+                logger.info("AI_RECOMMENDATION_DIAGNOSTIC event=record_analysis_cache_bypass reason=%s", cache_reason)
             if cached_analysis_is_usable and now - cached_analysis["created_at"] <= _SESSION_TTL_SECONDS:
                 analysis_cache.move_to_end(analysis_key)
                 all_analyses = cached_analysis["analyses"]
@@ -515,10 +598,18 @@ def router(
             else:
                 _log_diagnostic("record_analysis_cache_hit", 0)
                 analysis_invoked = 1
+                analysis_started = time.perf_counter()
                 all_analyses = preference_analysis_service.analyze(
                     records, category=RecommendationCategory.ALL
                 )
-                if not any(item.evidence_status == EvidenceStatus.UNAVAILABLE for item in all_analyses.analyses):
+                analysis_elapsed_ms = int((time.perf_counter() - analysis_started) * 1000)
+                cache_eligible, cache_reason = _analysis_cache_decision(all_analyses)
+                logger.info("AI_RECOMMENDATION_TIMING stage=record_preference_analysis elapsed_ms=%d "
+                            "record_count=%d provider_usable_count=%d cache_eligible=%d cache_reason=%s",
+                            analysis_elapsed_ms, len(records),
+                            sum(item.evidence_status != EvidenceStatus.UNAVAILABLE for item in all_analyses.analyses),
+                            int(cache_eligible), cache_reason)
+                if cache_eligible:
                     analysis_cache[analysis_key] = {
                         "created_at": now,
                         "analyses": all_analyses,
@@ -526,17 +617,7 @@ def router(
                     analysis_cache.move_to_end(analysis_key)
                     while len(analysis_cache) > 128:
                         analysis_cache.popitem(last=False)
-            if category == RecommendationCategory.ALL:
-                analyses = all_analyses
-            else:
-                scoped = []
-                for analysis in all_analyses.analyses:
-                    if category not in analysis.categories:
-                        continue
-                    scoped.append(analysis.model_copy(update={
-                        "facets": [facet for facet in analysis.facets if category in facet.categories]
-                    }))
-                analyses = all_analyses.model_copy(update={"analyses": scoped})
+            analyses = all_analyses
             _log_diagnostic("record_preference_analyses_count", len(analyses.analyses))
             preference_distribution = {
                 value.value: sum(value in analysis.categories for analysis in analyses.analyses)
@@ -577,6 +658,7 @@ def router(
                     "kakao_first_candidate_search_invoked=1",
                     pipeline_version, category.value, analysis_invoked,
                 )
+                search_started = time.perf_counter()
                 search_result = candidate_search_service.search(
                     category=category,
                     region=selected_region,
@@ -584,6 +666,10 @@ def router(
                     visited_place_ids=visited_ids,
                     visited_place_names=visited_names,
                 )
+                logger.info("AI_RECOMMENDATION_TIMING stage=place_candidate_search elapsed_ms=%d "
+                            "kakao_calls=%d tavily_calls=%d",
+                            int((time.perf_counter() - search_started) * 1000),
+                            search_result.kakao_call_count, search_result.tavily_call_count)
             except (ValueError, TypeError) as exc:
                 raise HTTPException(422, "추천 분야 또는 지역을 확인해 주세요.") from exc
             if search_result.search_skip_reason == "no_supported_preference_query" and any(

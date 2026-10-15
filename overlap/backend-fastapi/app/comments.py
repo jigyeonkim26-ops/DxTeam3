@@ -202,14 +202,17 @@ def router(current_user):
         author = db.scalar(select(User).join(Comment, Comment.author_id == User.id).where(Comment.id == comment_id, Comment.record_id == record_id))
         if author is None or author.profile_image_key is None:
             raise HTTPException(404, "Comment author photo not found.")
-        body = get_object_storage().download(author.profile_image_key)
+        object_key = author.profile_image_key
+        media_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+        db.rollback()
+        body = get_object_storage().download(object_key)
         def chunks():
             try:
                 while chunk := body.read(64 * 1024):
                     yield chunk
             finally:
                 body.close()
-        return StreamingResponse(chunks(), media_type=mimetypes.guess_type(author.profile_image_key)[0] or "application/octet-stream",
+        return StreamingResponse(chunks(), media_type=media_type,
             headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @api.delete("/records/{record_id}/comments/{comment_id}", status_code=204)

@@ -9,36 +9,26 @@ import 'package:overlap_app/features/ai/services/ai_recommendations_api.dart';
 import 'package:overlap_app/features/user/services/saved_places_api.dart';
 
 class _QueuedRecommendations extends AiRecommendationsApi {
-  final calls = <String>[];
+  int calls = 0;
   final pending = <Completer<List<AiPlaceRecommendation>>>[];
 
   @override
-  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) {
-    calls.add(category);
+  Future<List<AiPlaceRecommendation>> load() {
+    calls++;
     final request = Completer<List<AiPlaceRecommendation>>();
     pending.add(request);
     return request.future;
   }
 }
 
-const _placeA = AiPlaceRecommendation(
-  kakaoPlaceId: 'cafe-1',
-  name: 'Cafe result',
+const _recommendation = AiPlaceRecommendation(
+  kakaoPlaceId: 'place-1',
+  name: 'Personalized place',
   address: 'Test street',
   latitude: 35.1,
   longitude: 126.9,
   reason: 'Backend provided reason',
-  sourceUrl: 'https://place.map.kakao.com/cafe-1',
-  matchedKeywords: ['quiet'],
-);
-const _oldPlace = AiPlaceRecommendation(
-  kakaoPlaceId: 'old-1',
-  name: 'Old all result',
-  address: 'Test street',
-  latitude: 35.1,
-  longitude: 126.9,
-  reason: 'Backend provided reason',
-  sourceUrl: 'https://place.map.kakao.com/old-1',
+  sourceUrl: 'https://place.map.kakao.com/place-1',
   matchedKeywords: ['quiet'],
 );
 
@@ -46,6 +36,7 @@ Widget _screen(_QueuedRecommendations api) => MaterialApp(
   home: Scaffold(
     body: AiRecommendationContent(
       api: api,
+      showSheetHeader: true,
       savedPlacesApi: SavedPlacesApi(
         get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
       ),
@@ -54,42 +45,33 @@ Widget _screen(_QueuedRecommendations api) => MaterialApp(
 );
 
 void main() {
-  testWidgets('category changes clear results and ignore stale responses', (
+  testWidgets('shows one unified list and requests next backend page', (
     tester,
   ) async {
     final api = _QueuedRecommendations();
     await tester.pumpWidget(_screen(api));
-    expect(api.calls, ['all']);
+    expect(api.calls, 1);
+    expect(find.text('Personalized place'), findsNothing);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '\uCE74\uD398'));
-    await tester.pump();
-    expect(api.calls, ['all', 'cafe']);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('Cafe result'), findsNothing);
-
-    api.pending[1].complete([_placeA]);
+    api.pending[0].complete([_recommendation]);
     await tester.pumpAndSettle();
-    expect(find.text('Cafe result'), findsOneWidget);
 
-    api.pending[0].complete([_oldPlace]);
-    await tester.pumpAndSettle();
-    expect(find.text('Cafe result'), findsOneWidget);
-    expect(find.text('Old all result'), findsNothing);
-
-    await tester.tap(find.widgetWithText(ChoiceChip, '\uCE74\uD398'));
-    await tester.pump();
-    expect(api.calls, ['all', 'cafe']);
+    expect(find.text('AI 장소 추천'), findsOneWidget);
+    expect(find.text('새롭게 발견할 장소'), findsOneWidget);
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.text('Personalized place'), findsOneWidget);
 
     await tester.tap(
       find.text('\uB2E4\uC74C \uC7A5\uC18C \uCD94\uCC9C\uBC1B\uAE30'),
     );
     await tester.pump();
-    expect(api.calls, ['all', 'cafe', 'cafe']);
+    expect(api.calls, 2);
+    api.pending[1].complete([_recommendation]);
+    await tester.pumpAndSettle();
+    expect(find.text('Personalized place'), findsOneWidget);
   });
 
-  testWidgets('empty recommendations show category-specific guidance', (
-    tester,
-  ) async {
+  testWidgets('empty recommendations show unified guidance', (tester) async {
     final api = _QueuedRecommendations();
     await tester.pumpWidget(_screen(api));
     api.pending[0].complete(const []);
@@ -97,35 +79,11 @@ void main() {
 
     expect(
       find.text(
-        '\uC774 \uBD84\uC57C\uC5D0\uC11C \uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
+        '\uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
       ),
       findsOneWidget,
     );
-  });
-
-  testWidgets('all six category chips send their matching API category', (
-    tester,
-  ) async {
-    final api = _QueuedRecommendations();
-    await tester.pumpWidget(_screen(api));
-    api.pending[0].complete(const []);
-    await tester.pumpAndSettle();
-
-    const selections = <(String label, String category)>[
-      ('\uB9DB\uC9D1', 'food'),
-      ('\uC220\uC9D1', 'bar'),
-      ('\uCE74\uD398', 'cafe'),
-      ('\uC790\uC5F0\uC0B0\uCC45', 'nature'),
-      ('\uBB38\uD654\uC2A4\uD3EC\uCE20', 'activity'),
-    ];
-    for (final (label, category) in selections) {
-      await tester.tap(find.widgetWithText(ChoiceChip, label));
-      await tester.pump();
-      expect(api.calls.last, category);
-      api.pending.last.complete(const []);
-      await tester.pumpAndSettle();
-    }
-    expect(api.calls, ['all', 'food', 'bar', 'cafe', 'nature', 'activity']);
+    expect(find.textContaining('\uBD84\uC57C'), findsNothing);
   });
 
   testWidgets('authentication failure is not rendered as empty results', (
@@ -139,20 +97,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        '\uB85C\uADF8\uC778\uC774 \uB9CC\uB8CC\uB418\uC5C8\uC5B4\uC694. \uB2E4\uC2DC \uB85C\uADF8\uC778\uD574 \uC8FC\uC138\uC694.',
-      ),
+      find.textContaining('\uB85C\uADF8\uC778\uC774 \uB9CC\uB8CC'),
       findsOneWidget,
     );
     expect(
-      find.text(
-        '\uC774 \uBD84\uC57C\uC5D0\uC11C \uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
-      ),
+      find.textContaining('\uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C'),
       findsNothing,
     );
   });
 
-  testWidgets('horizontal category chips fit and scroll on a small viewport', (
+  testWidgets('small viewport layout has no horizontal category scroller', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 720);
@@ -162,16 +116,15 @@ void main() {
 
     final api = _QueuedRecommendations();
     await tester.pumpWidget(_screen(api));
-    final categories = find.byWidgetPredicate(
-      (widget) =>
-          widget is ListView && widget.scrollDirection == Axis.horizontal,
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is ListView && widget.scrollDirection == Axis.horizontal,
+      ),
+      findsNothing,
     );
-    expect(categories, findsOneWidget);
-    await tester.drag(categories, const Offset(-500, 0));
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(tester.takeException(), isNull);
-
     api.pending[0].complete(const []);
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 }

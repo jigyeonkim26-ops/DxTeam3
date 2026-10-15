@@ -108,6 +108,9 @@ class PlaceCandidateEvidence(BaseModel):
     classification: PlaceCategoryClassification
     preference_evidence: list[PreferenceEvidence] = Field(default_factory=list)
     feature_search_status: FeatureEvidenceStatus
+    # Relative Kakao query provenance, used only as a tie-break for Tavily
+    # verification and final B-level ordering. It is not proof of a feature.
+    search_query_priority: int = Field(default=0, ge=0, le=6)
 
 
 class CandidateSearchResult(BaseModel):
@@ -131,6 +134,7 @@ _HTML_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);", re.IGNOR
 _WORD = re.compile(r"[^\w]+", re.UNICODE)
 
 _REGION_ALIASES = {
+    "\uC804\uB0A8\uAD11\uC8FC\uD1B5\uD569\uD2B9\uBCC4\uC2DC": "\uAD11\uC8FC",
     "서울특별시": "서울", "서울시": "서울", "서울": "서울",
     "부산광역시": "부산", "부산시": "부산", "부산": "부산",
     "대구광역시": "대구", "대구시": "대구", "대구": "대구",
@@ -187,11 +191,30 @@ def _preference_key(value: str) -> str:
     return normalized
 
 
+def _intent_key(value: str) -> str:
+    """Collapse explicit query reductions into one preference intent."""
+    normalized = _compact(value)
+    for original, reductions in _QUERY_TERM_REDUCTIONS.items():
+        reduction_keys = {_compact(item) for item in reductions}
+        if normalized == _compact(original) or normalized in reduction_keys:
+            return sorted(reduction_keys)[0]
+    return _preference_key(value)
+
+
 def _region_key(value: str | None) -> str:
     token = _norm(value).split(maxsplit=1)
     if not token:
         return ""
     return _REGION_ALIASES.get(token[0], token[0])
+
+
+def _search_region(value: str | None) -> str:
+    """Use a Kakao-friendly canonical province/city label in search text only."""
+    parts = _norm(value).split()
+    if not parts:
+        return ""
+    parts[0] = _REGION_ALIASES.get(parts[0], parts[0])
+    return " ".join(parts)
 
 
 def _locality_parts(address: str) -> list[str]:
@@ -341,6 +364,7 @@ class PlaceCandidateSearchService:
         if category != RecommendationCategory.ALL:
             return [category]
         weights: dict[RecommendationCategory, float] = {}
+        record_support: dict[RecommendationCategory, set[int]] = {}
         for analysis in preferences:
             has_liked_facet = False
             for facet in analysis.facets:
@@ -352,12 +376,19 @@ class PlaceCandidateSearchService:
                 for value in set(analysis.categories).intersection(facet.categories):
                     if value != RecommendationCategory.ALL:
                         weights[value] = weights.get(value, 0.0) + weight
+                        record_support.setdefault(value, set()).add(analysis.record_id)
             # Analysis-provider failures retain trusted place types and emotion.
             # They can support a low-priority domain query without inventing facets.
             if not has_liked_facet and analysis.place_type != PlaceType.UNKNOWN:
                 for value in analysis.categories:
                     if value != RecommendationCategory.ALL:
                         weights[value] = weights.get(value, 0.0) + analysis.emotion_intensity * 0.35
+                        record_support.setdefault(value, set()).add(analysis.record_id)
+        # Overlapping labels on a single record are not independent support.
+        # Cap repeated facet contribution per record so one verbose record does
+        # not dominate category selection.
+        weights = {value: min(weight, 1.5 * max(1, len(record_support.get(value, ()))))
+                   for value, weight in weights.items()}
         return sorted(weights, key=lambda value: (-weights[value], value.value))
 
     @staticmethod
@@ -367,6 +398,24 @@ class PlaceCandidateSearchService:
         valid = [category for category in valid if category in facet.categories or not facet.categories]
         if requested != RecommendationCategory.ALL:
             return [requested] if requested in valid else []
+        primary = {
+            PlaceType.BAR: RecommendationCategory.BAR,
+            PlaceType.CAFE: RecommendationCategory.CAFE,
+            PlaceType.FOOD: RecommendationCategory.FOOD,
+            PlaceType.NATURE: RecommendationCategory.NATURE,
+            PlaceType.ACTIVITY: RecommendationCategory.ACTIVITY,
+        }.get(analysis.place_type)
+        if primary in valid:
+            return [primary]
+        if analysis.place_type == PlaceType.UNKNOWN:
+            inferred = {
+                "drink": RecommendationCategory.BAR,
+                "activity": RecommendationCategory.ACTIVITY,
+                "scenery": RecommendationCategory.NATURE,
+                "space": RecommendationCategory.CAFE,
+            }.get(facet.target_kind.value)
+            if inferred in valid:
+                return [inferred]
         return valid
 
     @staticmethod
@@ -375,6 +424,10 @@ class PlaceCandidateSearchService:
         if facet.target_kind.value in {"menu", "drink", "food"}:
             target = facet.target_text.strip()
             if target and target not in {"\uC74C\uC2DD", "\uBA54\uB274", "\uC74C\uB8CC", "\uC220", "\uB9E4\uC7A5", "\uBD84\uC704\uAE30", "\uACF5\uAC04"}:
+                terms.append(target)
+        elif facet.target_kind.value in {"activity", "scenery"}:
+            target = facet.target_text.strip()
+            if target and len(target) >= 2:
                 terms.append(target)
         for feature in facet.features:
             term = feature.strip()
@@ -391,8 +444,13 @@ class PlaceCandidateSearchService:
     def _build_queries(cls, category: RecommendationCategory, region: str,
                        preferences: list[RecordPreferenceAnalysis]) -> list[str]:
         """Prioritize the strongest, most specific record facets across all fields."""
-        region = _norm(region)
-        queries: list[tuple[float, str]] = []
+        search_region = _search_region(region)
+        # Build one strongest, concrete query per independent preference intent,
+        # then add reductions and broad fallbacks in later passes. This reserves
+        # the six-call budget for distinct tastes before spending it on synonyms.
+        intent_queries: dict[tuple[RecommendationCategory, str], tuple[float, str]] = {}
+        reductions: list[tuple[float, str, RecommendationCategory, str]] = []
+        broad: dict[RecommendationCategory, tuple[float, str]] = {}
         for specific in cls._specific_categories(category, preferences):
             contexts = list(_CONTEXT_TERMS.get(specific, ()))
             for analysis in preferences:
@@ -409,7 +467,9 @@ class PlaceCandidateSearchService:
                             PlaceType.ACTIVITY: "\uBB38\uD654\uC2DC\uC124",
                         }.get(analysis.place_type, "")
                         context = type_context or (contexts[0] if contexts else specific.value)
-                        queries.append((analysis.emotion_intensity * 0.35, f"{region} {context}"))
+                        key = (specific, f"type:{analysis.place_type.value}")
+                        broad[key[0]] = max(broad.get(specific, (0.0, "")),
+                                            (analysis.emotion_intensity * 0.35, f"{search_region} {context}"))
                     continue
                 for facet in matching_facets:
                     type_context = {
@@ -424,21 +484,34 @@ class PlaceCandidateSearchService:
                     specificity = 1.15 if facet.target_kind.value in {"menu", "drink", "food", "activity", "scenery"} else 0.85
                     weight = analysis.emotion_intensity * facet.confidence * specificity
                     for term in cls._feature_search_terms(facet):
-                        queries.append((weight, f"{region} {term} {context}"))
+                        key = (specific, _intent_key(term))
+                        query = f"{search_region} {term} {context}"
+                        current = intent_queries.get(key)
+                        if current is None or weight > current[0]:
+                            intent_queries[key] = (weight, query)
                         for reduced in _QUERY_TERM_REDUCTIONS.get(term, ()):
-                            queries.append((weight * 0.85, f"{region} {reduced} {context}"))
-                    # A field-level query is a lower-priority broadening option.
-                    queries.append((weight * 0.60, f"{region} {context}"))
+                            reductions.append((weight * 0.85, f"{search_region} {reduced} {context}",
+                                               specific, _intent_key(reduced)))
+                    broad[specific] = max(broad.get(specific, (0.0, "")),
+                                          (weight * 0.60, f"{search_region} {context}"))
         result: list[str] = []
-        seen = set()
-        for _, (_, query) in sorted(enumerate(queries), key=lambda item: (-item[1][0], item[0])):
-            query = _SPACE.sub(" ", query).strip()
-            key = _compact(query)
-            if key and key not in seen:
-                result.append(query)
-                seen.add(key)
-            if len(result) >= cls.MAX_KAKAO_CALLS:
-                break
+        seen: set[str] = set()
+        reduction_queries = sorted(
+            ((weight, query) for weight, query, _, _ in reductions),
+            key=lambda row: (-row[0], _compact(row[1])),
+        )
+        groups = [sorted(intent_queries.values(), key=lambda row: (-row[0], _compact(row[1]))),
+                  reduction_queries,
+                  sorted(broad.values(), key=lambda row: (-row[0], _compact(row[1])))]
+        for query_group in groups:
+            for _, query in query_group:
+                query = _SPACE.sub(" ", query).strip()
+                key = _compact(query)
+                if key and key not in seen:
+                    result.append(query)
+                    seen.add(key)
+                if len(result) >= cls.MAX_KAKAO_CALLS:
+                    return result
         return result
 
     @staticmethod
@@ -546,6 +619,7 @@ class PlaceCandidateSearchService:
         identity_documents = [document for document in cached if isinstance(document, dict)
                               and self._identity_matches(place, document)]
         evidence_rows: list[PreferenceEvidence] = []
+        invalid_url_count = 0
         for record_id, facet in facets:
             for term in self._evidence_terms(facet):
                 needle = _compact(term)
@@ -557,6 +631,7 @@ class PlaceCandidateSearchService:
                     text = _SPACE.sub(" ", html.unescape(_TAG.sub(" ", str(match.get("content") or "")))).strip()
                     safe_url = self._safe_result_url(match.get("url"))
                     if not safe_url:
+                        invalid_url_count += 1
                         evidence_rows.append(PreferenceEvidence(
                             record_id=record_id, preference=term, status=FeatureEvidenceStatus.INSUFFICIENT,
                         ))
@@ -580,6 +655,15 @@ class PlaceCandidateSearchService:
         overall = (FeatureEvidenceStatus.CONFIRMED if any(row.status == FeatureEvidenceStatus.CONFIRMED for row in evidence_rows)
                    else FeatureEvidenceStatus.INSUFFICIENT if identity_documents
                    else FeatureEvidenceStatus.PLACE_IDENTITY_UNVERIFIED)
+        logger.info(
+            "AI_RECOMMENDATION_TAVILY_EVIDENCE kakao_place_id=%s result_count=%d "
+            "identity_match_count=%d evidence_term_count=%d confirmed_term_count=%d "
+            "insufficient_term_count=%d invalid_url_count=%d overall_status=%s",
+            place.kakao_place_id, len(cached), len(identity_documents), len(evidence_rows),
+            sum(row.status == FeatureEvidenceStatus.CONFIRMED for row in evidence_rows),
+            sum(row.status == FeatureEvidenceStatus.INSUFFICIENT for row in evidence_rows),
+            invalid_url_count, overall.value,
+        )
         return evidence_rows, overall
 
     @staticmethod
@@ -658,9 +742,14 @@ class PlaceCandidateSearchService:
         kakao_error = False
         category_mismatch_count = 0
         region_mismatch_count = 0
-        for query in queries:
+        candidate_query_priority: dict[str, int] = {}
+        candidate_query_text: dict[str, str] = {}
+        for query_index, query in enumerate(queries):
             if kakao_calls >= self.MAX_KAKAO_CALLS:
                 break
+            # _build_queries orders facet-specific queries by preference weight;
+            # provenance is a retrieval tie-break only, never feature evidence.
+            query_priority = len(queries) - query_index
             query_key = "kakao:" + hashlib.sha256(_compact(query).encode("utf-8")).hexdigest()
             cached_results = self._cache_get(query_key)
             cache_hit = cached_results is not None
@@ -699,11 +788,18 @@ class PlaceCandidateSearchService:
                     if len(candidate_by_id) >= self.MAX_CANDIDATES:
                         break
                     name_key = self._candidate_key(place)
-                    if place.kakao_place_id in candidate_by_id or name_key in candidate_by_name:
+                    if place.kakao_place_id in candidate_by_id:
+                        if query_priority > candidate_query_priority.get(place.kakao_place_id, 0):
+                            candidate_query_priority[place.kakao_place_id] = query_priority
+                            candidate_query_text[place.kakao_place_id] = query
+                        continue
+                    if name_key in candidate_by_name:
                         continue
                     candidate_by_id[place.kakao_place_id] = place
                     candidate_by_name.add(name_key)
                     classification_by_id[place.kakao_place_id] = classification
+                    candidate_query_priority[place.kakao_place_id] = query_priority
+                    candidate_query_text[place.kakao_place_id] = query
                 if len(candidate_by_id) >= self.MAX_CANDIDATES:
                     break
             except RuntimeError as exc:
@@ -737,6 +833,19 @@ class PlaceCandidateSearchService:
                 if self._category_for_facet(analysis, category, facet):
                     facets_by_record_key[(analysis.record_id, facet.model_dump_json())] = (analysis.record_id, facet)
         relevant_facets = list(facets_by_record_key.values())
+        analysis_by_record = {analysis.record_id: analysis for analysis in preferences}
+
+        def facet_priority(row):
+            record_id, facet = row
+            analysis = analysis_by_record.get(record_id)
+            if analysis is None:
+                return 0.0
+            specificity = 1.15 if facet.target_kind.value in {"menu", "drink", "food", "activity", "scenery"} else 0.85
+            return analysis.emotion_intensity * facet.confidence * specificity
+
+        # Tavily has a fixed three-place budget; evaluate the strongest record
+        # facets first so a long history cannot let early records consume terms.
+        relevant_facets.sort(key=lambda row: (-facet_priority(row), row[0], row[1].target_text.casefold()))
         tavily_calls = 0
         tavily_cache_hits = 0
         tavily_skip_reason = None
@@ -744,26 +853,62 @@ class PlaceCandidateSearchService:
         tavily_had_error = False
         # Only Kakao-confirmed category matches are sent to Tavily; uncertain
         # category candidates remain visible with a verification-required state.
-        def candidate_preference_priority(place):
-            categories = set(classification_by_id[place.kakao_place_id].categories)
-            return sum(analysis.emotion_intensity * facet.confidence
-                for analysis in preferences for facet in analysis.facets
-                if facet.polarity == "liked" and categories.intersection(analysis.categories)
-                and categories.intersection(facet.categories))
-        tavily_candidates = sorted(
+        candidate_facets_by_id: dict[str, list[tuple[int, PreferenceFacet]]] = {}
+        for place_id, place in candidate_by_id.items():
+            categories = set(classification_by_id[place_id].categories)
+            category_facets = [row for row in relevant_facets if categories.intersection(row[1].categories)]
+            query_key = _compact(candidate_query_text.get(place_id, ""))
+            query_facets = []
+            for row in category_facets:
+                _, facet = row
+                terms = self._feature_search_terms(facet)
+                terms.extend(reduced for term in self._feature_search_terms(facet)
+                             for reduced in _QUERY_TERM_REDUCTIONS.get(term, ()))
+                if any(_compact(term) and _compact(term) in query_key for term in terms):
+                    query_facets.append(row)
+            candidate_facets_by_id[place_id] = query_facets or category_facets
+
+        sorted_tavily_candidates = sorted(
             (place for place in candidate_by_id.values()
-             if classification_by_id[place.kakao_place_id].status == CategoryMatchStatus.CONFIRMED),
-            key=lambda place: (-candidate_preference_priority(place), place.place_name.casefold(), place.kakao_place_id),
-        )[:self.MAX_TAVILY_CANDIDATES]
+             if classification_by_id[place.kakao_place_id].status == CategoryMatchStatus.CONFIRMED
+             and candidate_facets_by_id.get(place.kakao_place_id)),
+            key=lambda place: (-candidate_query_priority.get(place.kakao_place_id, 0),
+                               place.place_name.casefold(), place.kakao_place_id),
+        )
+        # Round-robin candidates from distinct Kakao query intents before
+        # selecting additional candidates from any one intent.
+        by_query: dict[int, list[KakaoPlaceCandidate]] = {}
+        for place in sorted_tavily_candidates:
+            by_query.setdefault(candidate_query_priority.get(place.kakao_place_id, 0), []).append(place)
+        tavily_candidates: list[KakaoPlaceCandidate] = []
+        for priority in sorted(by_query, reverse=True):
+            if by_query[priority]:
+                tavily_candidates.append(by_query[priority].pop(0))
+                if len(tavily_candidates) == self.MAX_TAVILY_CANDIDATES:
+                    break
+        if len(tavily_candidates) < self.MAX_TAVILY_CANDIDATES:
+            for priority in sorted(by_query, reverse=True):
+                tavily_candidates.extend(by_query[priority][:self.MAX_TAVILY_CANDIDATES - len(tavily_candidates)])
+                if len(tavily_candidates) == self.MAX_TAVILY_CANDIDATES:
+                    break
+        logger.info(
+            "AI_RECOMMENDATION_TAVILY_SELECTION candidate_pool_count=%d selected_count=%d "
+            "distinct_query_priority_count=%d",
+            sum(classification_by_id[place.kakao_place_id].status == CategoryMatchStatus.CONFIRMED
+                for place in candidate_by_id.values()),
+            len(tavily_candidates), len({candidate_query_priority.get(place.kakao_place_id, 0)
+                                         for place in tavily_candidates}),
+        )
         evidence_by_id: dict[str, tuple[list[PreferenceEvidence], FeatureEvidenceStatus]] = {}
         if relevant_facets and tavily_candidates:
             cached_candidate_ids = {
                 place.kakao_place_id for place in tavily_candidates
-                if self._cache_get(self._tavily_key_for(place, region, relevant_facets)) is not None
+                if self._cache_get(self._tavily_key_for(place, region, candidate_facets_by_id[place.kakao_place_id])) is not None
             }
             external_keys = {
                 place.kakao_place_id for place in tavily_candidates
-                if self.tavily_api_key and self._cache_get(self._tavily_key_for(place, region, relevant_facets)) is None
+                if self.tavily_api_key and self._cache_get(self._tavily_key_for(
+                    place, region, candidate_facets_by_id[place.kakao_place_id])) is None
             }
             tavily_cache_hits = len(cached_candidate_ids)
             tavily_calls = min(len(external_keys), self.MAX_TAVILY_CALLS)
@@ -772,7 +917,8 @@ class PlaceCandidateSearchService:
             elif not external_keys:
                 tavily_skip_reason = "tavily_result_cache_hit"
             with ThreadPoolExecutor(max_workers=min(3, len(tavily_candidates))) as executor:
-                futures = {executor.submit(self._tavily_for_place, place, region, relevant_facets): place.kakao_place_id
+                futures = {executor.submit(self._tavily_for_place, place, region,
+                                           candidate_facets_by_id[place.kakao_place_id]): place.kakao_place_id
                            for place in tavily_candidates}
                 for future, place_id in ((future, place_id) for future, place_id in futures.items()):
                     try:
@@ -814,6 +960,7 @@ class PlaceCandidateSearchService:
                 classification=classification_by_id[place.kakao_place_id],
                 preference_evidence=rows,
                 feature_search_status=status,
+                search_query_priority=candidate_query_priority.get(place.kakao_place_id, 0),
             ))
 
         if not candidate_by_id:
@@ -829,6 +976,19 @@ class PlaceCandidateSearchService:
 
         logger.info("place candidate search complete category=%s kakao_calls=%d tavily_calls=%d candidates=%d",
                     category.value, kakao_calls, tavily_calls, len(enriched))
+        evidence_confirmed_count = sum(
+            row.status == FeatureEvidenceStatus.CONFIRMED
+            for item in enriched for row in item.preference_evidence
+        )
+        identity_unverified_count = sum(
+            row.status == FeatureEvidenceStatus.PLACE_IDENTITY_UNVERIFIED
+            for item in enriched for row in item.preference_evidence
+        )
+        logger.info(
+            "AI_RECOMMENDATION_TAVILY_RESULT candidate_count=%d confirmed_evidence_count=%d "
+            "identity_unverified_count=%d",
+            len(enriched), evidence_confirmed_count, identity_unverified_count,
+        )
         if kakao_error:
             skip_reason = "kakao_provider_error"
         elif not candidate_by_id and kakao_empty_cache_hits and kakao_calls == 0:

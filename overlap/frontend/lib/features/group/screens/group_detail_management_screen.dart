@@ -503,7 +503,7 @@ class _MemberAvatar extends StatelessWidget {
           '${ApiConfig.baseUrl}$path',
           headers: {'Authorization': 'Bearer $token'},
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => fallback,
+          errorBuilder: (_, _, _) => fallback,
         ),
       ),
     );

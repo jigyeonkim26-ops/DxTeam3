@@ -10,7 +10,7 @@ import 'package:overlap_app/features/user/services/saved_places_api.dart';
 
 class _Recommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async => [
+  Future<List<AiPlaceRecommendation>> load() async => [
     AiPlaceRecommendation.fromJson({
       'kakao_place_id': '12345',
       'name': '양림동 펭귄마을',

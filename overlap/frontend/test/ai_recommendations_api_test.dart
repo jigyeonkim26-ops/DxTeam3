@@ -18,32 +18,30 @@ Map<String, dynamic> recommendation(String id) => {
 };
 
 void main() {
-  test(
-    'refresh requests use backend suitability session and preserve first call',
-    () async {
-      final paths = <String>[];
-      var call = 0;
-      final api = AiRecommendationsApi(
-        get: (path, {responseTimeout}) async {
-          paths.add(path);
-          call++;
-          return {
-            'recommendations': [
-              recommendation(call == 1 || call == 3 ? '12345' : '23456'),
-            ],
-          };
-        },
-      );
+  test('refresh requests use one unified backend session', () async {
+    final paths = <String>[];
+    var call = 0;
+    final api = AiRecommendationsApi(
+      get: (path, {responseTimeout}) async {
+        paths.add(path);
+        call++;
+        return {
+          'recommendations': [
+            recommendation(call == 1 || call == 3 ? '12345' : '23456'),
+          ],
+        };
+      },
+    );
 
-      expect((await api.load()).single.kakaoPlaceId, '12345');
-      expect((await api.load()).single.kakaoPlaceId, '23456');
-      expect((await api.load()).single.kakaoPlaceId, '12345');
-      expect(paths.first, '/ai/recommendations?category=all');
-      final refresh = Uri.parse(paths.last);
-      expect(refresh.path, '/ai/recommendations');
-      expect(refresh.queryParameters, {'category': 'all', 'refresh': 'true'});
-    },
-  );
+    expect((await api.load()).single.kakaoPlaceId, '12345');
+    expect((await api.load()).single.kakaoPlaceId, '23456');
+    expect((await api.load()).single.kakaoPlaceId, '12345');
+    expect(paths, [
+      '/ai/recommendations',
+      '/ai/recommendations?refresh=true',
+      '/ai/recommendations?refresh=true',
+    ]);
+  });
 
   test(
     'changing authenticated user starts a fresh recommendation history',
@@ -64,51 +62,45 @@ void main() {
       ApiTransport.setAccessToken('second-user-token');
       await api.load();
 
-      expect(paths, [
-        '/ai/recommendations?category=all',
-        '/ai/recommendations?category=all',
-      ]);
+      expect(paths, ['/ai/recommendations', '/ai/recommendations']);
     },
   );
 
-  test('pending requests are not shared across authenticated users', () async {
-    final paths = <String>[];
-    final gates = <Completer<Map<String, dynamic>>>[];
-    final api = AiRecommendationsApi(
-      get: (path, {responseTimeout}) {
-        paths.add(path);
-        final gate = Completer<Map<String, dynamic>>();
-        gates.add(gate);
-        return gate.future;
-      },
-    );
-    ApiTransport.setAccessToken('pending-first-user');
-    addTearDown(ApiTransport.clearAccessToken);
+  test(
+    'pending unified request is isolated across authenticated users',
+    () async {
+      final paths = <String>[];
+      final gates = <Completer<Map<String, dynamic>>>[];
+      final api = AiRecommendationsApi(
+        get: (path, {responseTimeout}) {
+          paths.add(path);
+          final gate = Completer<Map<String, dynamic>>();
+          gates.add(gate);
+          return gate.future;
+        },
+      );
+      ApiTransport.setAccessToken('pending-first-user');
+      addTearDown(ApiTransport.clearAccessToken);
 
-    final firstUserRequest = api.load(category: 'cafe');
-    ApiTransport.setAccessToken('pending-second-user');
-    final secondUserRequest = api.load(category: 'cafe');
+      final firstUserRequest = api.load();
+      ApiTransport.setAccessToken('pending-second-user');
+      final secondUserRequest = api.load();
 
-    expect(paths, [
-      '/ai/recommendations?category=cafe',
-      '/ai/recommendations?category=cafe',
-    ]);
-    gates[1].complete({'recommendations': <dynamic>[]});
-    await secondUserRequest;
-    gates[0].complete({'recommendations': <dynamic>[]});
-    await firstUserRequest;
+      expect(paths, ['/ai/recommendations', '/ai/recommendations']);
+      gates[1].complete({'recommendations': <dynamic>[]});
+      await secondUserRequest;
+      gates[0].complete({'recommendations': <dynamic>[]});
+      await firstUserRequest;
 
-    final nextSecondUserRequest = api.load(category: 'cafe');
-    expect(Uri.parse(paths.last).queryParameters, {
-      'category': 'cafe',
-      'refresh': 'true',
-    });
-    gates[2].complete({'recommendations': <dynamic>[]});
-    await nextSecondUserRequest;
-  });
+      final nextRequest = api.load();
+      expect(paths.last, '/ai/recommendations?refresh=true');
+      gates[2].complete({'recommendations': <dynamic>[]});
+      await nextRequest;
+    },
+  );
 
   test(
-    'first request for each category omits refresh and category is exact',
+    'first call has no category or refresh and following call refreshes',
     () async {
       final paths = <String>[];
       final api = AiRecommendationsApi(
@@ -118,71 +110,29 @@ void main() {
         },
       );
 
-      for (final category in AiRecommendationsApi.supportedCategories) {
-        await api.load(category: category);
-      }
+      await api.load();
+      await api.load();
 
-      expect(
-        paths.map((path) => Uri.parse(path).queryParameters),
-        everyElement(
-          predicate<Map<String, String>>(
-            (query) =>
-                query.length == 1 &&
-                query.containsKey('category') &&
-                query['category'] != null &&
-                query['refresh'] == null,
-          ),
-        ),
-      );
-      expect(
-        paths
-            .map((path) => Uri.parse(path).queryParameters['category'])
-            .toSet(),
-        AiRecommendationsApi.supportedCategories,
-      );
+      expect(Uri.parse(paths.first).queryParameters, isEmpty);
+      expect(Uri.parse(paths.last).queryParameters, {'refresh': 'true'});
     },
   );
 
-  test('switching back to a visited category requests its next page', () async {
+  test('concurrent calls merge into one pending unified request', () async {
     final paths = <String>[];
-    final api = AiRecommendationsApi(
-      get: (path, {responseTimeout}) async {
-        paths.add(path);
-        return {'recommendations': <dynamic>[]};
-      },
-    );
-
-    await api.load(category: 'cafe');
-    await api.load(category: 'bar');
-    await api.load(category: 'cafe');
-
-    expect(paths.map((path) => Uri.parse(path).queryParameters).toList(), [
-      {'category': 'cafe'},
-      {'category': 'bar'},
-      {'category': 'cafe', 'refresh': 'true'},
-    ]);
-  });
-
-  test('concurrent requests merge only within the same category', () async {
-    final paths = <String>[];
-    final gates = <String, Completer<Map<String, dynamic>>>{};
+    final gate = Completer<Map<String, dynamic>>();
     final api = AiRecommendationsApi(
       get: (path, {responseTimeout}) {
         paths.add(path);
-        final category = Uri.parse(path).queryParameters['category']!;
-        return (gates[category] ??= Completer<Map<String, dynamic>>()).future;
+        return gate.future;
       },
     );
 
-    final firstCafe = api.load(category: 'cafe');
-    final sameCafe = api.load(category: 'cafe');
-    final bar = api.load(category: 'bar');
-    expect(paths, [
-      '/ai/recommendations?category=cafe',
-      '/ai/recommendations?category=bar',
-    ]);
-    gates['cafe']!.complete({'recommendations': <dynamic>[]});
-    gates['bar']!.complete({'recommendations': <dynamic>[]});
-    await Future.wait([firstCafe, sameCafe, bar]);
+    final first = api.load();
+    final same = api.load();
+    expect(paths, ['/ai/recommendations']);
+    gate.complete({'recommendations': <dynamic>[]});
+    await Future.wait([first, same]);
+    expect(paths, hasLength(1));
   });
 }

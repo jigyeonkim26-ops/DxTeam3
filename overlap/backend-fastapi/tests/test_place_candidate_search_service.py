@@ -270,16 +270,16 @@ def test_zero_exact_kakao_results_expand_to_general_category_query():
 
     def search(query, **kwargs):
         queries.append(query)
-        if query == "광주 조용한 카페":
-            return []
         if query == "광주 넓은 카페":
+            return []
+        if query == "광주 조용한 카페":
             return []
         if query == "광주 카페":
             return [kakao_place("800", "일반 카페")]
         return []
 
     result = service(search).search(category="cafe", region="광주", preferences=[cafe_preference()])
-    assert queries[:3] == ["광주 조용한 카페", "광주 넓은 카페", "광주 카페"]
+    assert queries[:3] == ["광주 넓은 카페", "광주 조용한 카페", "광주 카페"]
     assert [item.place.kakao_place_id for item in result.candidates] == ["800"]
 
 
@@ -329,6 +329,27 @@ def test_tavily_is_called_for_verified_facets_but_stays_within_three_place_budge
     assert result.tavily_call_count == len(tavily_queries)
 
 
+def test_tavily_budget_samples_candidates_from_distinct_kakao_queries():
+    query_index = [0]
+    tavily_names = []
+
+    def kakao(query, **kwargs):
+        query_index[0] += 1
+        return [kakao_place(str(1450 + query_index[0]), f"광주 후보 카페 {query_index[0]}")]
+
+    def tavily(url, **kwargs):
+        tavily_names.append(kwargs["json"]["query"].split(" 광주 ")[0])
+        return tavily_response([])
+
+    result = service(kakao, tavily).search(
+        category="cafe", region="광주", preferences=[cafe_preference()]
+    )
+
+    assert len(result.candidates) >= 3
+    assert len(tavily_names) == 3
+    assert len(set(tavily_names)) == 3
+
+
 def test_region_leading_whitespace_is_normalized_before_query_and_candidate_check():
     queries = []
     result = service(
@@ -336,7 +357,7 @@ def test_region_leading_whitespace_is_normalized_before_query_and_candidate_chec
     ).search(category="cafe", region="  광주광역시  ", preferences=[cafe_preference()])
 
     assert result.region == "광주광역시"
-    assert queries and all(query.startswith("광주광역시 ") for query in queries)
+    assert queries and all(query.startswith("광주 ") for query in queries)
     assert result.candidates
 
 
@@ -429,6 +450,37 @@ def test_all_category_search_prioritizes_stronger_specific_preference_not_record
     assert len(queries) <= PlaceCandidateSearchService.MAX_KAKAO_CALLS
 
 
+def test_all_search_spreads_six_call_budget_across_distinct_preferences_and_normalizes_region():
+    yuzu = bar_preference()
+    # The same record also mentions the shorter highball form; it should not
+    # consume a second slot when the exact yuzu-highball intent is present.
+    duplicate = yuzu.model_copy(update={
+        "facets": [*yuzu.facets,
+                   yuzu.facets[0].model_copy(update={"target_text": "하이볼"}),
+                   yuzu.facets[0].model_copy(update={"target_text": "꼬치"})]
+    })
+    cafe = cafe_preference(record_id=3).model_copy(update={"emotion_intensity": 0.8})
+    activity = RecordPreferenceAnalysis(
+        record_id=4, place_name="대구실내체육관", place_type=PlaceType.ACTIVITY,
+        categories=[RecommendationCategory.ACTIVITY], emotion=RecommendationEmotionCode.LOVE,
+        emotion_intensity=0.75, evidence_status=EvidenceStatus.VERIFIED,
+        facets=[PreferenceFacet(target_kind=FacetTargetKind.ACTIVITY, target_text="농구 경기",
+                                features=["홈 개막전 이벤트"], categories=[RecommendationCategory.ACTIVITY],
+                                polarity="liked", evidence="농구 경기가 즐거웠다.", confidence=0.9)],
+    )
+
+    queries = PlaceCandidateSearchService._build_queries(
+        RecommendationCategory.ALL, "전남광주통합특별시 동구", [duplicate, cafe, activity]
+    )
+
+    assert len(queries) <= PlaceCandidateSearchService.MAX_KAKAO_CALLS == 6
+    assert queries[0].startswith("광주 동구 ")
+    assert sum(len(query.split()) >= 2 and query.split()[-2] == "하이볼" for query in queries) == 0
+    assert any("꼬치" in query for query in queries)
+    assert any("카페" in query for query in queries)
+    assert any("농구 경기" in query for query in queries)
+
+
 def test_analysis_failure_type_only_fallback_builds_queries_for_all_and_nature():
     from app.place_candidate_search_service import KakaoPlaceCandidate, CategoryMatchStatus
     from app.record_preference_analysis import EvidenceStatus
@@ -452,7 +504,7 @@ def test_analysis_failure_type_only_fallback_builds_queries_for_all_and_nature()
         assert result.query_count > 0
         assert result.kakao_call_count > 0
         assert result.kakao_status == ProviderStatus.COMPLETE
-        assert all(query.startswith("광주광역시 ") for query in calls)
+        assert all(query.startswith("광주 ") for query in calls)
 
 
 def test_unknown_without_category_or_facets_is_classified_as_no_safe_query():
@@ -548,3 +600,83 @@ def test_all_category_with_no_structured_domain_does_not_fan_out_to_every_place_
     assert result.kakao_status == ProviderStatus.NO_RESULTS
     assert result.kakao_call_count == 0
     assert calls == []
+
+
+
+def test_tavily_budget_prefers_candidates_from_strong_facet_queries():
+    tavily_queries = []
+    strong = kakao_place(
+        "9901", "Z Strong Facet Izakaya", "\uad11\uc8fc\uad11\uc5ed\uc2dc \ub3d9\uad6c \uc11c\uc11d\ub85c",
+        code="FD6", category="\uc74c\uc2dd\uc810 > \uc220\uc9d1 > \uc774\uc790\uce74\uc57c",
+    )
+    broad = [
+        kakao_place(f"991{i}", f"A Broad Candidate {i}", "\uad11\uc8fc\uad11\uc5ed\uc2dc \ub3d9\uad6c \ucda9\uc7a5\ub85c",
+                    code="FD6", category="\uc74c\uc2dd\uc810 > \uc220\uc9d1 > \ud3ec\ucc28")
+        for i in range(3)
+    ]
+
+    def kakao(query, **kwargs):
+        if "\uc720\uc790\ud558\uc774\ubcfc" in query:
+            return [strong]
+        if query.endswith("\uc774\uc790\uce74\uc57c"):
+            return broad
+        return []
+
+    def tavily(url, **kwargs):
+        tavily_queries.append(kwargs["json"]["query"])
+        return tavily_response([])
+
+    result = service(kakao, tavily).search(
+        category="bar", region="\uad11\uc8fc", preferences=[bar_preference()],
+    )
+
+    selected_strong = any(query.startswith("Z Strong Facet Izakaya ") for query in tavily_queries)
+    strong_candidate = next(item for item in result.candidates if item.place.kakao_place_id == "9901")
+    assert len(result.candidates) == 4
+    assert len(tavily_queries) == 3
+    assert selected_strong
+    assert strong_candidate.search_query_priority > min(
+        item.search_query_priority for item in result.candidates if item.place.kakao_place_id != "9901"
+    )
+
+
+def test_merged_gwangju_region_and_korean_feature_variants_keep_identity_boundary():
+    from app.record_preference_analysis import RecommendationCategory, RecordPreferenceAnalysis
+    from app.recommendation_record_adapter import RecommendationEmotionCode
+
+    region = "\uc804\ub0a8\uad11\uc8fc\ud1b5\ud569\ud2b9\ubcc4\uc2dc \ub3d9\uad6c"
+    content = "\ub9e4\uc7a5\uc774 \ub113\uace0 \uc870\uc6a9\ud574\uc11c \uc88b\uc558\ub2e4."
+    record = RecordPreferenceAnalysis(
+        record_id=881, place_name="\uce74\ud398 \uae30\ub85d", place_type=PlaceType.CAFE,
+        categories=[RecommendationCategory.CAFE], emotion=RecommendationEmotionCode.LIKE,
+        emotion_intensity=1.0, evidence_status=EvidenceStatus.VERIFIED,
+        facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.SPACE, target_text="\ub9e4\uc7a5",
+            features=["\ub113\uace0", "\uc870\uc6a9\ud574\uc11c"],
+            categories=[RecommendationCategory.CAFE], polarity="liked", evidence=content, confidence=0.95,
+        )],
+    )
+    place = kakao_place(
+        "1881", "CafeOasis", region + " \uc11c\uc11d\ub85c",
+        category="\uc74c\uc2dd\uc810 > \uce74\ud398", code="CE7",
+    )
+    tavily_calls = []
+
+    def tavily(url, **kwargs):
+        tavily_calls.append(kwargs["json"]["query"])
+        return tavily_response([
+            {"title": "CafeOasis \uad11\uc8fc \uc11c\uad6c", "content": "CafeOasis \uad11\uc8fc \uc11c\uad6c \ub113\uc740 \uc2e4\ub0b4\uc640 \uc870\uc6a9\ud55c \ubd84\uc704\uae30", "url": "https://example.test/wrong-district"},
+            {"title": "CafeOasis \uad11\uc8fc \ub3d9\uad6c", "content": "CafeOasis \uad11\uc8fc \ub3d9\uad6c\uc758 \ub113\uc740 \uc2e4\ub0b4\uc640 \uc870\uc6a9\ud55c \ubd84\uc704\uae30", "url": "https://example.test/right-district"},
+        ])
+
+    result = service(lambda query, **kwargs: [place], tavily).search(
+        category="cafe", region=region, preferences=[record],
+    )
+    candidate = result.candidates[0]
+    confirmed = [row for row in candidate.preference_evidence if row.status == FeatureEvidenceStatus.CONFIRMED]
+
+    assert result.candidates
+    assert len(tavily_calls) == 1
+    assert {row.preference for row in confirmed} == {"\ub113\uace0", "\uc870\uc6a9\ud574\uc11c"}
+    assert {row.evidence_url for row in confirmed} == {"https://example.test/right-district"}
+    assert all("wrong-district" not in (row.evidence_url or "") for row in confirmed)

@@ -28,15 +28,12 @@ const recommendation = AiPlaceRecommendation(
 
 class _Recommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async => [
-    recommendation,
-  ];
+  Future<List<AiPlaceRecommendation>> load() async => [recommendation];
 }
 
 class _EmptyRecommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async =>
-      [];
+  Future<List<AiPlaceRecommendation>> load() async => [];
 }
 
 Widget card(

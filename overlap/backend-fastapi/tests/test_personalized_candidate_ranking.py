@@ -109,6 +109,8 @@ def test_all_ranks_verified_mixed_preferences_above_category_only_and_ignores_se
     assert "Tavily" not in ranked[0].reason and "Kakao" not in ranked[0].reason
     assert all("Unrelated Parking" != item.name for item in ranked)
     assert ranked[0].match_score == ranked[1].match_score
+    assert "\uD655\uC778\uB3FC\uC11C" in ranked[0].reason
+    assert "\uAC00\uBCF4\uC154\uB3C4 \uC88B\uC744 \uAC83 \uAC19\uC544\uC694" in ranked[0].reason
 
 
 def test_type_only_is_weak_honest_level_b_and_unrelated_category_is_excluded():
@@ -129,8 +131,19 @@ def test_type_only_is_weak_honest_level_b_and_unrelated_category_is_excluded():
     assert "카페" in ranked[0].reason
     assert "조용" not in ranked[0].reason
 
+    bar_analysis = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(2, PlaceType.BAR, Category.BAR, "yuzu highball", FacetTargetKind.DRINK),
+    ])
+    bar = _build_category_recommendations(_result([
+        _candidate(22, "Izakaya without menu evidence", [Category.BAR], preference="yuzu highball",
+                   evidence_status=FeatureEvidenceStatus.UNAVAILABLE),
+    ]), bar_analysis, Category.ALL)[0]
+    assert "\uC220\uC9D1" in bar.reason
+    assert "yuzu highball" not in bar.reason
+    assert bar.reason != ranked[0].reason
 
-def test_known_place_type_without_llm_facets_remains_a_weak_type_match():
+
+def test_known_place_type_without_concrete_preferences_does_not_create_a_recommendation():
     fallback = RecordPreferenceAnalysisResponse(analyses=[RecordPreferenceAnalysis(
         record_id=44, place_name="무등산 공원", place_type=PlaceType.NATURE,
         place_type_label="공원", place_type_evidence="place_name_hint",
@@ -141,16 +154,18 @@ def test_known_place_type_without_llm_facets_remains_a_weak_type_match():
         _candidate(44, "Kakao Nature Park", [Category.NATURE]),
     ]), fallback, Category.ALL)
 
-    assert len(ranked) == 1
-    assert ranked[0].matched_keywords == []
-    assert ranked[0].match_score <= 0.30
+    assert ranked == []
 
 
 def test_overlapping_category_labels_do_not_double_count_one_record_type_support():
     analysis = RecordPreferenceAnalysis(
         record_id=90, place_name="synthetic cafe", place_type=PlaceType.CAFE,
         categories=[Category.CAFE, Category.FOOD], emotion="LOVE", emotion_intensity=1.0,
-        evidence_status=EvidenceStatus.VERIFIED, facets=[],
+        evidence_status=EvidenceStatus.VERIFIED, facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.SPACE, target_text="indoor space", features=["spacious"],
+            categories=[Category.CAFE, Category.FOOD], polarity="liked",
+            evidence="synthetic preference", confidence=0.95,
+        )],
     )
     analyses = RecordPreferenceAnalysisResponse(analyses=[analysis])
     candidate = _candidate(90, "Synthetic Cafe", [Category.CAFE, Category.FOOD])
@@ -160,6 +175,29 @@ def test_overlapping_category_labels_do_not_double_count_one_record_type_support
     assert len(ranked) == 1
     assert ranked[0].match_score == pytest.approx(0.12)
     assert ranked[0].matched_keywords == []
+
+
+def test_first_page_breaks_near_ties_toward_a_distinct_verified_preference():
+    analyses = RecordPreferenceAnalysisResponse(analyses=[
+        _analysis(1, PlaceType.BAR, Category.BAR, "유자하이볼", FacetTargetKind.DRINK),
+        _analysis(2, PlaceType.BAR, Category.BAR, "꼬치", FacetTargetKind.FOOD),
+    ])
+    candidates = [
+        _candidate(1, "A Highball Bar", [Category.BAR], preference="유자하이볼",
+                   record_id=1, evidence_status=FeatureEvidenceStatus.CONFIRMED),
+        _candidate(2, "B Highball Bar", [Category.BAR], preference="유자하이볼",
+                   record_id=1, evidence_status=FeatureEvidenceStatus.CONFIRMED),
+        _candidate(3, "C Skewer Bar", [Category.BAR], preference="꼬치",
+                   record_id=2, evidence_status=FeatureEvidenceStatus.CONFIRMED),
+        _candidate(4, "D Skewer Bar", [Category.BAR], preference="꼬치",
+                   record_id=2, evidence_status=FeatureEvidenceStatus.CONFIRMED),
+    ]
+
+    ranked = _build_category_recommendations(_result(candidates), analyses, Category.ALL)
+
+    assert ranked[0].matched_keywords == ["유자하이볼"]
+    assert ranked[1].matched_keywords == ["꼬치"]
+    assert len(ranked) <= 10
 
 
 def test_confirmed_tavily_feature_requires_same_record_facet_for_level_a():

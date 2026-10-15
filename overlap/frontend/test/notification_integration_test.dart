@@ -16,8 +16,7 @@ import 'package:overlap_app/features/ai/services/ai_recommendations_api.dart';
 
 class _EmptyRecommendations extends AiRecommendationsApi {
   @override
-  Future<List<AiPlaceRecommendation>> load({String category = 'all'}) async =>
-      [];
+  Future<List<AiPlaceRecommendation>> load() async => [];
 }
 
 Map<String, Object?> notification(int id, {bool read = false}) => {

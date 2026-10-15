@@ -334,6 +334,7 @@ def create_app(
         if object_key is None:
             raise HTTPException(404, "등록된 프로필 사진이 없습니다.")
 
+        db.rollback()
         body = get_object_storage().download(object_key)
 
         def chunks():
@@ -504,11 +505,13 @@ def create_app(
         member = db.get(User, member_id)
         if member is None or member.profile_image_key is None:
             raise HTTPException(status_code=404, detail="프로필 사진을 찾을 수 없습니다.")
+        object_key = member.profile_image_key
+        media_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+        db.rollback()
         try:
-            body = get_object_storage().download(member.profile_image_key)
+            body = get_object_storage().download(object_key)
         except Exception:
             raise HTTPException(status_code=404, detail="프로필 사진을 찾을 수 없습니다.") from None
-        media_type = mimetypes.guess_type(member.profile_image_key)[0] or "application/octet-stream"
         return StreamingResponse(body, media_type=media_type)
 
     @api.get(

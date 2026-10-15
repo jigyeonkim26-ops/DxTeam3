@@ -10,15 +10,6 @@ import '../models/ai_place_recommendation.dart';
 import '../services/ai_recommendations_api.dart';
 import '../widgets/ai_place_recommendation_card.dart';
 
-const _recommendationCategories = <({String label, String value})>[
-  (label: '\u{c804}\u{ccb4}', value: 'all'),
-  (label: '\u{b9db}\u{c9d1}', value: 'food'),
-  (label: '\u{c220}\u{c9d1}', value: 'bar'),
-  (label: '\u{ce74}\u{d398}', value: 'cafe'),
-  (label: '\u{c790}\u{c5f0}\u{c0b0}\u{cc45}', value: 'nature'),
-  (label: '\u{bb38}\u{d654}\u{c2a4}\u{d3ec}\u{ce20}', value: 'activity'),
-];
-
 class AiRecommendationScreen extends StatelessWidget {
   const AiRecommendationScreen({super.key, this.api, this.savedPlacesApi});
 
@@ -73,46 +64,33 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
   int _recommendationsRevision = 0;
   bool _loading = false;
   String? _error;
-  String _category = 'all';
   int _requestGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadCategory(_category);
+    _loadRecommendations();
   }
 
-  Future<void> _selectCategory(String category) async {
-    if (category == _category) return;
-    final generation = ++_requestGeneration;
-    setState(() {
-      _category = category;
-      _recommendations = const [];
-      _error = null;
-      _loading = true;
-    });
-    await _requestCategory(category, generation);
-  }
-
-  Future<void> _loadCategory(String category) async {
+  Future<void> _loadRecommendations() async {
     if (_loading) return;
     final generation = ++_requestGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
-    await _requestCategory(category, generation);
+    await _requestRecommendations(generation);
   }
 
-  Future<void> _requestCategory(String category, int generation) async {
+  Future<void> _requestRecommendations(int generation) async {
     final stopwatch = Stopwatch()..start();
     try {
-      final items = await _api.load(category: category);
+      final items = await _api.load();
       if (!mounted) return;
-      if (generation != _requestGeneration || category != _category) {
+      if (generation != _requestGeneration) {
         if (kDebugMode) {
           debugPrint(
-            '[AI recommendations UI] category=$category stale_response_ignored=1 elapsed_ms=${stopwatch.elapsedMilliseconds}',
+            '[AI recommendations UI] stale_response_ignored=1 elapsed_ms=${stopwatch.elapsedMilliseconds}',
           );
         }
         return;
@@ -122,9 +100,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
         _recommendationsRevision++;
       });
     } on ApiException catch (e) {
-      if (!mounted ||
-          generation != _requestGeneration ||
-          category != _category) {
+      if (!mounted || generation != _requestGeneration) {
         return;
       }
       setState(
@@ -139,16 +115,12 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
             : e.message,
       );
     } catch (_) {
-      if (!mounted ||
-          generation != _requestGeneration ||
-          category != _category) {
+      if (!mounted || generation != _requestGeneration) {
         return;
       }
       setState(() => _error = '추천 장소를 불러오지 못했어요. 다시 시도해 주세요.');
     } finally {
-      if (mounted &&
-          generation == _requestGeneration &&
-          category == _category) {
+      if (mounted && generation == _requestGeneration) {
         setState(() => _loading = false);
       }
     }
@@ -222,44 +194,6 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
           ),
 
         Padding(
-          padding: const EdgeInsets.only(top: AppSpacing.xs),
-          child: SizedBox(
-            height: 42,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              primary: false,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              itemCount: _recommendationCategories.length,
-              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.xs),
-              itemBuilder: (context, index) {
-                final item = _recommendationCategories[index];
-                final selected = item.value == _category;
-                return ChoiceChip(
-                  label: Text(item.label, maxLines: 1, softWrap: false),
-                  selected: selected,
-                  onSelected: (_) => _selectCategory(item.value),
-                  showCheckmark: false,
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.xs,
-                  ),
-                  labelStyle: TextStyle(
-                    color: selected ? AppColors.surface : AppColors.deepNavy,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  backgroundColor: AppColors.paleMint,
-                  selectedColor: AppColors.deepNavy,
-                  side: BorderSide(
-                    color: selected ? AppColors.deepNavy : AppColors.divider,
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        Padding(
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.md,
             AppSpacing.lg,
@@ -327,7 +261,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
               children: [
                 Text(_error!, textAlign: TextAlign.center),
                 TextButton(
-                  onPressed: () => _loadCategory(_category),
+                  onPressed: () => _loadRecommendations(),
                   child: const Text('다시 추천받기'),
                 ),
               ],
@@ -339,11 +273,11 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
             child: Column(
               children: [
                 const Text(
-                  '\u{c774}\u{20}\u{bd84}\u{c57c}\u{c5d0}\u{c11c}\u{20}\u{cde8}\u{d5a5}\u{c5d0}\u{20}\u{b9de}\u{b294}\u{20}\u{c7a5}\u{c18c}\u{b97c}\u{20}\u{c544}\u{c9c1}\u{20}\u{cc3e}\u{c9c0}\u{20}\u{babb}\u{d588}\u{c5b4}\u{c694}\u{2e}',
+                  '\uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
                   textAlign: TextAlign.center,
                 ),
                 TextButton(
-                  onPressed: _loading ? null : () => _loadCategory(_category),
+                  onPressed: _loading ? null : () => _loadRecommendations(),
                   child: const Text('\uB2E4\uC2DC \uCD94\uCC9C\uBC1B\uAE30'),
                 ),
               ],
@@ -353,7 +287,7 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: _loading ? null : () => _loadCategory(_category),
+              onPressed: _loading ? null : () => _loadRecommendations(),
               child: const Text(
                 '\uB2E4\uC74C \uC7A5\uC18C \uCD94\uCC9C\uBC1B\uAE30',
               ),
