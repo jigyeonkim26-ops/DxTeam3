@@ -4,6 +4,7 @@ enum NotificationType {
   placeUpdate,
   groupInvite,
   reaction,
+  nearbyReminder,
   other,
 }
 
@@ -34,6 +35,7 @@ class NotificationItemData {
         'GROUP_RECORD' => NotificationType.newRecord,
         'COMMENT' || 'REPLY' => NotificationType.comment,
         'LIKE' => NotificationType.reaction,
+        'NEARBY_REMINDER' => NotificationType.nearbyReminder,
         'GROUP_UPDATE' => NotificationType.groupInvite,
         _ => NotificationType.other,
       },

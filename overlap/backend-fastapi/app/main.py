@@ -78,6 +78,7 @@ from .map_places import router as map_places_router
 from .comments import router as comments_router
 from .saved_places import router as saved_places_router
 from .notifications import router as notifications_router
+from .nearby_reminders import router as nearby_reminders_router
 from .ai_recommendations import router as ai_recommendations_router
 
 
@@ -779,6 +780,7 @@ def create_app(
     api.include_router(comments_router(current_user))
     api.include_router(saved_places_router(current_user))
     api.include_router(notifications_router(current_user))
+    api.include_router(nearby_reminders_router(current_user))
     # Normal app construction uses category-v3. Existing integrations that
     # explicitly provide legacy collaborators keep their legacy test/rollout
     # behavior unless the new candidate service is also explicitly supplied.

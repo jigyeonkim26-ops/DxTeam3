@@ -163,14 +163,14 @@ class _NotificationSettingsScreenState
                         onChanged: (v) => _change(
                           _settings.copyWith(nearbyReminderEnabled: v),
                           message: v
-                              ? '위치 권한 연동은 추후 적용됩니다.'
+                              ? '현재 위치 버튼을 누를 때 근처 기록을 알려드릴게요.'
                               : '장소 근처 리마인드를 해제했어요.',
                         ),
                       ),
                       const Padding(
                         padding: EdgeInsets.only(top: AppSpacing.sm),
                         child: Text(
-                          '근처 알림 설정은 저장되며, 위치 기반 알림은 아직 제공되지 않습니다.',
+                          '백그라운드 위치 추적 없이, 지도에서 현재 위치를 확인할 때만 알려드려요.',
                           style: TextStyle(
                             color: AppColors.muted,
                             fontSize: 11,
