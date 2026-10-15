@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
@@ -11,15 +13,20 @@ import '../../ai/services/ai_recommendations_api.dart';
 import '../../ai/models/ai_place_recommendation.dart';
 import '../../user/services/saved_places_api.dart';
 import '../../memory/services/record_api.dart';
+import '../../memory/screens/record_detail_screen.dart';
+import '../../notification/services/notification_api.dart';
 import '../models/current_location.dart';
 import '../models/map_filter.dart';
 import '../models/map_place.dart';
 import '../models/map_search_place.dart';
+import '../models/nearby_reminder.dart';
 import '../widgets/map_filter_sheet.dart';
 import '../widgets/map_view.dart';
+import '../widgets/nearby_reminder_banner.dart';
 import '../widgets/place_preview_sheet.dart';
 import '../services/current_location_service.dart';
 import '../services/map_places_api.dart';
+import '../services/nearby_reminder_api.dart';
 import '../services/place_search_api.dart';
 import 'place_detail_screen.dart';
 import 'place_search_screen.dart';
@@ -35,6 +42,8 @@ class MapScreen extends StatefulWidget {
     this.savedPlacesApi,
     this.placeRecordApi,
     this.placeSearchApi,
+    this.nearbyReminderService,
+    this.markNotificationRead,
   });
 
   final String? selectedGroupId;
@@ -45,6 +54,8 @@ class MapScreen extends StatefulWidget {
   final SavedPlacesApi? savedPlacesApi;
   final RecordApi? placeRecordApi;
   final PlaceSearchApi? placeSearchApi;
+  final NearbyReminderService? nearbyReminderService;
+  final Future<void> Function(int notificationId)? markNotificationRead;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -59,6 +70,8 @@ class _MapScreenState extends State<MapScreen> {
   MapSearchPlace? _selectedSearchPlace;
   CurrentLocation? _currentLocation;
   var _currentLocationRequestId = 0;
+  var _nearbyReminderRequestId = 0;
+  NearbyReminder? _nearbyReminder;
   var _isLocating = false;
   final bool _isSatellite = false;
   double _aiSheetExtent = 0.22;
@@ -79,7 +92,9 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _currentLocation = location;
         _currentLocationRequestId++;
+        _nearbyReminder = null;
       });
+      unawaited(_checkNearbyReminder(location));
       debugPrint(
         '[GPS_MAP] location ready for map request_id=$_currentLocationRequestId '
         'coordinates_valid=${location.hasValidCoordinates}',
@@ -110,6 +125,40 @@ class _MapScreenState extends State<MapScreen> {
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
+  }
+
+  Future<void> _checkNearbyReminder(CurrentLocation location) async {
+    final requestId = ++_nearbyReminderRequestId;
+    try {
+      final reminders =
+          await (widget.nearbyReminderService ?? NearbyReminderApi()).check(
+            location,
+          );
+      if (!mounted || requestId != _nearbyReminderRequestId) return;
+      setState(() => _nearbyReminder = reminders.firstOrNull);
+    } catch (_) {
+      // Current-location map movement remains usable when reminder lookup fails.
+      debugPrint('[GPS_MAP] nearby reminder lookup failed');
+    }
+  }
+
+  Future<void> _openNearbyReminder() async {
+    final reminder = _nearbyReminder;
+    if (reminder == null) return;
+    setState(() => _nearbyReminder = null);
+    try {
+      await (widget.markNotificationRead ?? NotificationApi.read)(
+        reminder.notificationId,
+      );
+    } catch (_) {
+      // Opening the user's own record must not depend on a read-state update.
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordDetailScreen(record: reminder.record),
+      ),
+    );
   }
 
   @override
@@ -143,6 +192,8 @@ class _MapScreenState extends State<MapScreen> {
       _places = const [];
       _availableFilters = [MapFilter.mine];
       _selectedPlace = null;
+      _nearbyReminder = null;
+      _nearbyReminderRequestId++;
     });
     _loadMapPlaces();
   }
@@ -455,6 +506,17 @@ class _MapScreenState extends State<MapScreen> {
               left: AppSpacing.md,
               child: _FilterChip(label: _filterLabel, onTap: _openFilterSheet),
             ),
+            if (_nearbyReminder != null)
+              Positioned(
+                top: 112,
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                child: NearbyReminderBanner(
+                  reminder: _nearbyReminder!,
+                  onTap: _openNearbyReminder,
+                  onDismiss: () => setState(() => _nearbyReminder = null),
+                ),
+              ),
             AnimatedPositioned(
               duration: const Duration(milliseconds: 120),
               right: AppSpacing.md,

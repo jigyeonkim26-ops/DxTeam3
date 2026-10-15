@@ -181,7 +181,7 @@ void main() {
         MaterialApp(home: AiRecommendationScreen(api: _EmptyRecommendations())),
       );
       await tester.pump();
-      expect(find.text('이 분야에서 취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
+      expect(find.text('취향에 맞는 장소를 아직 찾지 못했어요.'), findsOneWidget);
       expect(find.text('다른 장소 추천받기'), findsNothing);
       expect(find.text('최근 기록을\n분석했어요'), findsNothing);
       await tester.pumpWidget(const SizedBox());
