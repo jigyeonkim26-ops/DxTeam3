@@ -14,10 +14,27 @@ typedef RecommendationGetWithStatus = Future<dynamic> Function(
 });
 
 class AiRecommendationsApi {
+  // Keep the first page in memory for the authenticated session. A newly
+  // created screen/API wrapper can then restore it without another request.
+  static final Map<String, List<AiPlaceRecommendation>> _firstPages = {};
+  static final Map<String, List<List<AiPlaceRecommendation>>> _pagesBySession =
+      {};
+  static final Map<String, int> _pageIndexes = {};
+  static final Map<String, String> _sessionStatuses = {};
+
+  @visibleForTesting
+  static void clearSessionCache() {
+    _firstPages.clear();
+    _pagesBySession.clear();
+    _pageIndexes.clear();
+    _sessionStatuses.clear();
+  }
+
   AiRecommendationsApi({
     RecommendationGet? get,
     RecommendationGetWithStatus? getWithStatus,
   }) : _get = get ?? ApiTransport.get,
+       _cacheAcrossInstances = true,
        _getWithStatus =
            getWithStatus ?? (get == null ? ApiTransport.getWithStatus : null);
 
@@ -25,19 +42,93 @@ class AiRecommendationsApi {
   static const _responseTimeout = Duration(seconds: 180);
   static const _endpoint = '/ai/recommendations';
   final RecommendationGet _get;
+  final bool _cacheAcrossInstances;
   final RecommendationGetWithStatus? _getWithStatus;
   String? _ownerToken;
+  String? _sessionKey;
   bool _loaded = false;
   Future<List<AiPlaceRecommendation>>? _pending;
   String sessionStatus = 'available';
+  List<AiPlaceRecommendation> firstRecommendations = const [];
+  List<List<AiPlaceRecommendation>> get recommendationPages =>
+      _pagesBySession[_sessionKey] ?? const [];
+  int get currentPageIndex => _pageIndexes[_sessionKey] ?? 0;
+
+  void selectPage(int index) {
+    final pages = recommendationPages;
+    if (index < 0 || index >= pages.length) return;
+    _pageIndexes[_sessionKey!] = index;
+    _loaded = true;
+  }
+
+  List<AiPlaceRecommendation> _withoutPreviouslyShownPlaces(
+    List<AiPlaceRecommendation> recommendations,
+    List<List<AiPlaceRecommendation>> pages,
+  ) {
+    final seenIds = <String>{};
+    final seenNames = <String>{};
+    for (final item in pages.expand((page) => page)) {
+      final id = item.kakaoPlaceId;
+      if (id != null && id.isNotEmpty) seenIds.add(id);
+      seenNames.add(item.name.trim().toLowerCase());
+    }
+    final currentPageIds = <String>{};
+    final currentPageNames = <String>{};
+    return recommendations
+        .where((item) {
+          final id = item.kakaoPlaceId;
+          final name = item.name.trim().toLowerCase();
+          if (id != null && id.isNotEmpty) {
+            if (seenIds.contains(id) || !currentPageIds.add(id)) return false;
+          } else if (seenNames.contains(name) || !currentPageNames.add(name)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+  }
+
+  /// Clears only this account's in-memory pages before an explicitly started
+  /// fresh recommendation session. Ordinary replay never calls this method.
+  void startNewSession() {
+    final key = ApiTransport.accessToken ?? '<anonymous>';
+    _firstPages.remove(key);
+    _pagesBySession.remove(key);
+    _pageIndexes.remove(key);
+    _sessionStatuses.remove(key);
+    _ownerToken = ApiTransport.accessToken;
+    _sessionKey = key;
+    _loaded = false;
+    _pending = null;
+    sessionStatus = 'available';
+    firstRecommendations = const [];
+  }
 
   Future<List<AiPlaceRecommendation>> load() {
     final token = ApiTransport.accessToken;
+    _sessionKey ??= token ?? '<anonymous>';
+    if (_ownerToken == null && token == null) {
+      firstRecommendations = _firstPages[_sessionKey] ?? const [];
+    }
     if (_ownerToken != token) {
       _ownerToken = token;
+      _sessionKey = token ?? '<anonymous>';
+      firstRecommendations = _firstPages[_sessionKey] ?? const [];
       _loaded = false;
       _pending = null;
       sessionStatus = 'available';
+    }
+    if (_cacheAcrossInstances && !_loaded) {
+      final cachedPages = _pagesBySession[_sessionKey!];
+      if (cachedPages != null && cachedPages.isNotEmpty) {
+        _loaded = true;
+        sessionStatus = _sessionStatuses[_sessionKey!] ?? 'available';
+        final pageIndex = (_pageIndexes[_sessionKey!] ?? 0).clamp(
+          0,
+          cachedPages.length - 1,
+        );
+        return Future.value(cachedPages[pageIndex]);
+      }
     }
     final inFlight = _pending;
     if (inFlight != null) return inFlight;
@@ -74,23 +165,60 @@ class AiRecommendationsApi {
       final items =
           responseBody['recommendations'] as List<dynamic>? ?? const [];
       final rawStatus = responseBody['session_status'];
-      if (_ownerToken == ownerToken &&
-          ApiTransport.accessToken == ownerToken) {
-        sessionStatus = rawStatus is String &&
+      if (_ownerToken == ownerToken && ApiTransport.accessToken == ownerToken) {
+        sessionStatus =
+            rawStatus is String &&
                 const {'available', 'exhausted', 'empty'}.contains(rawStatus)
             ? rawStatus
             : 'available';
+        if (_cacheAcrossInstances) {
+          _sessionStatuses[_sessionKey!] = sessionStatus;
+        }
       }
       final recommendations = items
           .whereType<Map<String, dynamic>>()
           .map(AiPlaceRecommendation.fromJson)
           .toList();
+      var deduplicatedCount = 0;
       if (_ownerToken == ownerToken && ApiTransport.accessToken == ownerToken) {
         _loaded = true;
+        if (_cacheAcrossInstances && recommendations.isNotEmpty) {
+          final pages = _pagesBySession.putIfAbsent(
+            _sessionKey!,
+            () => <List<AiPlaceRecommendation>>[],
+          );
+          // Initial fetch starts a new backend session only when there is no
+          // active cached session. Pagination responses append immutable pages.
+          if (pages.isEmpty || refresh) {
+            final newPage = _withoutPreviouslyShownPlaces(
+              recommendations,
+              pages,
+            );
+            deduplicatedCount = recommendations.length - newPage.length;
+            if (newPage.isNotEmpty) pages.add(List.unmodifiable(newPage));
+            if (pages.isNotEmpty) {
+              _pageIndexes[_sessionKey!] = pages.length - 1;
+            }
+          }
+        }
+        if (recommendations.isNotEmpty &&
+            (_firstPages[_sessionKey!] == null ||
+                firstRecommendations.isEmpty)) {
+          firstRecommendations = List.unmodifiable(
+            _pagesBySession[_sessionKey!]?.first ?? recommendations,
+          );
+          _firstPages[_sessionKey!] = firstRecommendations;
+        }
       }
       if (kDebugMode) {
         debugPrint(
-          '[AI recommendations] refresh=$refresh http_status=$httpStatus recommendation_count=${recommendations.length} elapsed_ms=${stopwatch.elapsedMilliseconds}',
+          '[AI recommendations] refresh=$refresh http_status=$httpStatus '
+          'raw_item_count=${items.length} parsed_count=${recommendations.length} '
+          'deduplicated_count=$deduplicatedCount '
+          'cached_page_counts=${(_pagesBySession[_sessionKey] ?? const <List<AiPlaceRecommendation>>[]).map((page) => page.length).join(',')} '
+          'current_page_index=${_pageIndexes[_sessionKey] ?? 0} '
+          'session_status=$sessionStatus '
+          'elapsed_ms=${stopwatch.elapsedMilliseconds}',
         );
       }
       return recommendations;

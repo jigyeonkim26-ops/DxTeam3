@@ -4,19 +4,51 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:overlap_app/features/map/models/current_location.dart';
+import 'package:overlap_app/features/map/models/nearby_reminder.dart';
 import 'package:overlap_app/features/map/screens/map_screen.dart';
 import 'package:overlap_app/features/map/services/kakao_map_local_server.dart';
 import 'package:overlap_app/features/map/services/current_location_service.dart';
+import 'package:overlap_app/features/map/services/nearby_reminder_api.dart';
 import 'package:overlap_app/features/map/widgets/map_view.dart';
 
 void main() {
   mainMapPinTest();
 
+  test('identifies coordinates outside the Korean Kakao map area', () {
+    expect(
+      const CurrentLocation(
+        latitude: 35.1,
+        longitude: 126.8,
+      ).isWithinKakaoKoreaBounds,
+      isTrue,
+    );
+    expect(
+      const CurrentLocation(
+        latitude: 40.7,
+        longitude: -74.0,
+      ).isWithinKakaoKoreaBounds,
+      isFalse,
+    );
+    expect(
+      const CurrentLocation(
+        latitude: 126.8,
+        longitude: 35.1,
+      ).isWithinKakaoKoreaBounds,
+      isFalse,
+    );
+    expect(
+      const CurrentLocation(
+        latitude: double.nan,
+        longitude: 126.8,
+      ).isWithinKakaoKoreaBounds,
+      isFalse,
+    );
+  });
+
   testWidgets('equal GPS readings issue a new recenter request on every tap', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final service = _FakeCurrentLocationService()
       ..results = [
         const CurrentLocation(latitude: 35.1, longitude: 126.8),
@@ -54,6 +86,41 @@ void main() {
       location,
     );
     expect(service.calls, 1);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('out of region GPS leaves map in place and skips reminders', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const local = CurrentLocation(latitude: 35.1, longitude: 126.8);
+    const outside = CurrentLocation(latitude: 40.7, longitude: -74.0);
+    final locationService = _FakeCurrentLocationService()
+      ..results = [local, outside];
+    final reminders = _CountingReminders();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MapScreen(
+            locationService: locationService,
+            nearbyReminderService: reminders,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('현재 위치'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('현재 위치'));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<MapView>(find.byType(MapView)).currentLocation, local);
+    expect(
+      find.text('에뮬레이터 위치가 Kakao 국내 지도 표시 범위 밖입니다. 에뮬레이터 위치를 확인해주세요.'),
+      findsOneWidget,
+    );
+    expect(reminders.calls, 1);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -202,5 +269,15 @@ class _FakeCurrentLocationService implements CurrentLocationService {
     if (pendingResponse != null) return pendingResponse.future;
     if (results.isNotEmpty) return Future.value(results.removeAt(0));
     return Future.value(result!);
+  }
+}
+
+class _CountingReminders implements NearbyReminderService {
+  var calls = 0;
+
+  @override
+  Future<List<NearbyReminder>> check(CurrentLocation location) async {
+    calls++;
+    return const [];
   }
 }

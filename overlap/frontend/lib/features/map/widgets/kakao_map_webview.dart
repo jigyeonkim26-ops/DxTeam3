@@ -147,20 +147,29 @@ class KakaoMapWebView extends StatefulWidget {
   State<KakaoMapWebView> createState() => _KakaoMapWebViewState();
 }
 
-class _KakaoMapWebViewState extends State<KakaoMapWebView> {
+class _KakaoMapWebViewState extends State<KakaoMapWebView>
+    with WidgetsBindingObserver {
   static const _configChannel = MethodChannel('overlap/kakao_config');
   late final _localServer = widget.localServer ?? KakaoMapLocalServer();
   WebViewController? _controller;
   String? _errorMessage;
   var _isLoading = true;
   var _pageFinished = false;
+  var _mapReady = false;
+  Size? _lastWebViewSize;
   KakaoPlaceSearchRequest? _pendingPlaceSearchRequest;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pendingPlaceSearchRequest = widget.placeSearchRequest;
     _initialize();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _relayoutMap();
   }
 
   @override
@@ -223,7 +232,6 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
             onPageFinished: (_) {
               _pageFinished = true;
               if (mounted) setState(() => _isLoading = false);
-              _restoreMapState();
             },
             onHttpError: (error) => debugPrint(
               'Kakao map HTTP error url=${_safeUri(error.request?.uri)} status=${error.response?.statusCode}',
@@ -252,7 +260,12 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
         );
       if (mounted) {
         setState(() => _controller = controller);
-        if (_pageFinished) {
+        if (kDebugMode) {
+          debugPrint(
+            '[KAKAO_MAP] webview_controller_created selection=${widget.selectionMode}',
+          );
+        }
+        if (_mapReady) {
           _restoreMapState();
         }
       }
@@ -264,6 +277,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   }
 
   Future<void> _restoreMapState() async {
+    if (!_mapReady) return;
     await _pushSelectionLocationToMap(widget.selectionRequest);
     await _syncMapState(
       placesChanged: true,
@@ -281,11 +295,37 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
     if (!mounted) return;
     final decodedMessage = _decodeMessage(rawMessage);
+    if (decodedMessage case {'type': 'mapReady'}) {
+      _mapReady = true;
+      if (kDebugMode) _debugMapCoordinates('ready', decodedMessage['center']);
+      if (mounted) _restoreMapState();
+      return;
+    }
+    if (decodedMessage case {'type': 'mapTilesLoaded'}) {
+      if (kDebugMode) {
+        _debugMapCoordinates('tiles_loaded', decodedMessage['center']);
+        debugPrint('[KAKAO_MAP] tiles loaded level=${decodedMessage['level']}');
+      }
+      return;
+    }
+    if (decodedMessage case {'type': 'mapError'}) {
+      debugPrint(
+        '[KAKAO_MAP] initialization error stage=${decodedMessage['stage']} '
+        'type=${decodedMessage['errorType'] ?? 'network'}',
+      );
+      _showError('Kakao 지도를 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해주세요.');
+      return;
+    }
     if (decodedMessage case {
       'type': 'currentLocationApplied',
       'requestId': final int requestId,
     }) {
-      debugPrint('[GPS_MAP] WebView applied request_id=$requestId');
+      if (kDebugMode) {
+        debugPrint('[GPS_MAP] WebView applied request_id=$requestId');
+        _debugMapCoordinates('location_target', decodedMessage['target']);
+        _debugMapCoordinates('map_center', decodedMessage['center']);
+        debugPrint('[GPS_MAP] map level=${decodedMessage['level']}');
+      }
       return;
     }
     if (decodedMessage case {
@@ -472,13 +512,24 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     return number != null && number.isFinite ? number : null;
   }
 
+  void _debugMapCoordinates(String label, Object? raw) {
+    if (!kDebugMode || raw is! Map) return;
+    final latitude = _asDouble(raw['latitude']);
+    final longitude = _asDouble(raw['longitude']);
+    if (latitude == null || longitude == null) return;
+    debugPrint(
+      '[KAKAO_MAP] $label lat=${latitude.toStringAsFixed(3)} '
+      'lon=${longitude.toStringAsFixed(3)} order=lat_lon',
+    );
+  }
+
   Future<void> _syncMapState({
     required bool placesChanged,
     required bool searchPlaceChanged,
     required bool currentLocationChanged,
   }) async {
     final controller = _controller;
-    if (!mounted || !_pageFinished || controller == null) {
+    if (!mounted || !_mapReady || controller == null) {
       if (currentLocationChanged && widget.currentLocation != null) {
         debugPrint(
           '[GPS_MAP] delivery deferred page_finished=$_pageFinished '
@@ -489,6 +540,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
       return;
     }
     try {
+      if (currentLocationChanged) await _relayoutMap();
       if (placesChanged && !widget.selectionMode) {
         final places = widget.places
             .map(
@@ -543,6 +595,16 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
   }
 
+  Future<void> _relayoutMap() async {
+    final controller = _controller;
+    if (!mounted || !_mapReady || controller == null) return;
+    try {
+      await controller.runJavaScript('relayoutMap();');
+    } on PlatformException catch (error) {
+      debugPrint('[KAKAO_MAP] relayout failed code=${error.code}');
+    }
+  }
+
   Future<void> _pushSelectionLocationToMap([
     KakaoMapSelectionRequest? selectionRequest,
   ]) async {
@@ -551,7 +613,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     }
 
     final controller = _controller;
-    if (!mounted || !_pageFinished || controller == null) return;
+    if (!mounted || !_mapReady || controller == null) return;
     try {
       final request = selectionRequest ?? widget.selectionRequest;
       final latitude = request?.latitude ?? widget.initialLatitude;
@@ -580,10 +642,7 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   Future<void> _pushPlaceSearch() async {
     final searchRequest = _pendingPlaceSearchRequest;
     final controller = _controller;
-    if (!mounted ||
-        !_pageFinished ||
-        controller == null ||
-        searchRequest == null) {
+    if (!mounted || !_mapReady || controller == null || searchRequest == null) {
       return;
     }
 
@@ -619,6 +678,18 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
     });
   }
 
+  Future<void> _retryInitialize() async {
+    if (_isLoading) return;
+    setState(() {
+      _errorMessage = null;
+      _isLoading = true;
+      _pageFinished = false;
+      _mapReady = false;
+      _controller = null;
+    });
+    await _initialize();
+  }
+
   String _safeUrl(String? rawUrl) => _safeUri(Uri.tryParse(rawUrl ?? ''));
   String _safeUri(Uri? uri) => uri == null || !uri.hasScheme
       ? 'unknown'
@@ -626,6 +697,8 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
 
   @override
   void dispose() {
+    if (kDebugMode) debugPrint('[KAKAO_MAP] webview_disposed');
+    WidgetsBinding.instance.removeObserver(this);
     _localServer.close();
     super.dispose();
   }
@@ -634,18 +707,38 @@ class _KakaoMapWebViewState extends State<KakaoMapWebView> {
   Widget build(BuildContext context) {
     final errorMessage = _errorMessage;
     if (errorMessage != null) {
-      return Center(child: Text(errorMessage));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(errorMessage, textAlign: TextAlign.center),
+            TextButton(
+              onPressed: _isLoading ? null : _retryInitialize,
+              child: const Text('지도 다시 불러오기'),
+            ),
+          ],
+        ),
+      );
     }
     final controller = _controller;
     if (controller == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        WebViewWidget(controller: controller),
-        if (_isLoading) const Center(child: CircularProgressIndicator()),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        if (_lastWebViewSize != size) {
+          _lastWebViewSize = size;
+          WidgetsBinding.instance.addPostFrameCallback((_) => _relayoutMap());
+        }
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            WebViewWidget(controller: controller),
+            if (_isLoading) const Center(child: CircularProgressIndicator()),
+          ],
+        );
+      },
     );
   }
 }

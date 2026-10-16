@@ -205,6 +205,9 @@ void main() {
       );
       await tester.pump();
       platform.navigation.finished!('http://localhost:8080/');
+      platform.controller.channel!.onMessageReceived(
+        JavaScriptMessage(message: '{"type":"mapReady"}'),
+      );
       await tester.pumpAndSettle();
       expect(
         platform.controller.commands
