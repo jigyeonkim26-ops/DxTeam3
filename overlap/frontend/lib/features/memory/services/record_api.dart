@@ -60,16 +60,19 @@ class RecordApi {
     }
   }
 
-  Future<List<Group>> groups() async => (await _get('/records/groups') as List)
-      .map(
-        (item) => Group(
+  Future<List<Group>> groups() async =>
+      (await _get('/records/groups') as List).map((item) {
+        final displayName = item['display_name'];
+        final name = item['name'] as String;
+        return Group(
           id: '${item['id']}',
-          name: item['name'] as String,
+          name: displayName is String && displayName.trim().isNotEmpty
+              ? displayName
+              : name,
           description: item['description'] as String? ?? '',
           memberCount: item['member_count'] as int? ?? 0,
-        ),
-      )
-      .toList();
+        );
+      }).toList();
 
   Future<List<Record>> feed({
     bool mine = false,
@@ -151,8 +154,8 @@ class RecordApi {
     required String recordId,
     required String content,
     required Emotion emotion,
-    required bool isPrivate,
-    required Set<String> groupIds,
+    bool? isPrivate,
+    Set<String>? groupIds,
   }) async {
     try {
       final response = await _client
@@ -162,10 +165,10 @@ class RecordApi {
             body: jsonEncode({
               'content': content.trim(),
               'emotion': emotion.name,
-              'is_private': isPrivate,
-              'group_ids': isPrivate
-                  ? <int>[]
-                  : groupIds.map(int.parse).toList(),
+              'is_private': ?isPrivate,
+              if (isPrivate == true) 'group_ids': <int>[],
+              if (isPrivate != true)
+                'group_ids': ?groupIds?.map(int.parse).toList(),
             }),
           )
           .timeout(const Duration(seconds: 30));

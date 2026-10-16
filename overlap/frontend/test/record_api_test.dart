@@ -94,6 +94,57 @@ void main() {
     api.close();
   });
 
+  test(
+    'groups prefer a personal display name and fall back to legacy name',
+    () async {
+      final api = RecordApi(
+        tokenProvider: () => 'token',
+        client: MockClient((request) async {
+          expect(request.url.path, '/records/groups');
+          return http.Response(
+            jsonEncode([
+              {'id': 10, 'name': '공용 이름', 'display_name': '내 별칭'},
+              {'id': 20, 'name': '기존 응답'},
+              {'id': 30, 'name': '공백 별칭', 'display_name': '  '},
+            ]),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+
+      final groups = await api.groups();
+
+      expect(groups.map((group) => group.name), ['내 별칭', '기존 응답', '공백 별칭']);
+      expect(groups.map((group) => group.id), ['10', '20', '30']);
+      api.close();
+    },
+  );
+
+  test(
+    'content-only update omits sharing fields to preserve existing links',
+    () async {
+      final api = RecordApi(
+        tokenProvider: () => 'token',
+        client: MockClient((request) async {
+          expect(request.method, 'PATCH');
+          expect(jsonDecode(request.body), {
+            'content': '새 내용',
+            'emotion': 'good',
+          });
+          return http.Response(
+            jsonEncode(recordJson()),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+
+      await api.update(recordId: '1', content: '새 내용', emotion: Emotion.good);
+      api.close();
+    },
+  );
+
   test('feed adds place_id only when a place filter is supplied', () async {
     final requests = <Uri>[];
     final api = RecordApi(

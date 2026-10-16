@@ -12,6 +12,62 @@ import 'record_api_test.dart' show recordJson;
 
 void main() {
   testWidgets(
+    'filter sheet refreshes memberships and prunes a departed group',
+    (tester) async {
+      final queriedGroupIds = <String?>[];
+      var groupRequests = 0;
+      final api = RecordApi(
+        tokenProvider: () => 'test-token',
+        client: MockClient((request) async {
+          if (request.url.path == '/records/groups') {
+            groupRequests++;
+            final group = groupRequests == 1
+                ? {'id': 20, 'name': '옛 모임명'}
+                : {'id': 30, 'name': '현재 가입 모임'};
+            return http.Response(
+              jsonEncode([group]),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          queriedGroupIds.add(request.url.queryParameters['group_id']);
+          return http.Response(
+            jsonEncode({'items': [], 'total': 0}),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FeedScreen(recordApi: api, initialGroupId: '20'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('옛 모임명'));
+      await tester.pumpAndSettle();
+
+      expect(groupRequests, 2);
+      expect(find.text('옛 모임명'), findsNothing);
+      expect(find.text('현재 가입 모임'), findsOneWidget);
+      await tester.tap(find.text('전체'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('현재 가입 모임'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('필터 적용하기'));
+      await tester.pumpAndSettle();
+
+      expect(queriedGroupIds, contains('30'));
+      expect(queriedGroupIds, isNot(contains('20')));
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+
+  testWidgets(
     'multiple actual groups union server records without duplicates',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(900, 1800));

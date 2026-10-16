@@ -81,8 +81,15 @@ def visibility(user_id: int):
 def groups_for_user(db: Session, user_id: int):
     counts = select(func.count()).select_from(GroupMember).where(
         GroupMember.group_id == MemoryGroup.id).correlate(MemoryGroup).scalar_subquery()
-    return [dict(id=g.id, name=g.name, description=g.description or "", member_count=count)
-            for g, count in db.execute(select(MemoryGroup, counts).join(
+    return [dict(
+        id=group.id,
+        name=group.name,
+        display_name=(custom_name.strip() if custom_name and custom_name.strip() else group.name),
+        description=group.description or "",
+        member_count=count,
+    ) for group, custom_name, count in db.execute(select(
+                MemoryGroup, GroupMember.custom_name, counts,
+            ).join(
                 GroupMember, GroupMember.group_id == MemoryGroup.id
             ).where(GroupMember.user_id == user_id).order_by(MemoryGroup.name))]
 

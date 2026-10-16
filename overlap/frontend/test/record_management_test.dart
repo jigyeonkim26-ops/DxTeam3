@@ -128,7 +128,7 @@ void main() {
   );
 
   testWidgets(
-    'record edit loads the current values and saves the selected scope',
+    'record edit loads the current alias and preserves scope on content changes',
     (tester) async {
       late Map<String, dynamic> patchPayload;
       final api = RecordApi(
@@ -137,7 +137,12 @@ void main() {
           if (request.method == 'GET') {
             return http.Response(
               jsonEncode([
-                {'id': 10, 'name': '실제 가입 모임', 'member_count': 2},
+                {
+                  'id': 10,
+                  'name': '공용 모임명',
+                  'display_name': '수정된 개인 별칭',
+                  'member_count': 2,
+                },
               ]),
               200,
               headers: {'content-type': 'application/json; charset=utf-8'},
@@ -194,6 +199,7 @@ void main() {
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         '수정 전 내용',
       );
+      expect(find.text('수정된 개인 별칭'), findsOneWidget);
       await tester.enterText(find.byType(TextField), '변경한 내용');
       await tester.tap(find.text('최고예요'));
       await tester.scrollUntilVisible(
@@ -204,12 +210,7 @@ void main() {
       await tester.tap(find.byKey(const Key('record-edit-save')));
       await tester.pumpAndSettle();
 
-      expect(patchPayload, {
-        'content': '변경한 내용',
-        'emotion': 'excellent',
-        'is_private': false,
-        'group_ids': [10],
-      });
+      expect(patchPayload, {'content': '변경한 내용', 'emotion': 'excellent'});
       expect(saved?.content, '변경한 내용');
       api.close();
     },

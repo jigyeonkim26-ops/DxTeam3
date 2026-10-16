@@ -502,13 +502,21 @@ def test_group_api_memberships_and_settings_are_shared_with_records(world):
         assert db.get(MemoryGroup, group_id).name == "통합 모임"
     record_groups = client.get("/records/groups", headers=headers[2])
     assert record_groups.status_code == 200
-    assert any(item["id"] == group_id for item in record_groups.json())
+    member_group = next(item for item in record_groups.json() if item["id"] == group_id)
+    assert member_group["name"] == "통합 모임"  # legacy field remains canonical
+    assert member_group["display_name"] == "내 별칭"
+    owner_groups = client.get("/records/groups", headers=headers[1]).json()
+    owner_group = next(item for item in owner_groups if item["id"] == group_id)
+    assert owner_group["display_name"] == "통합 모임"  # other members' aliases stay private
     saved = create(world, groups=[group_id])
     assert saved.status_code == 201, saved.text
     record = saved.json()
     assert record["id"] in feed_ids(world, 2, f"?group_id={group_id}")
     assert client.get(record["photo_urls"][0], headers=headers[2]).status_code == 200
     assert client.delete(f"/groups/{group_id}/members/me", headers=headers[2]).status_code == 204
+    assert all(item["id"] != group_id for item in client.get(
+        "/records/groups", headers=headers[2]
+    ).json())
     assert record["id"] not in feed_ids(world, 2)
     assert client.get(record["photo_urls"][0], headers=headers[2]).status_code == 404
 

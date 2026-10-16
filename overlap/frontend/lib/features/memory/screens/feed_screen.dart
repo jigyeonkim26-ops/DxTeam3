@@ -38,6 +38,7 @@ class _FeedScreenState extends State<FeedScreen> {
   List<Record> _records = [];
   List<Group> _groups = [];
   bool _isLoading = true;
+  bool _groupsLoaded = false;
   String? _error;
   int _generation = 0;
   late final RecordApi _api;
@@ -107,6 +108,7 @@ class _FeedScreenState extends State<FeedScreen> {
       setState(() {
         _records = records;
         _groups = groups;
+        _groupsLoaded = true;
         _likeStates = likeStates;
       });
     } on ApiException catch (error) {
@@ -114,6 +116,9 @@ class _FeedScreenState extends State<FeedScreen> {
         setState(() {
           _records = [];
           _groups = [];
+          _groupsLoaded = false;
+          _selectedFilters.retainAll({'all', 'mine'});
+          if (_selectedFilters.isEmpty) _selectedFilters = {'all'};
           _error = error.message;
         });
       }
@@ -122,6 +127,9 @@ class _FeedScreenState extends State<FeedScreen> {
         setState(() {
           _records = [];
           _groups = [];
+          _groupsLoaded = false;
+          _selectedFilters.retainAll({'all', 'mine'});
+          if (_selectedFilters.isEmpty) _selectedFilters = {'all'};
           _error = '피드 응답을 읽지 못했습니다.';
         });
       }
@@ -164,6 +172,12 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Future<void> _selectFilter() async {
+    await _reload();
+    if (!mounted) return;
+    if (!_groupsLoaded) {
+      _showMessage(_error ?? '가입한 모임 목록을 불러오지 못했습니다.');
+      return;
+    }
     final filters = await showModalBottomSheet<Set<String>>(
       context: context,
       backgroundColor: Colors.transparent,

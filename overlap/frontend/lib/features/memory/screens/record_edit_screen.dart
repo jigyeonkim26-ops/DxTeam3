@@ -30,7 +30,9 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
   late final TextEditingController _contentController;
   late Emotion _selectedEmotion;
   late bool _isPrivate;
+  late bool _originalIsPrivate;
   late final Set<String> _selectedGroupIds;
+  late final Set<String> _originalGroupIds;
   List<Group> _groups = const [];
   bool _isLoadingGroups = true;
   bool _isSaving = false;
@@ -42,9 +44,11 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
     _contentController = TextEditingController(text: widget.record.content);
     _selectedEmotion = widget.record.emotion;
     _isPrivate = widget.record.isPrivate;
+    _originalIsPrivate = widget.record.isPrivate;
     _selectedGroupIds = {
       for (final group in widget.record.sharedGroups) group.id,
     };
+    _originalGroupIds = Set.of(_selectedGroupIds);
     _loadGroups();
   }
 
@@ -64,18 +68,23 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
       if (!mounted) return;
       setState(() {
         _groups = groups;
+        final validIds = groups.map((group) => group.id).toSet();
+        _selectedGroupIds.retainAll(validIds);
+        _originalGroupIds.retainAll(validIds);
         _isLoadingGroups = false;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
         _groupError = error.message;
+        _groups = const [];
         _isLoadingGroups = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _groupError = '가입한 모임을 불러오지 못했습니다.';
+        _groups = const [];
         _isLoadingGroups = false;
       });
     }
@@ -114,36 +123,76 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
       _groups.isNotEmpty &&
       _groups.every((group) => _selectedGroupIds.contains(group.id));
 
+  bool get _sharingChanged =>
+      _isPrivate != _originalIsPrivate ||
+      !_selectedGroupIds.containsAll(_originalGroupIds) ||
+      !_originalGroupIds.containsAll(_selectedGroupIds);
+
   Future<void> _save() async {
     if (_isSaving) return;
-    if (!_isPrivate && _isLoadingGroups) {
-      _showMessage('가입한 모임을 불러온 뒤 공유 범위를 선택해 주세요.');
+    final sharingChanged = _sharingChanged;
+    if (sharingChanged && (_isLoadingGroups || _groupError != null)) {
+      _showMessage('최신 모임 목록을 불러올 수 없습니다. 다시 시도해 주세요.');
       return;
     }
-    if (!_isPrivate && _groupError != null) {
-      _showMessage('모임 목록을 불러온 뒤 다시 시도해 주세요.');
-      return;
-    }
-    if (!_isPrivate && _selectedGroupIds.isEmpty) {
+    if (sharingChanged && !_isPrivate && _selectedGroupIds.isEmpty) {
       _showMessage('공유할 모임을 하나 이상 선택해 주세요.');
       return;
     }
 
+    var refreshingGroups = false;
     setState(() => _isSaving = true);
     try {
+      if (sharingChanged) {
+        refreshingGroups = true;
+        final freshGroups = await widget.recordApi.groups();
+        refreshingGroups = false;
+        if (!mounted) return;
+        final freshIds = freshGroups.map((group) => group.id).toSet();
+        if (!_isPrivate && !_selectedGroupIds.every(freshIds.contains)) {
+          setState(() {
+            _groups = freshGroups;
+            _selectedGroupIds.retainAll(freshIds);
+            _groupError = null;
+          });
+          _showMessage('모임 가입 상태가 변경되었습니다. 최신 목록에서 다시 선택해 주세요.');
+          return;
+        }
+        setState(() {
+          _groups = freshGroups;
+          _selectedGroupIds.retainAll(freshIds);
+          _originalGroupIds.retainAll(freshIds);
+        });
+      }
       final updated = await widget.recordApi.update(
         recordId: widget.record.id,
         content: _contentController.text,
         emotion: _selectedEmotion,
-        isPrivate: _isPrivate,
-        groupIds: _selectedGroupIds,
+        isPrivate: _isPrivate == _originalIsPrivate ? null : _isPrivate,
+        groupIds: sharingChanged && !_isPrivate ? _selectedGroupIds : null,
       );
       if (!mounted) return;
       Navigator.of(context).pop(updated);
     } on ApiException catch (error) {
-      if (mounted) _showMessage(error.message);
+      if (mounted) {
+        if (refreshingGroups) {
+          setState(() {
+            _groupError = error.message;
+            _groups = const [];
+          });
+        }
+        _showMessage(error.message);
+      }
     } catch (_) {
-      if (mounted) _showMessage('기록을 수정하지 못했습니다. 다시 시도해 주세요.');
+      if (mounted) {
+        if (refreshingGroups) {
+          setState(() {
+            _groupError = '모임 목록을 불러오지 못했습니다.';
+            _groups = const [];
+          });
+        }
+        _showMessage('기록을 수정하지 못했습니다. 다시 시도해 주세요.');
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -286,13 +335,16 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
                 _groupError == null &&
                 _groups.isEmpty &&
                 !_isPrivate)
-              const Text('가입한 모임이 없습니다. 나만 보기로만 저장할 수 있어요.'),
+              const Text(
+                '현재 선택할 수 있는 모임이 없습니다. 기존 공유 관계를 유지한 채 내용과 감정만 수정할 수 있습니다.',
+              ),
             IgnorePointer(
               ignoring: _isSaving,
               child: GroupPicker(
                 groups: _groups,
                 selectedGroupIds: _selectedGroupIds,
-                isDisabled: _isPrivate,
+                isDisabled:
+                    _isPrivate || _isLoadingGroups || _groupError != null,
                 areAllSelected: _areAllGroupsSelected,
                 onChanged: _toggleGroup,
                 onSelectAll: _toggleAllGroups,
