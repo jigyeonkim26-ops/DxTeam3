@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
@@ -89,6 +90,25 @@ class _MapScreenState extends State<MapScreen> {
                   const GeolocatorCurrentLocationService())
               .getCurrentLocation();
       if (!mounted) return;
+      if (!location.hasValidCoordinates) {
+        _showMessage('현재 위치 좌표를 확인하지 못했습니다. 지도는 그대로 유지됩니다.');
+        return;
+      }
+      if (!location.isWithinKakaoKoreaBounds) {
+        if (kDebugMode) {
+          debugPrint(
+            '[GPS_MAP] location rejected reason=outside_kakao_korea_bounds',
+          );
+        }
+        _showMessage('에뮬레이터 위치가 Kakao 국내 지도 표시 범위 밖입니다. 에뮬레이터 위치를 확인해주세요.');
+        return;
+      }
+      if (kDebugMode) {
+        debugPrint(
+          '[GPS_MAP] location accepted lat=${location.latitude.toStringAsFixed(3)} '
+          'lon=${location.longitude.toStringAsFixed(3)} coordinate_order=lat_lon',
+        );
+      }
       setState(() {
         _currentLocation = location;
         _currentLocationRequestId++;

@@ -61,11 +61,60 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
   late final _api = widget.api ?? AiRecommendationsApi();
   late final _savedPlacesApi = widget.savedPlacesApi ?? SavedPlacesApi();
   List<AiPlaceRecommendation> _recommendations = const [];
+  List<AiPlaceRecommendation> _firstRecommendations = const [];
+  List<List<AiPlaceRecommendation>> _recommendationPages = const [];
+  int _currentPageIndex = 0;
   int _recommendationsRevision = 0;
   bool _loading = false;
   bool _sessionExhausted = false;
   String? _error;
   int _requestGeneration = 0;
+
+  bool get _hasCachedNextPage =>
+      _currentPageIndex + 1 < _recommendationPages.length;
+
+  bool get _isAtLastCachedPage =>
+      _recommendationPages.isNotEmpty &&
+      _currentPageIndex == _recommendationPages.length - 1;
+
+  bool get _showExhaustedState =>
+      _sessionExhausted && _isAtLastCachedPage && !_hasCachedNextPage;
+
+  bool get _showExhaustedNotice =>
+      _showExhaustedState && _recommendations.isEmpty;
+
+  bool get _showReplayButton =>
+      _showExhaustedState && _recommendationPages.length > 1;
+
+  void _showPage(int index) {
+    if (index < 0 || index >= _recommendationPages.length) return;
+    _api.selectPage(index);
+    setState(() {
+      _currentPageIndex = index;
+      _recommendations = _recommendationPages[index];
+      _recommendationsRevision++;
+    });
+    _logVisiblePage();
+  }
+
+  void _logVisiblePage() {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[AI recommendations UI] page_index=$_currentPageIndex '
+      'cached_page_count=${_recommendationPages.length} '
+      'cached_page_counts=${_recommendationPages.map((page) => page.length).join(',')} '
+      'displayed_count=${_recommendations.length} '
+      'backend_status=${_api.sessionStatus}',
+    );
+  }
+
+  Future<void> _showNextPage() async {
+    if (_hasCachedNextPage) {
+      _showPage(_currentPageIndex + 1);
+      return;
+    }
+    if (!_sessionExhausted) await _loadRecommendations();
+  }
 
   @override
   void initState() {
@@ -98,14 +147,39 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
       }
       setState(() {
         _sessionExhausted = _api.sessionStatus == 'exhausted';
+        final storedPages = _api.recommendationPages;
+        if (storedPages.isNotEmpty) {
+          _recommendationPages = List.unmodifiable(
+            storedPages.map(List<AiPlaceRecommendation>.unmodifiable),
+          );
+          _currentPageIndex = _api.currentPageIndex.clamp(
+            0,
+            _recommendationPages.length - 1,
+          );
+          _firstRecommendations = _recommendationPages.first;
+        } else if (items.isNotEmpty) {
+          _recommendationPages = List.unmodifiable([
+            ..._recommendationPages,
+            List<AiPlaceRecommendation>.unmodifiable(items),
+          ]);
+          _currentPageIndex = _recommendationPages.length - 1;
+        }
+        if (_firstRecommendations.isEmpty) {
+          _firstRecommendations = _api.firstRecommendations.isNotEmpty
+              ? List.unmodifiable(_api.firstRecommendations)
+              : List.unmodifiable(items);
+        }
         // Exhaustion is a normal session outcome. Keep the last visible cards
         // and signal that no unseen candidates remain instead of replacing
         // them with an empty list.
         if (!_sessionExhausted || items.isNotEmpty) {
-          _recommendations = items;
+          _recommendations = _recommendationPages.isNotEmpty
+              ? _recommendationPages[_currentPageIndex]
+              : items;
           _recommendationsRevision++;
         }
       });
+      _logVisiblePage();
     } on ApiException catch (e) {
       if (!mounted || generation != _requestGeneration) {
         return;
@@ -279,34 +353,51 @@ class _AiRecommendationContentState extends State<AiRecommendationContent> {
             padding: const EdgeInsets.all(AppSpacing.lg),
             child: Column(
               children: [
-                const Text(
-                  '\uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
+                Text(
+                  _showExhaustedNotice
+                      ? '\uC9C0\uAE08\uC740 \uC0C8\uB85C\uC6B4 \uCD94\uCC9C \uC7A5\uC18C\uAC00 \uB354 \uC5C6\uC5B4\uC694.'
+                      : '\uCDE8\uD5A5\uC5D0 \uB9DE\uB294 \uC7A5\uC18C\uB97C \uC544\uC9C1 \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694.',
                   textAlign: TextAlign.center,
                 ),
-                TextButton(
-                  onPressed: _loading ? null : () => _loadRecommendations(),
-                  child: const Text('\uB2E4\uC2DC \uCD94\uCC9C\uBC1B\uAE30'),
-                ),
+                if (_showReplayButton && _firstRecommendations.isNotEmpty)
+                  TextButton(
+                    onPressed: () => _showPage(0),
+                    child: const Text(
+                      '\uCC98\uC74C \uCD94\uCC9C \uB2E4\uC2DC \uBCF4\uAE30',
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: _loading ? null : () => _loadRecommendations(),
+                    child: const Text('\uB2E4\uC2DC \uCD94\uCC9C\uBC1B\uAE30'),
+                  ),
               ],
             ),
           )
-        else if (_sessionExhausted)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Text(
-              '\uC9C0\uAE08\uC740 \uC0C8\uB85C\uC6B4 \uCD94\uCC9C \uC7A5\uC18C\uAC00 \uB354 \uC5C6\uC5B4\uC694.',
-              textAlign: TextAlign.center,
-            ),
-          )
         else
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _loading ? null : () => _loadRecommendations(),
-              child: const Text(
-                '\uB2E4\uC74C \uC7A5\uC18C \uCD94\uCC9C\uBC1B\uAE30',
-              ),
-            ),
+          Column(
+            children: [
+              if (_hasCachedNextPage || !_sessionExhausted)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _loading ? null : _showNextPage,
+                    child: const Text(
+                      '\uB2E4\uC74C \uC7A5\uC18C \uCD94\uCC9C\uBC1B\uAE30',
+                    ),
+                  ),
+                ),
+              if (_showReplayButton && _firstRecommendations.isNotEmpty)
+                Align(
+                  alignment: Alignment.center,
+                  child: TextButton(
+                    onPressed: () => _showPage(0),
+                    child: const Text(
+                      '\uCC98\uC74C \uCD94\uCC9C \uB2E4\uC2DC \uBCF4\uAE30',
+                    ),
+                  ),
+                ),
+            ],
           ),
         for (final recommendation in _recommendations) ...[
           Padding(

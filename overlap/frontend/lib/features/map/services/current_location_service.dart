@@ -76,6 +76,13 @@ class GeolocatorCurrentLocationService implements CurrentLocationService {
       accuracyMeters: position.accuracy,
       timestamp: position.timestamp,
     );
+    if (kDebugMode) {
+      debugPrint(
+        '[GPS_DIAGNOSTIC] lat=${location.latitude.toStringAsFixed(3)} '
+        'lon=${location.longitude.toStringAsFixed(3)} coordinate_order=lat_lon '
+        'kakao_korea_bounds=${location.isWithinKakaoKoreaBounds}',
+      );
+    }
     debugPrint(
       '[GPS] geolocator request completed elapsed_ms=${stopwatch.elapsedMilliseconds} '
       'coordinates_valid=${location.hasValidCoordinates} '

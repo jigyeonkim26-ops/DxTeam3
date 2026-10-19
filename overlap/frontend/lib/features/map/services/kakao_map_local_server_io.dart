@@ -186,6 +186,13 @@ function setPlaces(places) {
   if (!pendingSearchPlace && minimumBoundsLevel > 0) map.setLevel(Math.max(map.getLevel(), minimumBoundsLevel));
 }
 function clearSearchPlace() { pendingSearchPlace = null; if (searchOverlay) { searchOverlay.setMap(null); searchOverlay = null; } }
+function relayoutMap() {
+  if (!map) return false;
+  var center = map.getCenter();
+  map.relayout();
+  map.setCenter(center);
+  return true;
+}
 function setSearchPlace(place, shouldCenter) {
   if (selectionMode) return;
   if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) { clearSearchPlace(); return; }
@@ -204,17 +211,24 @@ function setSearchPlace(place, shouldCenter) {
       }
       if (requestId != null && pendingCurrentLocationRequestId != null &&
           requestId < pendingCurrentLocationRequestId) return;
+      var latitude = Number(location.latitude);
+      var longitude = Number(location.longitude);
+      if (latitude < 33.0 || latitude > 38.8 || longitude < 124.5 || longitude > 132.1) {
+        if (typeof OverlapMap !== 'undefined' && requestId != null) OverlapMap.postMessage(JSON.stringify({type: 'currentLocationRejected', requestId: requestId, reason: 'outsideKakaoKoreaBounds'}));
+        return;
+      }
       pendingCurrentLocation = location;
       pendingCurrentLocationRequestId = requestId;
       if (!map) return;
 
+      try {
       if (currentLocationOverlay) {
         currentLocationOverlay.setMap(null);
       }
       if (currentLocationAccuracyCircle) {
         currentLocationAccuracyCircle.setMap(null);
       }
-      var position = new kakao.maps.LatLng(Number(location.latitude), Number(location.longitude));
+      var position = new kakao.maps.LatLng(latitude, longitude);
       var accuracy = Number(location.accuracyMeters);
       if (Number.isFinite(accuracy) && accuracy > 0) {
         currentLocationAccuracyCircle = new kakao.maps.Circle({
@@ -239,7 +253,10 @@ function setSearchPlace(place, shouldCenter) {
       map.setCenter(position);
       map.setLevel(3);
       if (selectionMode) setSelectionLocation(location.latitude, location.longitude);
-      if (typeof OverlapMap !== 'undefined' && requestId != null) OverlapMap.postMessage(JSON.stringify({type: 'currentLocationApplied', requestId: requestId}));
+      if (typeof OverlapMap !== 'undefined' && requestId != null) OverlapMap.postMessage(JSON.stringify({type: 'currentLocationApplied', requestId: requestId, target: {latitude: latitude, longitude: longitude}, center: {latitude: map.getCenter().getLat(), longitude: map.getCenter().getLng()}, level: map.getLevel()}));
+      } catch (error) {
+        if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapError', stage: 'current_location_apply', errorType: error && error.name || 'unknown'}));
+      }
     }
 
 
@@ -606,6 +623,7 @@ function setSearchPlace(place, shouldCenter) {
     sdkScript.onload = function () {
       if (!window.kakao || !window.kakao.maps) {
         mapElement.textContent = '지도를 불러오지 못했습니다.';
+        if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapError', stage: 'sdk_global_missing'}));
         return;
       }
 
@@ -615,6 +633,10 @@ function setSearchPlace(place, shouldCenter) {
             map = new kakao.maps.Map(mapElement, {
               center: new kakao.maps.LatLng(initialSelection.latitude, initialSelection.longitude),
               level: $level
+            });
+            kakao.maps.event.addListener(map, 'tilesloaded', function () {
+              var center = map.getCenter();
+              if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapTilesLoaded', center: {latitude: center.getLat(), longitude: center.getLng()}, level: map.getLevel()}));
             });
             if (selectionMode && kakao.maps.services) {
               geocoder = new kakao.maps.services.Geocoder();
@@ -637,16 +659,20 @@ function setSearchPlace(place, shouldCenter) {
               setPlaces(pendingPlaces);
             }
             if (pendingCurrentLocation) setCurrentLocation(pendingCurrentLocation, pendingCurrentLocationRequestId);
+            if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapReady', center: {latitude: map.getCenter().getLat(), longitude: map.getCenter().getLng()}, level: map.getLevel()}));
           } catch (error) {
             mapElement.textContent = '지도를 불러오지 못했습니다.';
+            if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapError', stage: 'map_create', errorType: error && error.name || 'unknown'}));
           }
         });
       } catch (error) {
         mapElement.textContent = '지도를 불러오지 못했습니다.';
+        if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapError', stage: 'sdk_load', errorType: error && error.name || 'unknown'}));
       }
     };
     sdkScript.onerror = function () {
       mapElement.textContent = '지도를 불러오지 못했습니다.';
+      if (typeof OverlapMap !== 'undefined') OverlapMap.postMessage(JSON.stringify({type: 'mapError', stage: 'sdk_script_network'}));
     };
     document.head.appendChild(sdkScript);
   </script>

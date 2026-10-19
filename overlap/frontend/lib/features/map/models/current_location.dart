@@ -15,6 +15,16 @@ class CurrentLocation {
   static const maximumAcceptedAccuracyMeters = 200.0;
   static const maximumLocationAge = Duration(minutes: 2);
 
+  /// Broad mainland/Jeju/Dokdo coverage guard for recentering the Korean map.
+  /// It prevents emulator coordinates in distant regions from replacing the
+  /// user's current map with an unsupported Kakao tile area.
+  bool get isWithinKakaoKoreaBounds =>
+      hasValidCoordinates &&
+      latitude >= 33.0 &&
+      latitude <= 38.8 &&
+      longitude >= 124.5 &&
+      longitude <= 132.1;
+
   bool get hasValidCoordinates =>
       latitude.isFinite &&
       longitude.isFinite &&

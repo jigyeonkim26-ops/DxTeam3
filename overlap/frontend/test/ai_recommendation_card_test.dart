@@ -48,6 +48,30 @@ class _ExhaustedRecommendations extends AiRecommendationsApi {
   }
 }
 
+class _PagedRecommendations extends AiRecommendationsApi {
+  var calls = 0;
+  final pages = <List<AiPlaceRecommendation>>[];
+  final statuses = <String>[];
+
+  @override
+  Future<List<AiPlaceRecommendation>> load() async {
+    final index = calls++;
+    sessionStatus = statuses[index];
+    return pages[index];
+  }
+}
+
+AiPlaceRecommendation pageRecommendation(String id) => AiPlaceRecommendation(
+  kakaoPlaceId: id,
+  name: 'Place $id',
+  address: 'Test street',
+  latitude: 35.1,
+  longitude: 126.9,
+  reason: 'Matches the user preference',
+  sourceUrl: 'https://place.map.kakao.com/$id',
+  matchedKeywords: const ['quiet'],
+);
+
 Widget card(
   SavedPlacesApi api,
   VoidCallback onTap, {
@@ -90,10 +114,173 @@ void main() {
     expect(find.text('다시 추천받기'), findsOneWidget);
   });
 
-  testWidgets('exhausted refresh keeps cards and shows a separate notice', (
+  testWidgets('exhausted refresh keeps cards without a contradictory notice', (
     tester,
   ) async {
     final recommendationsApi = _ExhaustedRecommendations();
+    AiPlaceRecommendation? selected;
+    final savedApi = SavedPlacesApi(
+      get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AiRecommendationContent(
+            api: recommendationsApi,
+            onRecommendationSelected: (item) => selected = item,
+            savedPlacesApi: savedApi,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(recommendation.name), findsOneWidget);
+
+    await tester.tap(find.text('다음 장소 추천받기'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(recommendation.name), findsOneWidget);
+    expect(find.text('1곳'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('다음 장소 추천받기'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsNothing);
+    expect(recommendationsApi.calls, 2);
+
+    await tester.tap(find.text(recommendation.name));
+    expect(identical(selected, recommendation), isTrue);
+  });
+
+  testWidgets('replays every received page locally after exhaustion', (
+    tester,
+  ) async {
+    final recommendationsApi = _PagedRecommendations()
+      ..pages.addAll([
+        [
+          pageRecommendation('A'),
+          pageRecommendation('B'),
+          pageRecommendation('C'),
+        ],
+        [
+          pageRecommendation('D'),
+          pageRecommendation('E'),
+          pageRecommendation('F'),
+        ],
+        [
+          pageRecommendation('G'),
+          pageRecommendation('H'),
+          pageRecommendation('I'),
+        ],
+        const [],
+      ])
+      ..statuses.addAll(['available', 'available', 'available', 'exhausted']);
+    final savedApi = SavedPlacesApi(
+      get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+    );
+    AiPlaceRecommendation? selectedAfterReplay;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AiRecommendationContent(
+            api: recommendationsApi,
+            onRecommendationSelected: (item) => selectedAfterReplay = item,
+            savedPlacesApi: savedApi,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Place A'), findsOneWidget);
+
+    Future<void> next() async {
+      await tester.tap(find.text('다음 장소 추천받기'));
+      await tester.pumpAndSettle();
+    }
+
+    await next();
+    expect(find.text('Place D'), findsOneWidget);
+    await next();
+    expect(find.text('Place G'), findsOneWidget);
+    await next();
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('Place G'), findsOneWidget);
+    expect(find.text('다음 장소 추천받기'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsOneWidget);
+    expect(recommendationsApi.calls, 4);
+
+    await tester.tap(find.text('처음 추천 다시 보기'));
+    await tester.pumpAndSettle();
+    expect(find.text('Place A'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsNothing);
+    expect(find.text('다음 장소 추천받기'), findsOneWidget);
+    await next();
+    expect(find.text('Place D'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsNothing);
+    await next();
+    expect(find.text('Place G'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsOneWidget);
+    expect(recommendationsApi.calls, 4);
+    await tester.tap(find.text('Place G'));
+    expect(selectedAfterReplay?.kakaoPlaceId, 'G');
+  });
+
+  testWidgets('renders all backend results and a one-place final page', (
+    tester,
+  ) async {
+    final recommendationsApi = _PagedRecommendations()
+      ..pages.addAll([
+        [
+          pageRecommendation('A'),
+          pageRecommendation('B'),
+          pageRecommendation('C'),
+        ],
+        [pageRecommendation('D')],
+      ])
+      ..statuses.addAll(['available', 'exhausted']);
+    final savedApi = SavedPlacesApi(
+      get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AiRecommendationContent(
+            api: recommendationsApi,
+            savedPlacesApi: savedApi,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('3\uACF3'), findsOneWidget);
+    expect(find.text('Place A'), findsOneWidget);
+    expect(find.text('Place B'), findsOneWidget);
+    expect(find.text('Place C'), findsOneWidget);
+
+    await tester.tap(find.text('다음 장소 추천받기'));
+    await tester.pumpAndSettle();
+    expect(find.text('1\uACF3'), findsOneWidget);
+    expect(find.text('Place D'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+    expect(find.text('처음 추천 다시 보기'), findsOneWidget);
+    expect(find.text('다음 장소 추천받기'), findsNothing);
+  });
+
+  testWidgets('two-place final page keeps both cards and offers replay only', (
+    tester,
+  ) async {
+    final recommendationsApi = _PagedRecommendations()
+      ..pages.addAll([
+        [
+          pageRecommendation('A'),
+          pageRecommendation('B'),
+          pageRecommendation('C'),
+        ],
+        [pageRecommendation('D'), pageRecommendation('E')],
+      ])
+      ..statuses.addAll(['available', 'exhausted']);
     final savedApi = SavedPlacesApi(
       get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
     );
@@ -108,17 +295,42 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text(recommendation.name), findsOneWidget);
-
     await tester.tap(find.text('다음 장소 추천받기'));
     await tester.pumpAndSettle();
 
-    expect(find.text(recommendation.name), findsOneWidget);
-    expect(find.text('1곳'), findsOneWidget);
-    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsOneWidget);
+    expect(find.text('2곳'), findsOneWidget);
+    expect(find.text('Place D'), findsOneWidget);
+    expect(find.text('Place E'), findsOneWidget);
+    expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
     expect(find.text('다음 장소 추천받기'), findsNothing);
-    expect(recommendationsApi.calls, 2);
+    expect(find.text('처음 추천 다시 보기'), findsOneWidget);
   });
+
+  testWidgets(
+    'one to three initial recommendations do not show exhausted notice',
+    (tester) async {
+      final api = _PagedRecommendations()
+        ..pages.addAll([
+          [pageRecommendation('A'), pageRecommendation('B')],
+        ])
+        ..statuses.addAll(['exhausted']);
+      final savedApi = SavedPlacesApi(
+        get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AiRecommendationContent(api: api, savedPlacesApi: savedApi),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('2곳'), findsOneWidget);
+      expect(find.text('지금은 새로운 추천 장소가 더 없어요.'), findsNothing);
+      expect(find.text('다음 장소 추천받기'), findsNothing);
+    },
+  );
 
   testWidgets(
     'small card shows text and a category placeholder without an image URL',

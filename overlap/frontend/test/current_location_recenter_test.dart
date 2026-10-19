@@ -50,6 +50,9 @@ void main() {
       await tester.pumpWidget(view(1));
       await tester.pump();
       platform.navigation.finished!('http://localhost:8080/');
+      platform.controller.channel!.onMessageReceived(
+        JavaScriptMessage(message: '{"type":"mapReady"}'),
+      );
       await tester.pumpAndSettle();
       platform.controller.channel!.onMessageReceived(
         JavaScriptMessage(
@@ -121,6 +124,9 @@ void main() {
       // The page spinner remains active until the fake page-finished event.
       await tester.pump();
       platform.navigation.finished!('http://localhost:8080/');
+      platform.controller.channel!.onMessageReceived(
+        JavaScriptMessage(message: '{"type":"mapReady"}'),
+      );
       await tester.pumpAndSettle();
       final controller = platform.controller;
       expect(
@@ -168,7 +174,9 @@ void main() {
       expect(result!.exitCode, 0, reason: '${result.stderr}');
       final state = jsonDecode(result.stdout as String) as Map<String, dynamic>;
       expect(state['centers'], [
+        [37.5663, 126.9779],
         [a.latitude, a.longitude],
+        [b.latitude, b.longitude],
         [b.latitude, b.longitude],
         [a.latitude, a.longitude],
       ]);
@@ -178,6 +186,22 @@ void main() {
       expect(state['accuracyRadii'], everyElement(24));
       expect(state['accuracyRadii'], hasLength(2));
       expect(state['boundsCalls'], 0);
+      final applied = (state['messages'] as List)
+          .where((message) => message['type'] == 'currentLocationApplied')
+          .toList();
+      expect(applied, hasLength(2));
+      expect(applied.last['target'], {
+        'latitude': a.latitude,
+        'longitude': a.longitude,
+      });
+      expect(applied.last['center'], {
+        'latitude': a.latitude,
+        'longitude': a.longitude,
+      });
+      expect(
+        (state['messages'] as List).last['reason'],
+        'outsideKakaoKoreaBounds',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() async {
         await Future<void>.delayed(Duration.zero);
@@ -189,11 +213,13 @@ void main() {
 const _harness = r'''
 const vm = require('vm');
 const payload = JSON.parse(process.env.MAP_TEST_PAYLOAD);
-const centers = [], overlays = [], accuracyRadii = [], bounds = [];
+const centers = [], overlays = [], accuracyRadii = [], bounds = [], messages = [];
+let mapCenter = {lat: 37.5663, lng: 126.9779};
 const context = {
+  OverlapMap: {postMessage: message => messages.push(JSON.parse(message))},
   document: {getElementById: () => ({}), createElement: () => ({appendChild() {}, addEventListener() {}, style: {setProperty() {}}})},
   kakao: {maps: {
-    LatLng: function(lat, lng) {this.lat = lat; this.lng = lng;},
+    LatLng: function(lat, lng) {this.lat = lat; this.lng = lng; this.getLat = () => lat; this.getLng = () => lng;},
     LatLngBounds: function() {this.extend = () => {}; this.getSouthWest = () => ({});},
     Circle: function(options) {Object.assign(this, options); accuracyRadii.push(options.radius); this.setMap = map => {this.map = map;};},
     CustomOverlay: function(options) {
@@ -205,15 +231,16 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(payload.script, context);
-context.map = {setCenter: p => centers.push([p.lat, p.lng]), setLevel() {}, setBounds: value => bounds.push(value), getLevel: () => 3};
+context.map = {setCenter: p => {mapCenter = p; centers.push([p.lat, p.lng]);}, getCenter: () => mapCenter, relayout() {}, setLevel() {}, setBounds: value => bounds.push(value), getLevel: () => 3};
 for (const command of payload.commands) vm.runInContext(command, context);
+vm.runInContext('setCurrentLocation({latitude:40.7,longitude:-74.0},99)', context);
 vm.runInContext('setPlaces([{id:"record-1", recordCount:1, latitude:35, longitude:127, groupColorHex:"#14364A"}])', context);
 const active = className => overlays.filter(o => o.map && o.content.className === className);
 console.log(JSON.stringify({centers,
   activeCurrentPins: active('current-location-marker').length,
   activeSearchPins: active('search-marker').length,
   searchPosition: [context.searchOverlay.position.lat, context.searchOverlay.position.lng],
-  accuracyRadii, boundsCalls: bounds.length,
+  accuracyRadii, boundsCalls: bounds.length, messages,
 }));
 ''';
 

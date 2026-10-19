@@ -18,6 +18,8 @@ Map<String, dynamic> recommendation(String id) => {
 };
 
 void main() {
+  setUp(AiRecommendationsApi.clearSessionCache);
+
   test('refresh requests use one unified backend session', () async {
     final paths = <String>[];
     var call = 0;
@@ -68,6 +70,177 @@ void main() {
       expect(paths, ['/ai/recommendations', '/ai/recommendations']);
     },
   );
+
+  test(
+    'restores cached page per account without issuing another request',
+    () async {
+      final paths = <String>[];
+      ApiTransport.setAccessToken('cache-first-user');
+      addTearDown(ApiTransport.clearAccessToken);
+      final firstApi = AiRecommendationsApi(
+        get: (path, {responseTimeout}) async {
+          paths.add(path);
+          return {
+            'session_status': 'available',
+            'recommendations': [recommendation('first-page')],
+          };
+        },
+      );
+      final first = await firstApi.load();
+
+      final restoredApi = AiRecommendationsApi(
+        get: (path, {responseTimeout}) async {
+          paths.add(path);
+          return {
+            'recommendations': [recommendation('unexpected-network-call')],
+          };
+        },
+      );
+      expect((await restoredApi.load()).single.kakaoPlaceId, 'first-page');
+      expect(
+        restoredApi.firstRecommendations.single.kakaoPlaceId,
+        'first-page',
+      );
+      expect(paths, ['/ai/recommendations']);
+
+      ApiTransport.setAccessToken('cache-second-user');
+      final secondApi = AiRecommendationsApi(
+        get: (path, {responseTimeout}) async {
+          paths.add(path);
+          return {
+            'recommendations': [recommendation('second-user-page')],
+          };
+        },
+      );
+      expect((await secondApi.load()).single.kakaoPlaceId, 'second-user-page');
+      expect(paths, ['/ai/recommendations', '/ai/recommendations']);
+      expect(first.single.kakaoPlaceId, 'first-page');
+    },
+  );
+
+  test('restores complete session page history and current page', () async {
+    final paths = <String>[];
+    ApiTransport.setAccessToken('history-cache-user');
+    addTearDown(ApiTransport.clearAccessToken);
+    final api = AiRecommendationsApi(
+      get: (path, {responseTimeout}) async {
+        paths.add(path);
+        final refresh = path.contains('refresh=true');
+        if (!refresh) {
+          return {
+            'session_status': 'available',
+            'recommendations': [recommendation('A')],
+          };
+        }
+        if (paths.where((path) => path.contains('refresh=true')).length == 1) {
+          return {
+            'session_status': 'available',
+            'recommendations': [recommendation('B')],
+          };
+        }
+        return {'session_status': 'exhausted', 'recommendations': <dynamic>[]};
+      },
+    );
+    await api.load();
+    await api.load();
+    await api.load();
+    expect(api.recommendationPages.map((page) => page.single.kakaoPlaceId), [
+      'A',
+      'B',
+    ]);
+    expect(api.sessionStatus, 'exhausted');
+
+    api.selectPage(0);
+    final restored = AiRecommendationsApi(
+      get: (path, {responseTimeout}) async {
+        paths.add(path);
+        return {'recommendations': <dynamic>[]};
+      },
+    );
+    expect((await restored.load()).single.kakaoPlaceId, 'A');
+    expect(restored.recommendationPages, hasLength(2));
+    expect(restored.currentPageIndex, 0);
+    expect(restored.sessionStatus, 'exhausted');
+    expect(paths, [
+      '/ai/recommendations',
+      '/ai/recommendations?refresh=true',
+      '/ai/recommendations?refresh=true',
+    ]);
+  });
+
+  test(
+    'preserves a three-place response and a partial one-place next page',
+    () async {
+      final paths = <String>[];
+      final api = AiRecommendationsApi(
+        get: (path, {responseTimeout}) async {
+          paths.add(path);
+          if (paths.length == 1) {
+            return {
+              'session_status': 'available',
+              'recommendations': [
+                recommendation('A'),
+                recommendation('B'),
+                recommendation('C'),
+              ],
+            };
+          }
+          return {
+            'session_status': 'exhausted',
+            'recommendations': [recommendation('D')],
+          };
+        },
+      );
+
+      expect((await api.load()).map((item) => item.kakaoPlaceId), [
+        'A',
+        'B',
+        'C',
+      ]);
+      expect((await api.load()).map((item) => item.kakaoPlaceId), ['D']);
+      expect(api.recommendationPages.map((page) => page.length), [3, 1]);
+      expect(api.currentPageIndex, 1);
+      api.selectPage(0);
+      expect(
+        (await AiRecommendationsApi().load()).map((item) => item.kakaoPlaceId),
+        ['A', 'B', 'C'],
+      );
+      expect(paths, [
+        '/ai/recommendations',
+        '/ai/recommendations?refresh=true',
+      ]);
+    },
+  );
+
+  test('explicit new session clears old page history', () async {
+    final paths = <String>[];
+    ApiTransport.setAccessToken('new-session-user');
+    addTearDown(ApiTransport.clearAccessToken);
+    var page = 'A';
+    final api = AiRecommendationsApi(
+      get: (path, {responseTimeout}) async {
+        paths.add(path);
+        return {
+          'recommendations': [recommendation(page)],
+        };
+      },
+    );
+    await api.load();
+    page = 'B';
+    await api.load();
+    expect(api.recommendationPages, hasLength(2));
+
+    api.startNewSession();
+    page = 'NEW';
+    expect((await api.load()).single.kakaoPlaceId, 'NEW');
+    expect(api.recommendationPages, hasLength(1));
+    expect(api.firstRecommendations.single.kakaoPlaceId, 'NEW');
+    expect(paths, [
+      '/ai/recommendations',
+      '/ai/recommendations?refresh=true',
+      '/ai/recommendations',
+    ]);
+  });
 
   test(
     'pending unified request is isolated across authenticated users',
