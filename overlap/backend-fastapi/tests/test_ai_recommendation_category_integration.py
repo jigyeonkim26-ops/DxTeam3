@@ -224,8 +224,30 @@ def test_personalized_underfill_triggers_second_mock_search_stage_with_remaining
         assert len(response.json()["recommendations"]) == 2
         assert [call["query_offset"] for call in search.calls] == [0, 6]
         assert all(call["kakao_call_budget"] == 6 for call in search.calls)
-        assert all(call["tavily_call_budget"] == 3 for call in search.calls)
-        assert all(call["tavily_candidate_budget"] == 3 for call in search.calls)
+        # The first stage used one call on one target; the rest carries over.
+        assert [call["tavily_call_budget"] for call in search.calls] == [3, 5]
+        assert [call["tavily_candidate_budget"] for call in search.calls] == [3, 5]
+    finally:
+        client.close()
+        engine.dispose()
+
+
+def test_empty_initial_stage_carries_full_tavily_budget_into_continuation():
+    class EmptyFirstStage(CandidateSearch):
+        def search(self, **kwargs):
+            result = super().search(**kwargs)
+            if kwargs["query_offset"] == 0:
+                return result.model_copy(update={"query_count": 6, "tavily_call_count": 0, "candidates": []})
+            return result.model_copy(update={"query_count": 6})
+
+    search = EmptyFirstStage()
+    client, engine, headers = _client(search)
+    try:
+        response = client.get("/ai/recommendations?category=bar&region=%EA%B4%91%EC%A3%BC", headers=headers)
+        assert response.status_code == 200, response.text
+        assert [call["query_offset"] for call in search.calls] == [0, 6]
+        assert [call["tavily_call_budget"] for call in search.calls] == [3, 6]
+        assert [call["tavily_candidate_budget"] for call in search.calls] == [3, 6]
     finally:
         client.close()
         engine.dispose()

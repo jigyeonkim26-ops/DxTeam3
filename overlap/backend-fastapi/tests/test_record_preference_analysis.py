@@ -766,3 +766,39 @@ def test_unregistered_preference_term_gets_domain_from_verified_facet_kind():
     assert result.facets[0].target_text == "바질크림뇨끼"
     assert result.facets[0].categories == [RecommendationCategory.FOOD]
     assert result.categories == [RecommendationCategory.FOOD]
+
+
+def test_predicate_phrase_detects_verdicts_not_descriptions():
+    from app.record_preference_analysis import is_predicate_phrase
+
+    assert is_predicate_phrase("개맛있음")
+    assert is_predicate_phrase("흥미로웠습니다")
+    assert is_predicate_phrase("맛있었다")
+    assert is_predicate_phrase("개맛있었고")
+    assert is_predicate_phrase("친절했는데")
+    for term in ("조용해서", "넓은", "넓고", "간장새우", "감바스", "바다", "메론 롤케이크"):
+        assert not is_predicate_phrase(term)
+
+
+def test_facet_with_verdict_as_target_is_dropped():
+    record = make_record(902, "공간 이름", "안주가 개맛있음 진짜 최고")
+    analysis = RecordPreferenceAnalysis(
+        record_id=902, place_name="공간 이름", place_type=PlaceType.UNKNOWN,
+        emotion=RecommendationEmotionCode.LOVE, emotion_intensity=1,
+        facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.MENU, target_text="개맛있음",
+            features=[], categories=[], polarity="liked",
+            evidence="안주가 개맛있음", confidence=0.9,
+        ), PreferenceFacet(
+            target_kind=FacetTargetKind.MENU, target_text="안주",
+            features=[], categories=[], polarity="liked",
+            evidence="안주가 개맛있음", confidence=0.9,
+        )],
+    )
+    from collections import Counter
+    diagnostics = Counter()
+
+    result = RecordPreferenceAnalysisService._validate_evidence(analysis, record, None, diagnostics)
+
+    assert [facet.target_text for facet in result.facets] == ["안주"]
+    assert diagnostics["target_is_predicate_phrase"] == 1

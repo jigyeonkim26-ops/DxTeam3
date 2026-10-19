@@ -1092,13 +1092,18 @@ def router(
                     0, getattr(candidate_search_service, "MAX_KAKAO_CALLS", PlaceCandidateSearchService.MAX_KAKAO_CALLS)
                     - initial_kakao_budget,
                 )
+                # Carry over what the initial search left unused (e.g. it found
+                # no candidates); only the Tavily work actually done is deducted.
+                initial_tavily_targets = sum(
+                    bool(item.preference_evidence) for item in search_result.candidates
+                )
                 continuation_tavily_budget = max(
                     0, getattr(candidate_search_service, "MAX_TAVILY_CALLS", PlaceCandidateSearchService.MAX_TAVILY_CALLS)
-                    - initial_tavily_budget,
+                    - search_result.tavily_call_count,
                 )
                 continuation_tavily_candidates = max(
                     0, getattr(candidate_search_service, "MAX_TAVILY_CANDIDATES", PlaceCandidateSearchService.MAX_TAVILY_CANDIDATES)
-                    - initial_tavily_candidate_budget,
+                    - initial_tavily_targets,
                 )
                 continuation = candidate_search_service.search(
                     category=category,

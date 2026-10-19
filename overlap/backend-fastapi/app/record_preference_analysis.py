@@ -326,6 +326,25 @@ def _has_explicit_negative_span(value: str | None) -> bool:
     return any(_norm(marker) in normalized for marker in _EXPLICIT_NEGATIVE_SPANS)
 
 
+# Predicate endings (a closed grammatical class, not a word list): sentence
+# endings and past-tense clause connectives. A span ending like this is a
+# verdict such as "개맛있음", "개맛있었고" or "흥미로웠습니다": it can quote a
+# feeling, but it is not a target noun and it is useless as a place-search
+# keyword. Present-tense modifiers ("넓은", "조용해서") are not predicates here.
+_PREDICATE_ENDINGS = (
+    "습니다", "었다", "았다", "였다", "했다", "있다", "없다",
+    "었음", "았음", "였음", "했음", "있음", "없음",
+    "어요", "아요", "해요", "네요", "었어", "았어", "했어",
+    "었고", "았고", "였고", "했고", "있고", "없고",
+    "었는데", "았는데", "였는데", "했는데", "었지만", "았지만", "였지만", "했지만",
+)
+
+
+def is_predicate_phrase(value: str | None) -> bool:
+    compact = re.sub(r"[^\w]+", "", _norm(value))
+    return bool(compact) and compact.endswith(_PREDICATE_ENDINGS)
+
+
 class _AnalysisResponseFailure(ValueError):
     """A safe, stage-tagged failure while interpreting a provider response."""
 
@@ -464,6 +483,9 @@ class RecordPreferenceAnalysisService:
                     "polarity from liked, disliked, neutral. Use null for an unknown place type label or evidence. "
                     "Extract multiple positive or negative target-feature relations when explicit. "
                     "target_text must be a literal short span from place_name or content; features must be explicit terms from content. "
+                    "target_text is a concrete noun (a dish, drink, space, activity or view), never a verdict sentence. "
+                    "features describe a concrete attribute of the place (taste, texture, atmosphere, size, view, service manner); "
+                    "do not emit general praise or the visitor's own feeling as a feature (e.g. '개맛있음', '최고', '재밌었다', '흥미로웠습니다'). "
                     "Copy feature wording exactly from the record, preserving Korean endings and inflections; do not paraphrase or normalize it "
                     "(for example, keep '조용해서' as '조용해서', not '조용한'). Emit each distinct stated feature rather than dropping it. "
                     "A positive overall emotion can contain both liked and disliked details. Split them into separate facets: "
@@ -848,7 +870,11 @@ class RecordPreferenceAnalysisService:
                 )
             else:
                 polarity_ok = True
-            if not (target_present and quote_present and features_present and polarity_ok):
+            # A target must be a noun span; "개맛있음" as a target is a verdict.
+            target_is_noun = not is_predicate_phrase(facet.target_text)
+            if not target_is_noun and diagnostics is not None:
+                diagnostics["target_is_predicate_phrase"] += 1
+            if not (target_present and quote_present and features_present and polarity_ok and target_is_noun):
                 if diagnostics is not None:
                     if not target_present:
                         diagnostics["target_not_in_record"] += 1

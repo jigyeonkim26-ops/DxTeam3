@@ -53,6 +53,7 @@ def search_places(query: str, *, timeout: float = 10.0):
             "place_url": item["place_url"],
             "category_group_code": item.get("category_group_code") or None,
             "category_name": item.get("category_name", ""),
+            "phone": item.get("phone") or None,
         })
 
     return places

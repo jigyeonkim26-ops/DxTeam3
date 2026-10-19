@@ -11,7 +11,7 @@ import time
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 from urllib.parse import urlparse
 
 import httpx
@@ -24,6 +24,7 @@ from .record_preference_analysis import (
     PreferenceFacet,
     RecordPreferenceAnalysis,
     RecommendationCategory,
+    is_predicate_phrase,
 )
 from . import recommendation_diagnostics as diagnostics
 
@@ -66,6 +67,7 @@ class KakaoPlaceCandidate(BaseModel):
     category_group_code: str | None = Field(default=None, max_length=16)
     category_name: str | None = Field(default=None, max_length=240)
     place_url: str = Field(min_length=1, max_length=500)
+    phone: str | None = Field(default=None, max_length=40)
 
     @field_validator("latitude", "longitude")
     @classmethod
@@ -93,6 +95,7 @@ class KakaoPlaceCandidate(BaseModel):
             category_group_code=item.get("category_group_code"),
             category_name=item.get("category_name") or None,
             place_url=item.get("place_url"),
+            phone=(item.get("phone") or "").strip()[:40] or None,
         )
 
 
@@ -267,6 +270,108 @@ def _locality_parts(address: str) -> list[str]:
     return [parts[0], parts[area_index]] if area_index < len(parts) else [parts[0]]
 
 
+_GENERIC_PLACE_NAMES = {"카페", "음식점", "식당", "술집", "공원", "문화시설", "경기장"}
+# Names shorter than this need a standalone-word or road-name match.
+_SHORT_PLACE_NAME_LENGTH = 4
+_ROAD_NAME = re.compile(r"\S+(?:로|길)$")
+
+
+def _road_name(address: str) -> str:
+    """Return the road segment of a road address (e.g. 상무중앙로), if any."""
+    for part in address.split()[1:]:
+        if _ROAD_NAME.fullmatch(part):
+            return part
+    return ""
+
+
+# Words ending in 점 that are not branch names.
+_NON_BRANCH_WORDS = {"점", "지점", "시점", "관점", "장점", "단점", "정점", "초점", "만점", "매점"}
+# Evidence must sit near a mention of the place, so a "10 best restaurants"
+# post cannot lend another venue's description to this candidate.
+_EVIDENCE_WINDOW_CHARS = 250
+
+
+class _IdentityContext(NamedTuple):
+    base: str
+    base_pattern: re.Pattern[str]
+    branches: frozenset[str]
+    requires_branch: bool
+    aliases: frozenset[str]
+    locality_key: str
+    road_key: str
+    phone_pattern: re.Pattern[str] | None
+
+    def strong_signal(self, text: str, compact: str) -> bool:
+        return ((len(self.road_key) >= 2 and self.road_key in compact)
+                or bool(self.phone_pattern and self.phone_pattern.search(text)))
+
+
+def _kakao_place_url_pattern(place_id: str) -> re.Pattern[str]:
+    return re.compile(r"place\.map\.kakao\.com/(?:m/)?" + re.escape(place_id) + r"(?!\d)")
+
+
+# Endings stripped (longest first) to compare a recorded word by its stem.
+_PREFERENCE_ENDINGS = tuple(sorted((
+    "스러운", "스럽고", "있어서", "있는", "했던", "했다", "해요", "해서", "하고", "하며", "로운",
+    "한", "함", "이", "가", "은", "는", "을", "를", "고", "서", "던",
+), key=len, reverse=True))
+# Deliberately small groups of near-identical atmosphere words. Broader
+# associations (e.g. 친절/서비스) would weaken what an A-grade claim means.
+_PREFERENCE_SYNONYMS = (
+    ("조용", "한적", "차분", "고요"),
+    ("아늑", "포근"),
+    ("넓", "여유", "쾌적"),
+    ("깔끔", "청결"),
+    ("전망", "경치", "조망"),
+    ("노을", "석양", "일몰"),
+)
+
+
+def _preference_forms(value: str) -> set[str]:
+    """Return the recorded word, its stem and close synonyms in compact form."""
+    key = _compact(value)
+    if not key:
+        return set()
+    forms = {key, _preference_key(value)}
+    for ending in _PREFERENCE_ENDINGS:
+        if key.endswith(ending) and len(key) - len(ending) >= 2:
+            forms.add(key[:-len(ending)])
+            break
+    for group in _PREFERENCE_SYNONYMS:
+        if any(form.startswith(member) for form in tuple(forms) for member in group):
+            forms.update(group)
+    return {form for form in forms if form}
+
+
+# Province names: Kakao reads "광주 경기 …" as Gwangju-si in Gyeonggi-do.
+_PROVINCE_NAMES = {"경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남"}
+
+
+def _query_term_usable(term: str, context: str) -> bool:
+    """Whether a record term can narrow a Kakao keyword search.
+
+    Rejects verdict sentences ("개맛있음"), terms already inside the
+    place-type word ("경기" in "경기장") and region names, which Kakao treats
+    as a location rather than a feature.
+    """
+    key = _compact(term)
+    if not key or is_predicate_phrase(term) or key in _compact(context):
+        return False
+    region_names = {_compact(name) for name in _REGION_ALIASES} | _PROVINCE_NAMES
+    return key not in region_names
+
+
+def _query_mentions_term(query: str, term: str) -> bool:
+    """True when the term's words appear as whole words in the query."""
+    query_tokens = [_compact(token) for token in _norm(query).split()]
+    term_tokens = [token for token in (_compact(part) for part in _norm(term).split()) if token]
+    if not term_tokens:
+        return False
+    size = len(term_tokens)
+    return any(query_tokens[index:index + size] == term_tokens
+               for index in range(len(query_tokens) - size + 1))
+
+
 def _url_is_safe(value: str | None) -> bool:
     if not value:
         return False
@@ -387,6 +492,8 @@ class PlaceCandidateSearchService:
     MAX_TAVILY_CANDIDATES = 6
     INITIAL_TAVILY_CALLS = 3
     INITIAL_TAVILY_CANDIDATES = 3
+    MAX_TAVILY_QUERY_TERMS = 2
+    CITY_SPECIFIC_QUERIES = 3
     KAKAO_TIMEOUT_SECONDS = 6.0
     TAVILY_TIMEOUT_SECONDS = 8.0
     CACHE_TTL_SECONDS = 300
@@ -548,6 +655,8 @@ class PlaceCandidateSearchService:
                     specificity = 1.15 if facet.target_kind.value in {"menu", "drink", "food", "activity", "scenery"} else 0.85
                     weight = analysis.emotion_intensity * facet.confidence * specificity
                     for term in cls._feature_search_terms(facet):
+                        if not _query_term_usable(term, context):
+                            continue
                         key = (specific, _intent_key(term))
                         query = f"{search_region} {term} {context}"
                         current = intent_queries.get(key)
@@ -678,8 +787,12 @@ class PlaceCandidateSearchService:
         # primary duplicate key; name plus locality only collapses exact repeats.
         return f"{_compact(place.place_name)}:{_compact(' '.join(_locality_parts(place.address)))}"
 
+    @staticmethod
+    def _kakao_cache_key(query: str) -> str:
+        return "kakao:" + hashlib.sha256(_compact(query).encode("utf-8")).hexdigest()
+
     def _get_kakao(self, query: str) -> list[dict[str, Any]]:
-        key = "kakao:" + hashlib.sha256(_compact(query).encode("utf-8")).hexdigest()
+        key = self._kakao_cache_key(query)
         cached = self._cache_get(key)
         if cached is not None:
             return list(cached)
@@ -698,51 +811,137 @@ class PlaceCandidateSearchService:
         return facet.features or [facet.target_text]
 
     @staticmethod
-    def _identity_matches(place: KakaoPlaceCandidate, document: dict[str, Any]) -> bool:
-        title = html.unescape(_TAG.sub(" ", str(document.get("title") or "")))
-        content = html.unescape(_TAG.sub(" ", str(document.get("content") or "")))
-        expected_name = _compact(place.place_name)
-        if not expected_name or len(expected_name) < 4 or expected_name in {"카페", "음식점", "식당", "술집", "공원", "문화시설", "경기장"}:
-            return False
-        # Keep the place name and locality in one result field. A title for one
-        # branch plus a snippet mentioning another district is weak evidence.
-        address = place.address
-        locality = _locality_parts(address)
-        if not locality:
-            return False
+    def _document_text(document: dict[str, Any], key: str) -> str:
+        return _norm(html.unescape(_TAG.sub(" ", str(document.get(key) or ""))))
+
+    @staticmethod
+    def _identity_fields(document: dict[str, Any]) -> list[tuple[str, str]]:
+        """Return (normalized, compact) text for the title and the content."""
+        fields = []
+        for key in ("title", "content"):
+            text = PlaceCandidateSearchService._document_text(document, key)
+            fields.append((text, _compact(text)))
+        return fields
+
+    @staticmethod
+    def _identity_context(place: KakaoPlaceCandidate) -> _IdentityContext | None:
+        tokens = _norm(place.place_name).split()
+        full_name = _compact(place.place_name)
+        locality = _locality_parts(place.address)
+        if len(full_name) < 2 or full_name in _GENERIC_PLACE_NAMES or not locality:
+            return None
         canonical_region = _region_key(locality[0])
-        aliases = {canonical_region}
+        aliases = {_compact(canonical_region)}
         if canonical_region == "전남광주통합특별시":
             aliases.update({"광주", "광주시", "광주광역시"})
-        locality_key = _compact(locality[1]) if len(locality) > 1 else ""
-        location_fields = [_compact(title), _compact(content)]
-        return any(
-            expected_name in field and any(_compact(alias) in field for alias in aliases)
-            and (not locality_key or locality_key in field)
-            for field in location_fields
+        # "스타벅스 광주상무점" is often written "스타벅스 상무점": keep the
+        # brand as the name and accept the branch with or without its city.
+        branch = _compact(tokens[-1]) if len(tokens) > 1 and tokens[-1].endswith("점") else ""
+        base = _compact(" ".join(tokens[:-1])) if branch else full_name
+        if len(base) < 2 or base in _GENERIC_PLACE_NAMES:
+            base, branch = full_name, ""
+        branches = {branch} if branch else {"본점"}
+        for alias in sorted(aliases, key=len, reverse=True):
+            if branch.startswith(alias) and len(branch) - len(alias) >= 2:
+                branches.add(branch[len(alias):])
+                break
+        road_key = next((_compact(_road_name(address))
+                         for address in [place.address, *place.address_variants]
+                         if _road_name(address)), "")
+        phone_digits = re.sub(r"\D", "", place.phone or "")
+        phone_pattern = (re.compile(r"(?<!\d)" + r"[\s.()\-]*".join(phone_digits) + r"(?!\d)")
+                         if len(phone_digits) >= 8 else None)
+        return _IdentityContext(
+            base=base,
+            base_pattern=re.compile(r"\s*".join(re.escape(char) for char in base)),
+            branches=frozenset(branches),
+            requires_branch=bool(branch) and branch != "본점",
+            aliases=frozenset(aliases),
+            locality_key=_compact(locality[1]) if len(locality) > 1 else "",
+            road_key=road_key,
+            phone_pattern=phone_pattern,
         )
+
+    @staticmethod
+    def _name_spans(context: _IdentityContext, text: str, compact: str) -> list[tuple[int, int]]:
+        """Return the spans where this place (not another branch) is named."""
+        if context.requires_branch and not any(branch in compact for branch in context.branches):
+            return []
+        short = len(context.base) < _SHORT_PLACE_NAME_LENGTH
+        strong = context.strong_signal(text, compact)
+        spans = []
+        for match in context.base_pattern.finditer(text):
+            start, end = match.span()
+            following = re.match(r"\s*(\w+)", text[end:])
+            next_word = following.group(1) if following else ""
+            if next_word.endswith("점") and next_word not in _NON_BRANCH_WORDS:
+                # "독도집 광주공원점" names another branch of the same brand.
+                if _compact(next_word) in context.branches:
+                    spans.append((start, end + following.end()))
+                continue
+            if short:
+                # A short name such as "꾸다" also occurs inside other names
+                # ("꾸다요"). Accept it only as a standalone word, or next to
+                # this place's road name or phone number.
+                attached = ((start > 0 and re.match(r"\w", text[start - 1]))
+                            or re.match(r"\w", text[end:end + 1]))
+                if attached and not strong:
+                    continue
+            spans.append((start, end))
+        return spans
+
+    @staticmethod
+    def _identity_matches(place: KakaoPlaceCandidate, document: dict[str, Any]) -> bool:
+        if _kakao_place_url_pattern(place.kakao_place_id).search(str(document.get("url") or "")):
+            return True
+        context = PlaceCandidateSearchService._identity_context(place)
+        if context is None:
+            return False
+        # Keep the place name and its location in one result field. A title for
+        # one branch plus a snippet mentioning another district is weak evidence.
+        for text, compact in PlaceCandidateSearchService._identity_fields(document):
+            if not PlaceCandidateSearchService._name_spans(context, text, compact):
+                continue
+            located = (any(alias in compact for alias in context.aliases)
+                       and (not context.locality_key or context.locality_key in compact))
+            if located or (context.phone_pattern and context.phone_pattern.search(text)):
+                return True
+        return False
+
+    @staticmethod
+    def _term_near_place(place: KakaoPlaceCandidate, document: dict[str, Any], forms: set[str]) -> bool:
+        """True when a preference form appears near a mention of this place."""
+        text = (PlaceCandidateSearchService._document_text(document, "title") + "\n"
+                + PlaceCandidateSearchService._document_text(document, "content"))
+        context = PlaceCandidateSearchService._identity_context(place)
+        spans = (PlaceCandidateSearchService._name_spans(context, text, _compact(text))
+                 if context else [])
+        if not spans and _kakao_place_url_pattern(place.kakao_place_id).search(str(document.get("url") or "")):
+            spans = [(0, len(text))]
+        for start, end in spans:
+            window = _compact(text[max(0, start - _EVIDENCE_WINDOW_CHARS):end + _EVIDENCE_WINDOW_CHARS])
+            if any(form in window for form in forms):
+                return True
+        return False
 
     @staticmethod
     def _identity_diagnostic_details(place: KakaoPlaceCandidate, document: dict[str, Any]) -> dict[str, bool]:
         """Return boolean identity signals without retaining provider text."""
-        title = _compact(html.unescape(_TAG.sub(" ", str(document.get("title") or ""))))
-        content = _compact(html.unescape(_TAG.sub(" ", str(document.get("content") or ""))))
-        fields = (title, content)
-        expected_name = _compact(place.place_name)
-        locality = _locality_parts(place.address)
-        if not expected_name or len(expected_name) < 4 or not locality:
-            return {"place_name_match": False, "region_match": False,
-                    "locality_match": False, "identity_match": False}
-        canonical_region = _region_key(locality[0])
-        aliases = {canonical_region}
-        if canonical_region == "\uC804\uB0A8\uAD11\uC8FC\uD1B5\uD569\uD2B9\uBCC4\uC2DC":
-            aliases.update({"\uAD11\uC8FC", "\uAD11\uC8FC\uC2DC", "\uAD11\uC8FC\uAD11\uC5ED\uC2DC"})
-        locality_key = _compact(locality[1]) if len(locality) > 1 else ""
+        context = PlaceCandidateSearchService._identity_context(place)
+        identity = PlaceCandidateSearchService._identity_matches(place, document)
+        if context is None:
+            return {"place_name_match": identity, "region_match": False,
+                    "locality_match": False, "identity_match": identity}
+        fields = PlaceCandidateSearchService._identity_fields(document)
         return {
-            "place_name_match": any(expected_name in field for field in fields),
-            "region_match": any(_compact(alias) in field for field in fields for alias in aliases),
-            "locality_match": not locality_key or any(locality_key in field for field in fields),
-            "identity_match": PlaceCandidateSearchService._identity_matches(place, document),
+            "place_name_match": any(
+                PlaceCandidateSearchService._name_spans(context, text, compact) for text, compact in fields
+            ),
+            "region_match": any(alias in compact for _, compact in fields for alias in context.aliases),
+            "locality_match": not context.locality_key or any(
+                context.locality_key in compact for _, compact in fields
+            ),
+            "identity_match": identity,
         }
 
     @staticmethod
@@ -753,16 +952,25 @@ class PlaceCandidateSearchService:
 
     @staticmethod
     def _tavily_query(place: KakaoPlaceCandidate, region: str, terms: list[str]) -> str:
+        # Locate the place by its own address, not the user's search region:
+        # a selected district can differ from the candidate's district.
         locality = _locality_parts(place.address)
-        region_query = _search_region(region)
-        district = locality[1] if len(locality) > 1 and _compact(locality[1]) not in _compact(region_query) else ""
-        return _SPACE.sub(" ", f"{place.place_name} {region_query} {district} {' '.join(terms)}").strip()
+        region_query = _search_region(" ".join(locality) if locality else region)
+        return _SPACE.sub(" ", f"{place.place_name} {region_query} {' '.join(terms)}").strip()
+
+    def _tavily_query_for(self, place: KakaoPlaceCandidate, region: str,
+                          query_facets: list[tuple[int, PreferenceFacet]]) -> str:
+        # Only terms that retrieved this candidate from Kakao go into the
+        # query. Unrelated record terms pull results toward recipes and other
+        # venues, so identity verification would never see this place.
+        unique_terms = list(dict.fromkeys(term for _, facet in query_facets for term in self._evidence_terms(facet)))
+        unique_terms = [term for term in unique_terms if term.strip()][:self.MAX_TAVILY_QUERY_TERMS]
+        return self._tavily_query(place, region, unique_terms)
 
     def _tavily_for_place(self, place: KakaoPlaceCandidate, region: str,
-                          facets: list[tuple[int, PreferenceFacet]]) -> tuple[list[PreferenceEvidence], FeatureEvidenceStatus]:
-        unique_terms = list(dict.fromkeys(term for _, facet in facets for term in self._evidence_terms(facet)))
-        unique_terms = [term for term in unique_terms if term.strip()][:4]
-        query = self._tavily_query(place, region, unique_terms)
+                          facets: list[tuple[int, PreferenceFacet]],
+                          query_facets: list[tuple[int, PreferenceFacet]]) -> tuple[list[PreferenceEvidence], FeatureEvidenceStatus]:
+        query = self._tavily_query_for(place, region, query_facets)
         cache_key = self._tavily_cache_key(place, query)
         cached = self._cache_get(cache_key)
         cache_used = cached is not None
@@ -808,17 +1016,37 @@ class PlaceCandidateSearchService:
 
         result_documents = [document for document in cached if isinstance(document, dict)]
         identity_details = [self._identity_diagnostic_details(place, document) for document in result_documents]
+        if diagnostics.enabled():
+            # Development-only measurement: the query carries record terms and
+            # titles are provider text, so this never runs outside diagnostics.
+            logger.info(
+                "AI_RECOMMENDATION_TAVILY_DEBUG kakao_place_id=%s place_name=%r address=%r "
+                "compact_name=%r query=%r cache_used=%d",
+                place.kakao_place_id, place.place_name, place.address,
+                _compact(place.place_name), query, int(cache_used),
+            )
+            for index, (document, details) in enumerate(zip(result_documents, identity_details), start=1):
+                logger.info(
+                    "AI_RECOMMENDATION_TAVILY_DEBUG_RESULT kakao_place_id=%s index=%d "
+                    "name_match=%d region_match=%d locality_match=%d identity_match=%d "
+                    "title=%r url=%r",
+                    place.kakao_place_id, index, int(details["place_name_match"]),
+                    int(details["region_match"]), int(details["locality_match"]),
+                    int(details["identity_match"]),
+                    " ".join(html.unescape(_TAG.sub(" ", str(document.get("title") or ""))).split())[:120],
+                    str(document.get("url") or "")[:200],
+                )
         identity_documents = [document for document, details in zip(result_documents, identity_details)
                               if details["identity_match"]]
         evidence_rows: list[PreferenceEvidence] = []
         invalid_url_count = 0
         for record_id, facet in facets:
             for term in self._evidence_terms(facet):
-                needle = _compact(term)
+                # The recorded term stays the evidence key (A-grade linking
+                # matches it against the facet); only the lookup is widened.
+                forms = _preference_forms(term)
                 match = next((document for document in identity_documents
-                              if needle and _preference_key(term) in _compact(
-                                  html.unescape(_TAG.sub(" ", str(document.get("title") or ""))) + " " +
-                                  html.unescape(_TAG.sub(" ", str(document.get("content") or ""))))), None)
+                              if forms and self._term_near_place(place, document, forms)), None)
                 if match:
                     text = _SPACE.sub(" ", html.unescape(_TAG.sub(" ", str(match.get("content") or "")))).strip()
                     safe_url = self._safe_result_url(match.get("url"))
@@ -881,11 +1109,8 @@ class PlaceCandidateSearchService:
         return "tavily:" + hashlib.sha256((place.kakao_place_id + "|" + _compact(query)).encode("utf-8")).hexdigest()
 
     def _tavily_key_for(self, place: KakaoPlaceCandidate, region: str,
-                        facets: list[tuple[int, PreferenceFacet]]) -> str:
-        unique_terms = list(dict.fromkeys(term for _, facet in facets for term in self._evidence_terms(facet)))
-        unique_terms = [term for term in unique_terms if term.strip()][:4]
-        query = self._tavily_query(place, region, unique_terms)
-        return self._tavily_cache_key(place, query)
+                        query_facets: list[tuple[int, PreferenceFacet]]) -> str:
+        return self._tavily_cache_key(place, self._tavily_query_for(place, region, query_facets))
 
     def search(
         self,
@@ -929,12 +1154,29 @@ class PlaceCandidateSearchService:
             city_region = "광주" if is_gwangju_core_scope else ""
             broader_queries = self._build_queries(category, city_region, preferences) if city_region else []
             # The first six broader queries are still the most specific facets.
-            # In the city-wide rescue stage, start with the generalization tail
-            # so a rich Gemini profile does not spend every remaining call on
-            # equally narrow keyword combinations.
+            # District-scoped term queries often find nothing, so retry the
+            # strongest few city-wide (only these can link a candidate to a
+            # recorded term), then spend the rest on the generalization tail so
+            # a rich profile does not use every call on narrow combinations.
             if broader_queries:
-                broader_queries = (broader_queries[self.INITIAL_KAKAO_CALLS:]
-                                   + broader_queries[:self.INITIAL_KAKAO_CALLS])
+                specific = broader_queries[:self.INITIAL_KAKAO_CALLS]
+                city_prefix = _search_region(city_region) + " "
+                district_prefix = _search_region(region) + " "
+
+                def district_outcome(query: str) -> int:
+                    # Prefer terms whose district search found places (they
+                    # were only outside the district), then untried terms;
+                    # a term with no places even in the district goes last.
+                    if not query.startswith(city_prefix):
+                        return 1
+                    cached = self._cache_get(self._kakao_cache_key(
+                        district_prefix + query[len(city_prefix):]))
+                    return 1 if cached is None else 0 if cached else 2
+
+                specific = sorted(specific, key=district_outcome)
+                broader_queries = (specific[:self.CITY_SPECIFIC_QUERIES]
+                                   + broader_queries[self.INITIAL_KAKAO_CALLS:]
+                                   + specific[self.CITY_SPECIFIC_QUERIES:])
             queries = list(initial_queries)
             query_regions = [region] * len(queries)
             seen_queries = {_compact(query) for query in queries}
@@ -1045,6 +1287,7 @@ class PlaceCandidateSearchService:
         candidate_pool_full = False
         candidate_query_priority: dict[str, int] = {}
         candidate_query_text: dict[str, str] = {}
+        candidate_queries: dict[str, list[str]] = {}
         kakao_started_at = time.perf_counter()
         for query_index, query in enumerate(queries):
             if kakao_calls >= kakao_call_budget:
@@ -1066,7 +1309,7 @@ class PlaceCandidateSearchService:
                 diagnostics.add_count("executed_queries_category_unknown")
             for category_name in matched_categories:
                 diagnostics.add_count(f"executed_queries_category_{category_name}")
-            query_key = "kakao:" + hashlib.sha256(_compact(query).encode("utf-8")).hexdigest()
+            query_key = self._kakao_cache_key(query)
             cached_results = self._cache_get(query_key)
             cache_hit = cached_results is not None
             try:
@@ -1081,6 +1324,13 @@ class PlaceCandidateSearchService:
                     diagnostics.add_count("kakao_external_calls")
                     results = self._get_kakao(query)
                 kakao_raw_candidate_count += len(results)
+                if diagnostics.enabled():
+                    # Development-only: query text carries record terms.
+                    logger.info(
+                        "AI_RECOMMENDATION_KAKAO_QUERY_DEBUG query_priority=%d query=%r "
+                        "raw_result_count=%d cache_hit=%d",
+                        query_priority, query, len(results), int(cache_hit),
+                    )
                 if not results:
                     diagnostics.add_count("kakao_empty_result_queries")
                     if not cache_hit:
@@ -1137,6 +1387,9 @@ class PlaceCandidateSearchService:
                         if query_priority > candidate_query_priority.get(place.kakao_place_id, 0):
                             candidate_query_priority[place.kakao_place_id] = query_priority
                             candidate_query_text[place.kakao_place_id] = query
+                        # Keep every query that found the place: a broad query
+                        # must not erase the link to a term query ("하이볼 술집").
+                        candidate_queries.setdefault(place.kakao_place_id, []).append(query)
                         continue
                     if name_key in candidate_by_name:
                         duplicate_excluded_count += 1
@@ -1149,6 +1402,7 @@ class PlaceCandidateSearchService:
                     diagnostics.decision("kakao_candidate", place.kakao_place_id, "accepted", "passed_search_filters")
                     candidate_query_priority[place.kakao_place_id] = query_priority
                     candidate_query_text[place.kakao_place_id] = query
+                    candidate_queries[place.kakao_place_id] = [query]
                     per_query_count = sum(value == query_priority for value in candidate_query_priority.values())
                     if per_query_count >= self.MAX_CANDIDATES_PER_QUERY:
                         break
@@ -1228,19 +1482,25 @@ class PlaceCandidateSearchService:
         # Only Kakao-confirmed category matches are sent to Tavily; uncertain
         # category candidates remain visible with a verification-required state.
         candidate_facets_by_id: dict[str, list[tuple[int, PreferenceFacet]]] = {}
+        # Facets linked to the Kakao query that found the candidate. Only these
+        # shape the Tavily query; the broader category facets are still checked
+        # against identity-verified documents.
+        query_facets_by_id: dict[str, list[tuple[int, PreferenceFacet]]] = {}
         for place_id, place in candidate_by_id.items():
             categories = set(classification_by_id[place_id].categories)
             category_facets = [row for row in relevant_facets if categories.intersection(row[1].categories)]
-            query_key = _compact(candidate_query_text.get(place_id, ""))
+            found_by = candidate_queries.get(place_id, [])
             query_facets = []
             for row in category_facets:
                 _, facet = row
                 terms = self._feature_search_terms(facet)
                 terms.extend(reduced for term in self._feature_search_terms(facet)
                              for reduced in _QUERY_TERM_REDUCTIONS.get(term, ()))
-                if any(_compact(term) and _compact(term) in query_key for term in terms):
+                # Whole-word match: "경기" must not link via "경기장".
+                if any(_query_mentions_term(query, term) for query in found_by for term in terms):
                     query_facets.append(row)
             candidate_facets_by_id[place_id] = query_facets or category_facets
+            query_facets_by_id[place_id] = query_facets
 
         sorted_tavily_candidates = sorted(
             (place for place in candidate_by_id.values()
@@ -1274,6 +1534,25 @@ class PlaceCandidateSearchService:
             len(tavily_candidates), len({candidate_query_priority.get(place.kakao_place_id, 0)
                                          for place in tavily_candidates}),
         )
+        if diagnostics.enabled():
+            # Development-only: shows whether each candidate was retrieved by a
+            # specific record term or only by a broad place-type query.
+            selected_ids = {place.kakao_place_id for place in tavily_candidates}
+            for place_id, place in candidate_by_id.items():
+                linked_terms = list(dict.fromkeys(
+                    facet.target_text for _, facet in query_facets_by_id.get(place_id, [])
+                ))
+                logger.info(
+                    "AI_RECOMMENDATION_CANDIDATE_LINK_DEBUG kakao_place_id=%s place_name=%r "
+                    "categories=%s category_status=%s kakao_queries=%r query_priority=%d "
+                    "linked_terms=%r category_facet_count=%d tavily_selected=%d",
+                    place_id, place.place_name,
+                    ",".join(value.value for value in classification_by_id[place_id].categories),
+                    classification_by_id[place_id].status.value,
+                    candidate_queries.get(place_id, []), candidate_query_priority.get(place_id, 0),
+                    linked_terms, len(candidate_facets_by_id.get(place_id, [])),
+                    int(place_id in selected_ids),
+                )
         diagnostics.add_count("tavily_targets", len(tavily_candidates))
         for place in tavily_candidates:
             diagnostics.count_unique("tavily_unique_targets", place.kakao_place_id)
@@ -1282,12 +1561,12 @@ class PlaceCandidateSearchService:
         if relevant_facets and tavily_candidates:
             cached_candidate_ids = {
                 place.kakao_place_id for place in tavily_candidates
-                if self._cache_get(self._tavily_key_for(place, region, candidate_facets_by_id[place.kakao_place_id])) is not None
+                if self._cache_get(self._tavily_key_for(place, region, query_facets_by_id[place.kakao_place_id])) is not None
             }
             external_keys = {
                 place.kakao_place_id for place in tavily_candidates
                 if self.tavily_api_key and self._cache_get(self._tavily_key_for(
-                    place, region, candidate_facets_by_id[place.kakao_place_id])) is None
+                    place, region, query_facets_by_id[place.kakao_place_id])) is None
             }
             tavily_cache_hits = len(cached_candidate_ids)
             external_places = [place for place in tavily_candidates
@@ -1312,6 +1591,7 @@ class PlaceCandidateSearchService:
                     future = executor.submit(
                         context.run, self._tavily_for_place, place, region,
                         candidate_facets_by_id[place.kakao_place_id],
+                        query_facets_by_id[place.kakao_place_id],
                     )
                     futures[future] = place.kakao_place_id
                 for future, place_id in ((future, place_id) for future, place_id in futures.items()):

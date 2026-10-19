@@ -348,6 +348,257 @@ def test_tavily_identity_accepts_kakao_integrated_city_alias_but_keeps_branch_an
     assert not PlaceCandidateSearchService._identity_matches(place, wrong_district)
 
 
+def test_short_place_name_matches_only_as_standalone_word_or_with_road_name():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2201", "꾸다", "전남광주통합특별시 서구 상무중앙로 6-18",
+        code="FD6", category="음식점 > 술집 > 호프,요리주점",
+    ))
+    matches = PlaceCandidateSearchService._identity_matches
+
+    assert matches(place, {"title": "꾸다 광주 서구 상무중앙로 6-18 월~금 11:00~ 02:00", "content": ""})
+    # Attached particle: accepted only because this place's road name is present.
+    assert matches(place, {"title": "광주 서구 상무중앙로 꾸다에서 한잔", "content": ""})
+    # A different shop whose name merely contains "꾸다".
+    assert not matches(place, {"title": "#꾸다요 📍전남광주 서구 금화로85번길 9", "content": ""})
+    assert not matches(place, {"title": "광주 서구 꾸다에서 한잔", "content": ""})
+    # Same name, other district.
+    assert not matches(place, {"title": "꾸다 광주 동구", "content": ""})
+
+
+def test_short_place_name_diagnostics_report_real_name_match():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2202", "독도집", "전남광주통합특별시 서구 상무대로876번길 11",
+        code="FD6", category="음식점 > 술집",
+    ))
+    other_branch = {"title": "[광주]독도집 광주공원점-충장로 포차감성 술집", "content": ""}
+    right_place = {"title": "독도집 - 광주서구 생선회 맛집", "content": ""}
+
+    other = PlaceCandidateSearchService._identity_diagnostic_details(place, other_branch)
+    right = PlaceCandidateSearchService._identity_diagnostic_details(place, right_place)
+
+    # "독도집 광주공원점" names another branch, so it is not a name match.
+    assert not other["place_name_match"] and not other["identity_match"]
+    assert right["place_name_match"] and right["identity_match"]
+
+
+def test_other_branch_of_same_name_is_rejected_even_in_the_same_district():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2203", "독도집", "전남광주통합특별시 서구 상무대로876번길 11",
+        code="FD6", category="음식점 > 술집",
+    ))
+    document = {"title": "독도집 광주공원점 | 전남광주통합특별시 서구 근처 술집", "content": ""}
+
+    assert not PlaceCandidateSearchService._identity_matches(place, document)
+
+
+def test_three_letter_name_passes_with_road_name_and_district():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2204", "독도집", "전남광주통합특별시 서구 상무대로876번길 11",
+        code="FD6", category="음식점 > 술집",
+    ))
+    document = {"title": "", "content": "광주 서구 상무대로876번길 독도집에서 숙성회를 먹었다"}
+
+    assert PlaceCandidateSearchService._identity_matches(place, document)
+
+
+def test_branch_name_written_without_city_prefix_still_matches():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2205", "스타벅스 광주상무점", "광주광역시 서구 상무중앙로 100",
+    ))
+    matches = PlaceCandidateSearchService._identity_matches
+
+    assert matches(place, {"title": "스타벅스 상무점 후기 광주 서구", "content": ""})
+    assert matches(place, {"title": "스타벅스 광주상무점 광주 서구", "content": ""})
+    assert not matches(place, {"title": "스타벅스 운암점 광주 서구", "content": ""})
+    assert not matches(place, {"title": "스타벅스 광주 서구 신메뉴", "content": ""})
+
+
+def test_kakao_place_url_or_phone_confirms_identity():
+    raw = kakao_place("2206", "꾸다", "전남광주통합특별시 서구 상무중앙로 6-18",
+                      code="FD6", category="음식점 > 술집")
+    place = KakaoPlaceCandidate.from_kakao_result({**raw, "phone": "062-123-4567"})
+    matches = PlaceCandidateSearchService._identity_matches
+
+    assert place.phone == "062-123-4567"
+    assert matches(place, {"title": "술집 정보", "content": "", "url": "https://place.map.kakao.com/2206"})
+    assert not matches(place, {"title": "술집 정보", "content": "", "url": "https://place.map.kakao.com/22061"})
+    assert matches(place, {"title": "꾸다 예약 문의 (062) 123-4567", "content": ""})
+
+
+def test_preference_forms_use_stems_and_narrow_synonyms():
+    from app.place_candidate_search_service import _preference_forms
+
+    forms = _preference_forms("조용해서")
+    assert {"조용해서", "조용", "차분", "한적"} <= forms
+    assert "깔끔" in _preference_forms("깔끔했던")
+    # Broad associations are intentionally not synonyms.
+    assert "서비스" not in _preference_forms("친절해서")
+    # A stem keeps at least two characters.
+    assert _preference_forms("넓고") >= {"넓고"}
+
+
+def test_preference_must_appear_near_this_place_in_the_document():
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place())
+    near = PlaceCandidateSearchService._term_near_place
+    from app.place_candidate_search_service import _preference_forms
+
+    forms = _preference_forms("조용해서")
+    assert near(place, {"title": "다정한 카페 광주 서구", "content": "매장이 조용한 편이에요"}, forms)
+    assert near(place, {"title": "다정한 카페 광주 서구", "content": "분위기가 차분한 카페"}, forms)
+    roundup = {
+        "title": "광주 서구 카페 10곳",
+        "content": "다정한 카페 광주 서구 디저트 맛집. " + "다른 이야기 " * 60 + "옆 동네 소담 카페는 조용한 편",
+    }
+    assert not near(place, roundup, forms)
+
+
+def test_query_term_link_requires_whole_words():
+    from app.place_candidate_search_service import _query_mentions_term
+
+    assert _query_mentions_term("광주 하이볼 술집", "하이볼")
+    assert _query_mentions_term("광주 메론 롤케이크 카페", "메론 롤케이크")
+    assert not _query_mentions_term("광주 경기장", "경기")
+
+
+def test_query_terms_skip_verdicts_place_type_fragments_and_regions():
+    from app.place_candidate_search_service import _query_term_usable
+
+    assert not _query_term_usable("개맛있음", "술집")
+    assert not _query_term_usable("흥미로웠습니다", "경기장")
+    assert not _query_term_usable("경기", "경기장")
+    assert not _query_term_usable("경기", "음식점")
+    assert _query_term_usable("감바스", "음식점")
+    assert _query_term_usable("메론 롤케이크", "카페")
+
+
+def test_build_queries_never_search_with_verdict_or_place_type_fragment():
+    activity = RecordPreferenceAnalysis(
+        record_id=31, place_name="야구장", place_type=PlaceType.ACTIVITY,
+        categories=[RecommendationCategory.ACTIVITY], emotion=RecommendationEmotionCode.LIKE,
+        emotion_intensity=1.0, evidence_status=EvidenceStatus.VERIFIED,
+        facets=[PreferenceFacet(
+            target_kind=FacetTargetKind.ACTIVITY, target_text="경기", features=["흥미로웠습니다"],
+            categories=[RecommendationCategory.ACTIVITY], polarity="liked",
+            evidence="경기가 흥미로웠습니다", confidence=0.9,
+        )],
+    )
+    queries = PlaceCandidateSearchService._build_queries(
+        RecommendationCategory.ALL, "광주", [activity, bar_preference()],
+    )
+
+    assert "광주 유자하이볼 이자카야" in queries
+    assert not any("흥미로웠습니다" in query or " 경기 " in f"{query} " for query in queries)
+
+
+def test_city_stage_first_retries_terms_that_found_places_in_the_district():
+    preferences = [bar_preference(), cafe_preference(2), cafe_preference(3, target="소파", features=("아늑한",))]
+    district = PlaceCandidateSearchService._build_queries(RecommendationCategory.ALL, "광주 남구", preferences)
+    city = PlaceCandidateSearchService._build_queries(RecommendationCategory.ALL, "광주", preferences)
+    specific_city = city[:PlaceCandidateSearchService.INITIAL_KAKAO_CALLS]
+    # A term query outside the default top three for the city stage.
+    late = next(query for query in specific_city[PlaceCandidateSearchService.CITY_SPECIFIC_QUERIES:]
+                if query.replace("광주 ", "광주 남구 ", 1) in district)
+    late_district = late.replace("광주 ", "광주 남구 ", 1)
+    outside = kakao_place("2401", "Outside District Cafe", "광주광역시 서구 상무대로 1")
+    queries = []
+
+    def kakao(query, **kwargs):
+        queries.append(query)
+        return [outside] if query == late_district else []
+
+    subject = service(kakao)
+    common = dict(category="all", region="광주 남구", preferences=preferences,
+                  allow_region_expansion=True, kakao_call_budget=6,
+                  tavily_call_budget=0, tavily_candidate_budget=0)
+    subject.search(query_offset=0, **common)
+    first_stage = len(queries)
+    subject.search(query_offset=6, **common)
+
+    assert late_district in queries[:first_stage]
+    assert queries[first_stage] == late
+
+
+def test_term_link_survives_when_a_broad_query_found_the_place_first():
+    place = kakao_place("2301", "Linked Izakaya", "광주광역시 남구 봉선로 1",
+                        code="FD6", category="음식점 > 술집 > 이자카야")
+    tavily_queries = []
+
+    def kakao(query, **kwargs):
+        return [place] if query in {"광주 남구 이자카야", "광주 유자하이볼 이자카야"} else []
+
+    def tavily(url, **kwargs):
+        tavily_queries.append(kwargs["json"]["query"])
+        return tavily_response([])
+
+    service(kakao, tavily).search(category="all", region="광주 남구", preferences=[bar_preference()],
+                                  allow_region_expansion=True)
+
+    assert tavily_queries == ["Linked Izakaya 광주 남구 유자하이볼"]
+
+
+def test_city_stage_retries_strongest_term_queries_before_broad_queries():
+    queries = []
+    subject = service(lambda query, **kwargs: queries.append(query) or [])
+    preferences = [bar_preference(), cafe_preference(2)]
+
+    subject.search(category="all", region="광주 남구", preferences=preferences,
+                   allow_region_expansion=True)
+
+    district = [query for query in queries if query.startswith("광주 남구 ")]
+    city = [query for query in queries if not query.startswith("광주 남구 ")]
+    assert district and city
+    # The first city-wide queries repeat a district term query without the district.
+    assert city[0] == district[0].replace("광주 남구 ", "광주 ", 1)
+
+
+def test_tavily_query_uses_candidate_address_and_only_query_linked_terms():
+    subject = service(lambda query, **kwargs: [])
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place(
+        "2101", "꾸다", "전남광주통합특별시 서구 상무중앙로 6-18",
+        code="FD6", category="음식점 > 술집 > 호프,요리주점",
+    ))
+    linked = [(1, bar_preference().facets[0])]
+
+    unlinked_query = subject._tavily_query_for(place, "광주 남구", [])
+    linked_query = subject._tavily_query_for(place, "광주 남구", linked)
+
+    # The user's selected district must not leak into the place lookup.
+    assert unlinked_query == "꾸다 광주 서구"
+    assert linked_query == "꾸다 광주 서구 유자하이볼"
+
+
+def test_tavily_query_caps_linked_terms():
+    subject = service(lambda query, **kwargs: [])
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place("2102", "다정한 카페"))
+    facets = [(index, cafe_preference(index, features=(f"특징{index}",)).facets[0]) for index in range(1, 4)]
+
+    query = subject._tavily_query_for(place, "광주", facets)
+
+    assert query == "다정한 카페 광주 서구 특징1 특징2"
+
+
+def test_unlinked_tavily_query_still_checks_category_facets_in_identity_documents():
+    queries = []
+
+    def tavily(url, **kwargs):
+        queries.append(kwargs["json"]["query"])
+        return tavily_response([{
+            "title": "다정한 카페 광주 서구",
+            "content": "다정한 카페 광주 서구 매장이 조용하고 넓고 아늑합니다.",
+            "url": "https://blog.example/dajeong",
+        }])
+
+    subject = service(lambda query, **kwargs: [], tavily)
+    place = KakaoPlaceCandidate.from_kakao_result(kakao_place())
+    rows, status = subject._tavily_for_place(
+        place, "광주 남구", [(1, cafe_preference().facets[0])], [],
+    )
+
+    assert queries == ["다정한 카페 광주 서구"]
+    assert status == FeatureEvidenceStatus.CONFIRMED
+    assert {row.preference for row in rows if row.status == FeatureEvidenceStatus.CONFIRMED} == {"조용하고", "넓고"}
+
+
 def test_tavily_is_called_for_verified_facets_but_stays_within_six_place_budget():
     tavily_queries = []
 
