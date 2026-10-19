@@ -63,6 +63,7 @@ from .models import (
     InviteOutput,
     JoinInput,
     LoginInput,
+    LogoutInput,
     MapPin,
     MemoryInput,
     MemoryPublic,
@@ -71,6 +72,7 @@ from .models import (
     PlacePublic,
     ProfileUpdateInput,
     RegisterInput,
+    RefreshInput,
     TokenOutput,
     UserPublic,
 )
@@ -280,6 +282,19 @@ def create_app(
             data.password.get_secret_value(),
         )
 
+    @api.post(
+        "/auth/refresh",
+        response_model=TokenOutput,
+        tags=["1. 회원"],
+        summary="Refresh Token 회전 및 Access Token 재발급",
+    )
+    def refresh(data: RefreshInput, db: Session | None = Depends(get_db)):
+        raw_token = data.refresh_token.get_secret_value()
+        if use_db_auth:
+            assert db is not None
+            return service.refresh_db(raw_token, db)
+        return service.refresh(raw_token)
+
     @api.get(
         "/auth/me",
         response_model=UserPublic,
@@ -419,16 +434,17 @@ def create_app(
         summary="현재 로그인 해제",
     )
     def logout(
-        user: Annotated[
-            UserPublic,
-            Depends(current_user),
-        ],
-        token: Annotated[
-            str,
-            Depends(current_token),
-        ],
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+        data: LogoutInput | None = None,
+        db: Session | None = Depends(get_db),
     ):
-        service.logout(token)
+        token = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else None
+        refresh_token = data.refresh_token.get_secret_value() if data and data.refresh_token else None
+        if use_db_auth:
+            assert db is not None
+            service.logout_db(token, refresh_token, db)
+        else:
+            service.logout(token, refresh_token)
         return Response(status_code=204)
 
     @api.post(

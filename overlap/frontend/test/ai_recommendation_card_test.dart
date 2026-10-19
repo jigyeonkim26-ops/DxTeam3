@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:overlap_app/core/network/api_client.dart';
 import 'package:overlap_app/core/network/api_config.dart';
+import 'package:overlap_app/core/network/authenticated_image.dart';
 import 'package:overlap_app/features/ai/models/ai_place_recommendation.dart';
 import 'package:overlap_app/features/ai/screens/ai_recommendation_screen.dart';
 import 'package:overlap_app/features/ai/services/ai_recommendations_api.dart';
@@ -405,6 +406,14 @@ void main() {
     'private record thumbnail uses the authenticated record photo endpoint',
     (tester) async {
       ApiClient.setAccessToken('user-photo-token');
+      ApiClient.configureAuthForTesting(
+        readRefreshToken: () async => null,
+        writeRefreshToken: (_) async {},
+        deleteRefreshToken: () async {},
+        postRefresh: (_, _) async => http.Response('{}', 401),
+        getAuthenticated: (_) async => http.Response('{}', 401),
+      );
+      addTearDown(ApiClient.resetAuthForTesting);
       addTearDown(ApiClient.clearSession);
       final api = SavedPlacesApi(
         get: (_) async => {'place_id': null, 'saved': false, 'record_count': 0},
@@ -424,15 +433,10 @@ void main() {
         imageCredit: 'OVERLAP 기록 사진',
       );
       await tester.pumpWidget(card(api, () {}, item: item));
-      final image = tester.widget<Image>(
-        find.byWidgetPredicate(
-          (widget) => widget is Image && widget.width == 84,
-        ),
+      final image = tester.widget<AuthenticatedImage>(
+        find.byType(AuthenticatedImage),
       );
-      final provider =
-          (image.image as ResizeImage).imageProvider as NetworkImage;
-      expect(provider.url, '${ApiConfig.baseUrl}/records/7/photos/11');
-      expect(provider.headers?['Authorization'], 'Bearer user-photo-token');
+      expect(image.url, '${ApiConfig.baseUrl}/records/7/photos/11');
       expect(find.text('OVERLAP 기록 사진'), findsNothing);
     },
   );

@@ -183,20 +183,23 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     if (shouldLogout != true || !mounted || _isLoggingOut || _isSaving) return;
 
     setState(() => _isLoggingOut = true);
+    var serverRevoked = false;
     try {
-      await AuthApiService.logout();
-    } on ApiException catch (error) {
-      if (mounted) _showMessage(error.message);
-      return;
+      serverRevoked = await AuthApiService.logout();
     } catch (_) {
-      if (mounted) _showMessage('로그아웃 요청을 처리하지 못했습니다.');
-      return;
+      serverRevoked = false;
     } finally {
       if (mounted) setState(() => _isLoggingOut = false);
     }
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => LoginScreen(
+          notice: serverRevoked
+              ? null
+              : '이 기기에서는 로그아웃했지만 서버 세션 폐기를 확인하지 못했습니다.',
+        ),
+      ),
       (route) => false,
     );
   }

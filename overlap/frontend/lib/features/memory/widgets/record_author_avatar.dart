@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/network/api_config.dart';
 import '../../../core/network/api_transport.dart';
+import '../../../core/network/authenticated_image.dart';
 
 class RecordAuthorAvatar extends StatelessWidget {
   const RecordAuthorAvatar({
@@ -30,17 +31,23 @@ class RecordAuthorAvatar extends StatelessWidget {
         : path.startsWith('http://') || path.startsWith('https://')
         ? path
         : '${ApiConfig.baseUrl}$path';
-    final provider = imageUrl == null || token == null || token.isEmpty
+    final isProtectedImage =
+        imageUrl != null &&
+        path != null &&
+        !path.startsWith('http://') &&
+        !path.startsWith('https://');
+    final protectedImage =
+        isProtectedImage && token != null && token.isNotEmpty;
+    final provider = imageUrl == null || isProtectedImage
         ? null
-        : NetworkImage(imageUrl, headers: {'Authorization': 'Bearer $token'});
+        : NetworkImage(imageUrl);
 
     return CircleAvatar(
       radius: radius,
       backgroundColor: backgroundColor,
       foregroundColor: AppColors.deepNavy,
-      child: provider == null
-          ? _AvatarInitial(initial: initial, fontSize: initialFontSize)
-          : ClipOval(
+      child: provider != null
+          ? ClipOval(
               child: SizedBox.expand(
                 child: Image(
                   image: provider,
@@ -51,7 +58,21 @@ class RecordAuthorAvatar extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
+            )
+          : protectedImage
+          ? ClipOval(
+              child: SizedBox.expand(
+                child: AuthenticatedImage(
+                  url: imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _AvatarInitial(
+                    initial: initial,
+                    fontSize: initialFontSize,
+                  ),
+                ),
+              ),
+            )
+          : _AvatarInitial(initial: initial, fontSize: initialFontSize),
     );
   }
 }

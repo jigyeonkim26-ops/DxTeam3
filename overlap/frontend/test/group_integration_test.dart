@@ -33,7 +33,19 @@ void main() {
   test(
     'Ujin login and RecordApi share one token; logout clears group cache',
     () async {
-      final server = _Client((request) => {'access_token': 'ujin-test-token'});
+      ApiClient.configureAuthForTesting(
+        readRefreshToken: () async => null,
+        writeRefreshToken: (_) async {},
+        deleteRefreshToken: () async {},
+        postRefresh: (_, _) async => http.Response('{}', 401),
+      );
+      addTearDown(ApiClient.resetAuthForTesting);
+      final server = _Client(
+        (request) => {
+          'access_token': 'ujin-test-token',
+          'refresh_token': 'ujin-refresh-token',
+        },
+      );
       await HttpOverrides.runZoned(() async {
         await AuthApiService.login(
           email: 'test@example.com',
@@ -108,6 +120,13 @@ void main() {
   test(
     'an authenticated 401 clears a session once, but login 401 does not',
     () async {
+      ApiClient.configureAuthForTesting(
+        readRefreshToken: () async => null,
+        writeRefreshToken: (_) async {},
+        deleteRefreshToken: () async {},
+        postRefresh: (_, _) async => http.Response('{}', 401),
+      );
+      addTearDown(ApiClient.resetAuthForTesting);
       ApiTransport.setAccessToken('expired-token');
       var sessionChanges = 0;
       void onSessionChanged() => sessionChanges++;
@@ -148,6 +167,53 @@ void main() {
       expect(ApiClient.sessionRevision.value, revisionAfterExpiry);
     },
   );
+
+  test('an authenticated 401 refreshes once and retries with the rotated access token', () async {
+    var refreshCalls = 0;
+    ApiClient.configureAuthForTesting(
+      readRefreshToken: () async => 'refresh-old',
+      writeRefreshToken: (_) async {},
+      deleteRefreshToken: () async {},
+      postRefresh: (_, _) async {
+        refreshCalls++;
+        return http.Response(
+          jsonEncode({
+            'access_token': 'access-new',
+            'refresh_token': 'refresh-new',
+            'expires_in': 3600,
+          }),
+          200,
+        );
+      },
+    );
+    addTearDown(ApiClient.resetAuthForTesting);
+    ApiTransport.setAccessToken('access-old');
+    final sessionIdentity = ApiClient.sessionIdentity;
+    late _Client server;
+    server = _Client((request) {
+      if (request.headers.values['authorization'] == 'Bearer access-old') {
+        server.status = 401;
+        return {'detail': 'expired'};
+      }
+      server.status = 200;
+      return {'ok': true};
+    });
+
+    final result = await HttpOverrides.runZoned(
+      () => ApiTransport.get('/protected'),
+      createHttpClient: (_) => server,
+    );
+
+    expect(result, {'ok': true});
+    expect(refreshCalls, 1);
+    expect(server.requests, hasLength(2));
+    expect(
+      server.requests.last.headers.values['authorization'],
+      'Bearer access-new',
+    );
+    expect(ApiClient.sessionIdentity, sessionIdentity);
+    expect(ApiClient.sessionExpired, isFalse);
+  });
 
   test('actual group requests preserve contracts and settings without sample members', () async {
     ApiTransport.setAccessToken('group-test-token');
@@ -325,7 +391,7 @@ void main() {
 class _Client implements HttpClient {
   _Client(this.respond, {this.status = 200});
   final Object? Function(_Request request) respond;
-  final int status;
+  int status;
   final requests = <_Request>[];
   @override
   Duration? connectionTimeout;

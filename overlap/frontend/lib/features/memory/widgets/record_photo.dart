@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../core/network/api_client.dart';
 import '../../../core/network/api_config.dart';
+import '../../../core/network/authenticated_image.dart';
 
 class RecordPhoto extends StatefulWidget {
   const RecordPhoto({super.key, required this.paths, this.height});
@@ -54,13 +54,17 @@ class _RecordPhotoState extends State<RecordPhoto> {
     final url = path.startsWith('http://') || path.startsWith('https://')
         ? path
         : '${ApiConfig.baseUrl}$path';
-    return NetworkImage(
-      url,
-      headers: {'Authorization': 'Bearer ${ApiClient.accessToken ?? ''}'},
-    );
+    return NetworkImage(url);
   }
 
   void _resolveAspectRatio(String path) {
+    if (!path.startsWith('assets/') &&
+        !path.startsWith('http://') &&
+        !path.startsWith('https://')) {
+      // Private media goes through AuthenticatedImage when displayed; avoid a
+      // separate unauthenticated sizing request here.
+      return;
+    }
     _provider(path)
         .resolve(ImageConfiguration.empty)
         .addListener(
@@ -164,14 +168,17 @@ class _PhotoImage extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
       child: isAsset
           ? Image.asset(path, fit: BoxFit.contain, errorBuilder: _fallback)
-          : Image.network(
-              url,
-              headers: {
-                'Authorization': 'Bearer ${ApiClient.accessToken ?? ''}',
-              },
-              fit: BoxFit.contain,
-              errorBuilder: _fallback,
-            ),
+          : ((path.startsWith('http://') || path.startsWith('https://'))
+                ? Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    errorBuilder: _fallback,
+                  )
+                : AuthenticatedImage(
+                    url: url,
+                    fit: BoxFit.contain,
+                    errorBuilder: _fallback,
+                  )),
     );
   }
 

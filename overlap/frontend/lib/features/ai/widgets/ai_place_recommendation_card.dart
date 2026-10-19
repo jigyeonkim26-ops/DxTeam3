@@ -3,8 +3,9 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
-import '../../../core/network/api_client.dart' show ApiClient, ApiException;
+import '../../../core/network/api_client.dart' show ApiException;
 import '../../../core/network/api_config.dart';
+import '../../../core/network/authenticated_image.dart';
 import '../../user/services/saved_places_api.dart';
 import '../models/ai_place_recommendation.dart';
 
@@ -302,44 +303,50 @@ class _RecommendationThumbnailState extends State<_RecommendationThumbnail> {
 
     final isRelative = imageUrl.startsWith('/');
     final url = isRelative ? '${ApiConfig.baseUrl}$imageUrl' : imageUrl;
-    final image = Image.network(
-      url,
-      width: 84,
-      height: 84,
-      cacheWidth: 240,
-      cacheHeight: 240,
-      fit: BoxFit.cover,
-      headers: isRelative
-          ? {'Authorization': 'Bearer ${ApiClient.accessToken ?? ''}'}
-          : null,
-      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-        if (frame != null && !_successLogged) {
-          _successLogged = true;
-          if (kDebugMode) {
-            debugPrint(
-              '[AI_IMAGE] loaded origin=${recommendation.imageOriginType}',
-            );
-          }
-        }
-        return frame != null || wasSynchronouslyLoaded
-            ? child
-            : _PlaceholderThumbnail(recommendation: recommendation);
-      },
-      errorBuilder: (context, error, stackTrace) {
-        if (kDebugMode) {
-          final type = error.runtimeType.toString();
-          final detail = error is NetworkImageLoadException
-              ? 'http status=${error.statusCode}'
-              : type.toLowerCase().contains('codec')
-              ? 'decode error_type=$type'
-              : 'load error_type=$type';
-          debugPrint(
-            '[AI_IMAGE] failed origin=${recommendation.imageOriginType} $detail',
+    final image = isRelative
+        ? AuthenticatedImage(
+            url: url,
+            width: 84,
+            height: 84,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) =>
+                _PlaceholderThumbnail(recommendation: recommendation),
+          )
+        : Image.network(
+            url,
+            width: 84,
+            height: 84,
+            cacheWidth: 240,
+            cacheHeight: 240,
+            fit: BoxFit.cover,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              if (frame != null && !_successLogged) {
+                _successLogged = true;
+                if (kDebugMode) {
+                  debugPrint(
+                    '[AI_IMAGE] loaded origin=${recommendation.imageOriginType}',
+                  );
+                }
+              }
+              return frame != null || wasSynchronouslyLoaded
+                  ? child
+                  : _PlaceholderThumbnail(recommendation: recommendation);
+            },
+            errorBuilder: (context, error, stackTrace) {
+              if (kDebugMode) {
+                final type = error.runtimeType.toString();
+                final detail = error is NetworkImageLoadException
+                    ? 'http status=${error.statusCode}'
+                    : type.toLowerCase().contains('codec')
+                    ? 'decode error_type=$type'
+                    : 'load error_type=$type';
+                debugPrint(
+                  '[AI_IMAGE] failed origin=${recommendation.imageOriginType} $detail',
+                );
+              }
+              return _PlaceholderThumbnail(recommendation: recommendation);
+            },
           );
-        }
-        return _PlaceholderThumbnail(recommendation: recommendation);
-      },
-    );
     return _thumbnail(image);
   }
 

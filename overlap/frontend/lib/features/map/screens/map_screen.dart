@@ -287,11 +287,13 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _loadMapPlaces() async {
     final requestId = ++_loadId;
-    final token = ApiClient.accessToken;
+    final token = ApiClient.sessionIdentity;
     try {
       final places = await _mapPlacesApi.load();
       final groups = await GroupApiService.listGroups();
-      if (!mounted || requestId != _loadId || token != ApiClient.accessToken) {
+      if (!mounted ||
+          requestId != _loadId ||
+          token != ApiClient.sessionIdentity) {
         return;
       }
       setState(() {
@@ -308,7 +310,9 @@ class _MapScreenState extends State<MapScreen> {
         _places = places;
       });
     } catch (_) {
-      if (!mounted || requestId != _loadId || token != ApiClient.accessToken) {
+      if (!mounted ||
+          requestId != _loadId ||
+          token != ApiClient.sessionIdentity) {
         return;
       }
       setState(() => _places = const []);

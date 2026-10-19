@@ -28,12 +28,16 @@ class MapPlacesApi {
     }
 
     try {
-      return await http
-          .get(
-            Uri.parse('${ApiConfig.baseUrl}/map/places'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 15));
+      return await ApiClient.sendAuthenticatedRequest(
+        () => http
+            .get(
+              Uri.parse('${ApiConfig.baseUrl}/map/places'),
+              headers: {
+                'Authorization': 'Bearer ${ApiClient.accessToken ?? token}',
+              },
+            )
+            .timeout(const Duration(seconds: 15)),
+      );
     } on ApiException {
       rethrow;
     } catch (_) {

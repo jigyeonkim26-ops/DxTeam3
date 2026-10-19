@@ -100,6 +100,17 @@ class TokenOutput(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+    refresh_token: str | None = None
+    refresh_expires_in: int | None = None
+    session_id: str | None = None
+
+
+class RefreshInput(InputModel):
+    refresh_token: SecretStr = Field(min_length=32, max_length=256)
+
+
+class LogoutInput(InputModel):
+    refresh_token: SecretStr | None = None
 
 
 class GroupInput(InputModel):

@@ -49,9 +49,11 @@ class RecordApi {
   Future<dynamic> _get(String path) async {
     try {
       return _decode(
-        await _client
-            .get(Uri.parse('${ApiConfig.baseUrl}$path'), headers: _headers)
-            .timeout(const Duration(seconds: 15)),
+        await ApiClient.sendAuthenticatedRequest(
+          () => _client
+              .get(Uri.parse('${ApiConfig.baseUrl}$path'), headers: _headers)
+              .timeout(const Duration(seconds: 15)),
+        ),
       );
     } on ApiException {
       rethrow;
@@ -109,35 +111,46 @@ class RecordApi {
     required bool isPrivate,
     required Set<String> groupIds,
   }) async {
-    final request =
-        http.MultipartRequest('POST', Uri.parse('${ApiConfig.baseUrl}/records'))
-          ..headers.addAll(_headers)
-          ..fields['data'] = jsonEncode({
-            'place': {
-              if (place.id.isNotEmpty) 'kakao_place_id': place.id,
-              'name': place.name,
-              'address': place.address ?? '',
-              'latitude': place.latitude,
-              'longitude': place.longitude,
-            },
-            'emotion': emotion.name,
-            'content': content.trim(),
-            'is_private': isPrivate,
-            'group_ids': isPrivate ? <int>[] : groupIds.map(int.parse).toList(),
-          });
     try {
+      final photoBytes = <({List<int> bytes, String name})>[];
       for (final photo in photos) {
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'photos',
-            await photo.readAsBytes(),
-            filename: photo.name,
-          ),
-        );
+        photoBytes.add((bytes: await photo.readAsBytes(), name: photo.name));
       }
-      final response = await http.Response.fromStream(
-        await _client.send(request).timeout(const Duration(seconds: 60)),
-      ).timeout(const Duration(seconds: 60));
+      final response = await ApiClient.sendAuthenticatedRequest(() async {
+        final request =
+            http.MultipartRequest(
+                'POST',
+                Uri.parse('${ApiConfig.baseUrl}/records'),
+              )
+              ..headers.addAll(_headers)
+              ..fields['data'] = jsonEncode({
+                'place': {
+                  if (place.id.isNotEmpty) 'kakao_place_id': place.id,
+                  'name': place.name,
+                  'address': place.address ?? '',
+                  'latitude': place.latitude,
+                  'longitude': place.longitude,
+                },
+                'emotion': emotion.name,
+                'content': content.trim(),
+                'is_private': isPrivate,
+                'group_ids': isPrivate
+                    ? <int>[]
+                    : groupIds.map(int.parse).toList(),
+              });
+        for (final photo in photoBytes) {
+          request.files.add(
+            http.MultipartFile.fromBytes(
+              'photos',
+              photo.bytes,
+              filename: photo.name,
+            ),
+          );
+        }
+        return http.Response.fromStream(
+          await _client.send(request).timeout(const Duration(seconds: 60)),
+        ).timeout(const Duration(seconds: 60));
+      });
       final record = Record.fromJson(
         Map<String, dynamic>.from(_decode(response) as Map),
       );
@@ -158,20 +171,22 @@ class RecordApi {
     Set<String>? groupIds,
   }) async {
     try {
-      final response = await _client
-          .patch(
-            Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
-            headers: {..._headers, 'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'content': content.trim(),
-              'emotion': emotion.name,
-              'is_private': ?isPrivate,
-              if (isPrivate == true) 'group_ids': <int>[],
-              if (isPrivate != true)
-                'group_ids': ?groupIds?.map(int.parse).toList(),
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await ApiClient.sendAuthenticatedRequest(
+        () => _client
+            .patch(
+              Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
+              headers: {..._headers, 'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'content': content.trim(),
+                'emotion': emotion.name,
+                'is_private': ?isPrivate,
+                if (isPrivate == true) 'group_ids': <int>[],
+                if (isPrivate != true)
+                  'group_ids': ?groupIds?.map(int.parse).toList(),
+              }),
+            )
+            .timeout(const Duration(seconds: 30)),
+      );
       final record = Record.fromJson(
         Map<String, dynamic>.from(_decode(response) as Map),
       );
@@ -186,12 +201,14 @@ class RecordApi {
 
   Future<void> delete(String recordId) async {
     try {
-      final response = await _client
-          .delete(
-            Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
-            headers: _headers,
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await ApiClient.sendAuthenticatedRequest(
+        () => _client
+            .delete(
+              Uri.parse('${ApiConfig.baseUrl}/records/$recordId'),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 30)),
+      );
       _decode(response);
       revision.value++;
     } on ApiException {

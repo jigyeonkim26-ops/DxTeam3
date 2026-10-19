@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from threading import RLock
 from typing import Literal
+import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -21,7 +22,7 @@ from .models import (
     Page, PlaceInput, PlacePublic, ProfileUpdateInput, RegisterInput,
     TokenOutput, UserPublic,
 )
-from .db_models import User as DBUser
+from .db_models import AuthSession, User as DBUser
 from .security import hash_password, new_token, token_digest, verify_password
 
 
@@ -41,6 +42,11 @@ class Account:
 class Session:
     user_id: int
     expires_at: datetime
+    refresh_hash: str
+    refresh_expires_at: datetime
+    session_expires_at: datetime
+    session_id: str
+    revoked_at: datetime | None = None
 
 
 @dataclass
@@ -54,12 +60,15 @@ class Group:
 
 class MemoryService:
     TOKEN_LIFETIME_SECONDS = 3600
+    REFRESH_LIFETIME_SECONDS = 30 * 24 * 60 * 60
+    MAX_SESSION_LIFETIME_SECONDS = 90 * 24 * 60 * 60
 
     def __init__(self) -> None:
         self.lock = RLock()
         self.users: dict[int, Account] = {}
         self.emails: dict[str, int] = {}
         self.sessions: dict[str, Session] = {}
+        self.refresh_sessions: dict[str, Session] = {}
         self.groups: dict[int, Group] = {}
         self.invites: dict[str, int] = {}
         self.places: dict[int, PlacePublic] = {}
@@ -170,26 +179,65 @@ class MemoryService:
 
     def _issue_token(self, user_id: int) -> TokenOutput:
         token = new_token()
+        refresh = new_token()
         with self.lock:
             now = now_utc()
             self.sessions = {
                 key: value for key, value in self.sessions.items()
-                if value.expires_at > now
+                if value.session_expires_at > now and value.revoked_at is None
             }
-            self.sessions[token_digest(token)] = Session(
-                user_id, now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS)
+            session_id = uuid.uuid4().hex
+            session = Session(
+                user_id,
+                now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS),
+                token_digest(refresh),
+                now + timedelta(seconds=self.REFRESH_LIFETIME_SECONDS),
+                now + timedelta(seconds=self.MAX_SESSION_LIFETIME_SECONDS),
+                session_id,
             )
-        return TokenOutput(access_token=token, expires_in=self.TOKEN_LIFETIME_SECONDS)
+            self.sessions[token_digest(token)] = Session(
+                user_id, session.expires_at, session.refresh_hash,
+                session.refresh_expires_at, session.session_expires_at, session_id,
+            )
+            stored = self.sessions[token_digest(token)]
+            self.refresh_sessions[stored.refresh_hash] = stored
+        return TokenOutput(
+            access_token=token, expires_in=self.TOKEN_LIFETIME_SECONDS,
+            refresh_token=refresh, refresh_expires_in=self.REFRESH_LIFETIME_SECONDS,
+            session_id=session_id,
+        )
 
-    def login(self, email: str, password: str) -> TokenOutput:
-        email = email.strip().lower()
+    @staticmethod
+    def _invalid_session() -> HTTPException:
+        return HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
+                             headers={"WWW-Authenticate": "Bearer"})
+
+    def refresh(self, refresh_token: str) -> TokenOutput:
+        digest = token_digest(refresh_token)
+        now = now_utc()
         with self.lock:
-            account = self.users.get(self.emails.get(email, -1))
-        if not verify_password(account.password_hash if account else None, password):
-            raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.",
-                                headers={"WWW-Authenticate": "Bearer"})
-        assert account is not None
-        return self._issue_token(account.public.id)
+            session = self.refresh_sessions.get(digest)
+            if session is None:
+                raise self._invalid_session()
+            if (session.revoked_at is not None or session.refresh_expires_at <= now
+                    or session.session_expires_at <= now):
+                raise self._invalid_session()
+            access = new_token()
+            refresh = new_token()
+            session.expires_at = now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS)
+            session.refresh_hash = token_digest(refresh)
+            session.refresh_expires_at = min(
+                now + timedelta(seconds=self.REFRESH_LIFETIME_SECONDS), session.session_expires_at
+            )
+            self.refresh_sessions.pop(digest, None)
+            self.sessions[token_digest(access)] = session
+            self.refresh_sessions[session.refresh_hash] = session
+        return TokenOutput(
+            access_token=access, expires_in=self.TOKEN_LIFETIME_SECONDS,
+            refresh_token=refresh,
+            refresh_expires_in=max(0, int((session.refresh_expires_at - now).total_seconds())),
+            session_id=session.session_id,
+        )
 
     def login_db(self, email: str, password: str, db: Session) -> TokenOutput:
         email = email.strip().lower()
@@ -200,7 +248,87 @@ class MemoryService:
         assert row is not None
         public = self._public_user(row)
         self._remember_account(public, row.password_hash)
-        return self._issue_token(row.id)
+        return self._issue_db_session(row.id, db)
+
+    def _issue_db_session(self, user_id: int, db: Session) -> TokenOutput:
+        now = now_utc().replace(tzinfo=None)
+        access, refresh = new_token(), new_token()
+        session_id = str(uuid.uuid4())
+        refresh_expiry = now + timedelta(seconds=self.REFRESH_LIFETIME_SECONDS)
+        session_expiry = now + timedelta(seconds=self.MAX_SESSION_LIFETIME_SECONDS)
+        db.add(AuthSession(
+            session_id=session_id,
+            user_id=user_id,
+            access_token_hash=token_digest(access),
+            access_expires_at=now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS),
+            refresh_token_hash=token_digest(refresh),
+            refresh_expires_at=refresh_expiry,
+            session_expires_at=session_expiry,
+            issued_at=now,
+        ))
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "로그인 세션을 저장하지 못했습니다. 다시 시도해 주세요.") from None
+        return TokenOutput(
+            access_token=access, expires_in=self.TOKEN_LIFETIME_SECONDS,
+            refresh_token=refresh, refresh_expires_in=self.REFRESH_LIFETIME_SECONDS,
+            session_id=session_id,
+        )
+
+    def refresh_db(self, refresh_token: str, db: Session) -> TokenOutput:
+        now = now_utc().replace(tzinfo=None)
+        old_hash = token_digest(refresh_token)
+        # Atomic compare-and-swap: concurrent refresh requests can rotate a row only once.
+        row = db.scalar(select(AuthSession).where(AuthSession.refresh_token_hash == old_hash))
+        if row is None or row.revoked_at is not None or row.refresh_expires_at <= now or row.session_expires_at <= now:
+            raise self._invalid_session()
+        access, refresh = new_token(), new_token()
+        next_refresh_expiry = min(
+            now + timedelta(seconds=self.REFRESH_LIFETIME_SECONDS), row.session_expires_at
+        )
+        result = db.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.id == row.id,
+                AuthSession.refresh_token_hash == old_hash,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.refresh_expires_at > now,
+                AuthSession.session_expires_at > now,
+            )
+            .values(
+                access_token_hash=token_digest(access),
+                access_expires_at=now + timedelta(seconds=self.TOKEN_LIFETIME_SECONDS),
+                refresh_token_hash=token_digest(refresh),
+                refresh_expires_at=next_refresh_expiry,
+                rotated_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise self._invalid_session()
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "세션을 갱신하지 못했습니다. 다시 시도해 주세요.") from None
+        return TokenOutput(
+            access_token=access, expires_in=self.TOKEN_LIFETIME_SECONDS,
+            refresh_token=refresh,
+            refresh_expires_in=max(0, int((next_refresh_expiry - now).total_seconds())),
+            session_id=row.session_id,
+        )
+
+    def login(self, email: str, password: str) -> TokenOutput:
+        email = email.strip().lower()
+        with self.lock:
+            account = self.users.get(self.emails.get(email, -1))
+        if not verify_password(account.password_hash if account else None, password):
+            raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.",
+                                headers={"WWW-Authenticate": "Bearer"})
+        assert account is not None
+        return self._issue_token(account.public.id)
 
     def update_profile_db(
         self,
@@ -267,26 +395,57 @@ class MemoryService:
 
     def authenticate_db(self, token: str, db: Session) -> UserPublic:
         key = token_digest(token)
-        with self.lock:
-            session = self.sessions.get(key)
-            if session is None or session.expires_at <= now_utc():
-                self.sessions.pop(key, None)
-                raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
-                                    headers={"WWW-Authenticate": "Bearer"})
-            user_id = session.user_id
+        now = now_utc().replace(tzinfo=None)
+        session = db.scalar(select(AuthSession).where(AuthSession.access_token_hash == key))
+        if (session is None or session.revoked_at is not None
+                or session.access_expires_at <= now or session.session_expires_at <= now):
+            raise self._invalid_session()
+        user_id = session.user_id
 
         row = db.get(DBUser, user_id)
         if row is None:
             self.logout(token)
-            raise HTTPException(401, "로그인이 필요하거나 로그인 시간이 만료되었습니다.",
-                                headers={"WWW-Authenticate": "Bearer"})
+            raise self._invalid_session()
         public = self._public_user(row)
         self._remember_account(public, row.password_hash)
         return public
 
-    def logout(self, token: str) -> None:
+    def logout(self, token: str | None = None, refresh_token: str | None = None) -> None:
         with self.lock:
-            self.sessions.pop(token_digest(token), None)
+            # Prefer the device's refresh credential so a stale/incorrect bearer
+            # cannot revoke a different device session supplied in the body.
+            if refresh_token:
+                digest = token_digest(refresh_token)
+                session = self.refresh_sessions.pop(digest, None)
+                if session is not None:
+                    for key, current in list(self.sessions.items()):
+                        if current.session_id == session.session_id:
+                            self.sessions.pop(key, None)
+            elif token:
+                session = self.sessions.pop(token_digest(token), None)
+                if session is not None:
+                    self.refresh_sessions.pop(session.refresh_hash, None)
+
+    def logout_db(self, token: str | None, refresh_token: str | None, db: Session) -> None:
+        conditions = []
+        if refresh_token:
+            conditions.append(AuthSession.refresh_token_hash == token_digest(refresh_token))
+        elif token:
+            conditions.append(AuthSession.access_token_hash == token_digest(token))
+        if not conditions:
+            return
+        now = now_utc().replace(tzinfo=None)
+        db.execute(
+            update(AuthSession).where(
+                AuthSession.revoked_at.is_(None),
+                or_(*conditions),
+            ).values(revoked_at=now)
+        )
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "로그아웃 세션을 폐기하지 못했습니다. 다시 시도해 주세요.") from None
     def create_group(self, user_id: int, name: str) -> GroupCreated:
         with self.lock:
             group_id = self._next_id("group")

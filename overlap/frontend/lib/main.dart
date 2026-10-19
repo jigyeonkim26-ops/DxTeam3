@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'core/network/api_client.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/screens/auth_bootstrap_screen.dart';
 import 'features/auth/screens/login_screen.dart';
 
 void main() {
@@ -54,7 +55,7 @@ class _OverlapAppState extends State<OverlapApp> {
       title: 'OVERLAP',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: const LoginScreen(),
+      home: const AuthBootstrapScreen(),
     );
   }
 }

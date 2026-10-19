@@ -11,6 +11,7 @@ abstract final class ApiTransport {
   static const String baseUrl = ApiConfig.baseUrl;
 
   static String? get accessToken => ApiClient.accessToken;
+  static String? get sessionIdentity => ApiClient.sessionIdentity;
 
   static void setAccessToken(String token) => ApiClient.setAccessToken(token);
 
@@ -49,6 +50,7 @@ abstract final class ApiTransport {
     Object? body,
     Duration? responseTimeout,
     void Function(int statusCode)? onResponse,
+    bool allowRefreshRetry = true,
   }) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
@@ -65,6 +67,29 @@ abstract final class ApiTransport {
         responseTimeout ?? const Duration(seconds: 15),
       );
       onResponse?.call(response.statusCode);
+      const noRefreshPaths = {
+        '/auth/login',
+        '/auth/register',
+        '/auth/refresh',
+        '/auth/logout',
+      };
+      if (response.statusCode == 401 &&
+          allowRefreshRetry &&
+          accessToken != null &&
+          !noRefreshPaths.contains(path)) {
+        final refreshed = await ApiClient.refreshSession();
+        if (refreshed) {
+          return await _send(
+            method,
+            path,
+            body: body,
+            responseTimeout: responseTimeout,
+            onResponse: onResponse,
+            allowRefreshRetry: false,
+          );
+        }
+        ApiClient.expireSession();
+      }
       final responseBody = await utf8.decoder.bind(response).join();
       dynamic decoded;
       if (responseBody.isNotEmpty) {
@@ -75,7 +100,9 @@ abstract final class ApiTransport {
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        if (response.statusCode == 401) expireAccessToken();
+        if (response.statusCode == 401 && !noRefreshPaths.contains(path)) {
+          expireAccessToken();
+        }
         throw ApiException(
           _messageForStatus(response.statusCode, decoded),
           statusCode: response.statusCode,

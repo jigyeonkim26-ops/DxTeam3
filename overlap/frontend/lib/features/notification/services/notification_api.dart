@@ -14,14 +14,14 @@ abstract final class NotificationApi {
   }
 
   static Future<void> refreshUnreadCount() async {
-    final token = ApiTransport.accessToken;
+    final token = ApiTransport.sessionIdentity;
     if (token == null) {
       unreadCount.value = 0;
       return;
     }
     final response =
         await ApiTransport.get('/notifications/unread-count') as Map;
-    if (token != ApiTransport.accessToken) return;
+    if (token != ApiTransport.sessionIdentity) return;
     unreadCount.value = response['unread_count'] as int;
   }
 

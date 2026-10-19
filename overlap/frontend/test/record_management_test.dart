@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:overlap_app/core/network/api_client.dart';
 import 'package:overlap_app/core/network/api_config.dart';
+import 'package:overlap_app/core/network/authenticated_image.dart';
 import 'package:overlap_app/core/network/api_transport.dart';
 import 'package:overlap_app/features/memory/screens/record_detail_screen.dart';
 import 'package:overlap_app/features/memory/screens/record_edit_screen.dart';
@@ -41,6 +43,14 @@ void main() {
     tester,
   ) async {
     ApiTransport.setAccessToken('photo-token');
+    ApiClient.configureAuthForTesting(
+      readRefreshToken: () async => null,
+      writeRefreshToken: (_) async {},
+      deleteRefreshToken: () async {},
+      postRefresh: (_, _) async => http.Response('{}', 401),
+      getAuthenticated: (_) async => http.Response('{}', 401),
+    );
+    addTearDown(ApiClient.resetAuthForTesting);
     final record = Record.fromJson({
       ..._recordJson(),
       'author': {
@@ -59,15 +69,13 @@ void main() {
       find.byType(RecordAuthorAvatar),
     );
     expect(avatar.profileImagePath, '/records/1/author-photo?v=abc');
-    final image = tester.widget<Image>(
+    final image = tester.widget<AuthenticatedImage>(
       find.descendant(
         of: find.byType(RecordAuthorAvatar),
-        matching: find.byType(Image),
+        matching: find.byType(AuthenticatedImage),
       ),
     );
-    final provider = image.image as NetworkImage;
-    expect(provider.url, '${ApiConfig.baseUrl}/records/1/author-photo?v=abc');
-    expect(provider.headers?['Authorization'], 'Bearer photo-token');
+    expect(image.url, '${ApiConfig.baseUrl}/records/1/author-photo?v=abc');
     ApiTransport.clearAccessToken();
   });
 

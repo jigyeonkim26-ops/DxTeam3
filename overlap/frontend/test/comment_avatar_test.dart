@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:overlap_app/core/network/api_client.dart';
 import 'package:overlap_app/core/network/api_config.dart';
 import 'package:overlap_app/core/network/api_transport.dart';
+import 'package:overlap_app/core/network/authenticated_image.dart';
 import 'package:overlap_app/features/comment/models/comment_item.dart';
 import 'package:overlap_app/features/comment/widgets/comment_thread.dart';
 import 'package:overlap_app/features/memory/widgets/record_author_avatar.dart';
@@ -14,6 +17,14 @@ void main() {
     tester,
   ) async {
     ApiTransport.setAccessToken('comment-token');
+    ApiClient.configureAuthForTesting(
+      readRefreshToken: () async => null,
+      writeRefreshToken: (_) async {},
+      deleteRefreshToken: () async {},
+      postRefresh: (_, _) async => http.Response('{}', 401),
+      getAuthenticated: (_) async => http.Response('{}', 401),
+    );
+    addTearDown(ApiClient.resetAuthForTesting);
     final parent = CommentItem(
       id: '3',
       author: const User(
@@ -49,18 +60,19 @@ void main() {
     final avatars = find.byType(RecordAuthorAvatar);
     expect(avatars, findsNWidgets(2));
     final images = tester
-        .widgetList<Image>(
-          find.descendant(of: avatars, matching: find.byType(Image)),
+        .widgetList<AuthenticatedImage>(
+          find.descendant(
+            of: avatars,
+            matching: find.byType(AuthenticatedImage),
+          ),
         )
         .toList();
     expect(images, hasLength(2));
     for (final (index, image) in images.indexed) {
-      final provider = image.image as NetworkImage;
       expect(
-        provider.url,
+        image.url,
         '${ApiConfig.baseUrl}/records/1/comments/${index + 3}/author-photo?v=${index == 0 ? 'one' : 'two'}',
       );
-      expect(provider.headers?['Authorization'], 'Bearer comment-token');
     }
   });
 
@@ -91,7 +103,7 @@ void main() {
     final avatars = find.byType(RecordAuthorAvatar);
     expect(avatars, findsNWidgets(2));
     expect(
-      find.descendant(of: avatars, matching: find.byType(Image)),
+      find.descendant(of: avatars, matching: find.byType(AuthenticatedImage)),
       findsNothing,
     );
     expect(

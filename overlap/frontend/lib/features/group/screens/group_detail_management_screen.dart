@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_spacing.dart';
 import '../../../core/network/api_config.dart';
+import '../../../core/network/authenticated_image.dart';
 import '../models/group_list_item_data.dart';
 import '../services/group_api_service.dart';
 import '../services/group_list_store.dart';
@@ -57,7 +58,7 @@ class _GroupDetailManagementScreenState
 
   Future<void> _loadMembers() async {
     final generation = ++_memberLoadGeneration;
-    final token = ApiTransport.accessToken;
+    final token = ApiTransport.sessionIdentity;
     if (mounted) {
       setState(() {
         _isLoadingMembers = true;
@@ -68,32 +69,32 @@ class _GroupDetailManagementScreenState
       final members = await widget.memberLoader(int.parse(widget.groupId));
       if (!mounted ||
           generation != _memberLoadGeneration ||
-          token != ApiTransport.accessToken) {
+          token != ApiTransport.sessionIdentity) {
         return;
       }
       GroupListStore.updateMembers(widget.groupId, members);
     } on ApiException catch (error) {
       if (mounted &&
           generation == _memberLoadGeneration &&
-          token == ApiTransport.accessToken) {
+          token == ApiTransport.sessionIdentity) {
         setState(() => _membersError = error.message);
       }
     } on FormatException {
       if (mounted &&
           generation == _memberLoadGeneration &&
-          token == ApiTransport.accessToken) {
+          token == ApiTransport.sessionIdentity) {
         setState(() => _membersError = '모임 ID를 확인할 수 없습니다.');
       }
     } catch (_) {
       if (mounted &&
           generation == _memberLoadGeneration &&
-          token == ApiTransport.accessToken) {
+          token == ApiTransport.sessionIdentity) {
         setState(() => _membersError = '멤버 목록을 불러오지 못했습니다.');
       }
     } finally {
       if (mounted &&
           generation == _memberLoadGeneration &&
-          token == ApiTransport.accessToken) {
+          token == ApiTransport.sessionIdentity) {
         setState(() => _isLoadingMembers = false);
       }
     }
@@ -338,12 +339,11 @@ class _GroupDetailManagementScreenState
                     children: [
                       Text(
                         '멤버',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.titleMedium?.copyWith(
-                          color: AppColors.ink,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
                       const Spacer(),
                       IconButton(
@@ -499,9 +499,8 @@ class _MemberAvatar extends StatelessWidget {
       child: SizedBox(
         width: 44,
         height: 44,
-        child: Image.network(
-          '${ApiConfig.baseUrl}$path',
-          headers: {'Authorization': 'Bearer $token'},
+        child: AuthenticatedImage(
+          url: '${ApiConfig.baseUrl}$path',
           fit: BoxFit.cover,
           errorBuilder: (_, _, _) => fallback,
         ),

@@ -91,12 +91,12 @@ class AiRecommendationsApi {
   /// Clears only this account's in-memory pages before an explicitly started
   /// fresh recommendation session. Ordinary replay never calls this method.
   void startNewSession() {
-    final key = ApiTransport.accessToken ?? '<anonymous>';
+    final key = ApiTransport.sessionIdentity ?? '<anonymous>';
     _firstPages.remove(key);
     _pagesBySession.remove(key);
     _pageIndexes.remove(key);
     _sessionStatuses.remove(key);
-    _ownerToken = ApiTransport.accessToken;
+    _ownerToken = ApiTransport.sessionIdentity;
     _sessionKey = key;
     _loaded = false;
     _pending = null;
@@ -105,7 +105,7 @@ class AiRecommendationsApi {
   }
 
   Future<List<AiPlaceRecommendation>> load() {
-    final token = ApiTransport.accessToken;
+    final token = ApiTransport.sessionIdentity;
     _sessionKey ??= token ?? '<anonymous>';
     if (_ownerToken == null && token == null) {
       firstRecommendations = _firstPages[_sessionKey] ?? const [];
@@ -165,7 +165,8 @@ class AiRecommendationsApi {
       final items =
           responseBody['recommendations'] as List<dynamic>? ?? const [];
       final rawStatus = responseBody['session_status'];
-      if (_ownerToken == ownerToken && ApiTransport.accessToken == ownerToken) {
+      if (_ownerToken == ownerToken &&
+          ApiTransport.sessionIdentity == ownerToken) {
         sessionStatus =
             rawStatus is String &&
                 const {'available', 'exhausted', 'empty'}.contains(rawStatus)
@@ -180,7 +181,8 @@ class AiRecommendationsApi {
           .map(AiPlaceRecommendation.fromJson)
           .toList();
       var deduplicatedCount = 0;
-      if (_ownerToken == ownerToken && ApiTransport.accessToken == ownerToken) {
+      if (_ownerToken == ownerToken &&
+          ApiTransport.sessionIdentity == ownerToken) {
         _loaded = true;
         if (_cacheAcrossInstances && recommendations.isNotEmpty) {
           final pages = _pagesBySession.putIfAbsent(

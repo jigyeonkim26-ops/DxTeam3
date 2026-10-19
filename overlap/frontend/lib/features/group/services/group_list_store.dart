@@ -48,14 +48,18 @@ abstract final class GroupListStore {
     required bool includeRecordStatistics,
   }) async {
     final generation = ++_generation;
-    final token = ApiTransport.accessToken;
+    final token = ApiTransport.sessionIdentity;
     final response = await GroupApiService.listGroups();
-    if (generation != _generation || token != ApiTransport.accessToken) return;
+    if (generation != _generation || token != ApiTransport.sessionIdentity) {
+      return;
+    }
     final previous = {for (final group in groups) group.id: group};
     final statistics = includeRecordStatistics
         ? await Future.wait(response.map(_loadRecordStatistics))
         : List<GroupRecordStatistics?>.filled(response.length, null);
-    if (generation != _generation || token != ApiTransport.accessToken) return;
+    if (generation != _generation || token != ApiTransport.sessionIdentity) {
+      return;
+    }
     _hasLoadedGroups = true;
     replaceGroups([
       for (var index = 0; index < response.length; index++)
@@ -159,10 +163,7 @@ abstract final class GroupListStore {
   }
 
   /// Applies only a successful server response to the shared group cache.
-  static bool updateMembers(
-    String groupId,
-    List<GroupMemberData> members,
-  ) {
+  static bool updateMembers(String groupId, List<GroupMemberData> members) {
     final current = groupsListenable.value;
     final index = current.indexWhere((group) => group.id == groupId);
     if (index == -1) return false;

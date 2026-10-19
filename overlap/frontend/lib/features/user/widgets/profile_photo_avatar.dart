@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/network/api_config.dart';
 import '../../../core/network/api_transport.dart';
+import '../../../core/network/authenticated_image.dart';
 
 /// Displays either the locally selected profile photo or the authenticated
 /// user's private profile photo. A failed or missing remote image always falls
@@ -31,28 +32,31 @@ class ProfilePhotoAvatar extends StatelessWidget {
     final imagePath = localImagePath;
     final token = ApiTransport.accessToken;
 
-    ImageProvider<Object>? provider;
-    if (imagePath != null && imagePath.isNotEmpty) {
-      provider = FileImage(File(imagePath));
-    } else if (showRemote && token != null && token.isNotEmpty) {
-      provider = NetworkImage(
-        '${ApiConfig.baseUrl}/auth/me/photo?v=$revision',
-        headers: {'Authorization': 'Bearer $token'},
-      );
-    }
+    final useLocal = imagePath != null && imagePath.isNotEmpty;
+    final useRemote =
+        !useLocal && showRemote && token != null && token.isNotEmpty;
 
     return ClipOval(
       child: SizedBox(
         width: diameter,
         height: diameter,
-        child: provider == null
-            ? _DefaultProfilePhoto(iconSize: iconSize)
-            : Image(
-                image: provider,
+        child: useLocal
+            ? Image(
+                image: FileImage(File(imagePath)),
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) =>
                     _DefaultProfilePhoto(iconSize: iconSize),
-              ),
+              )
+            : useRemote
+            ? AuthenticatedImage(
+                url: '${ApiConfig.baseUrl}/auth/me/photo?v=$revision',
+                width: diameter,
+                height: diameter,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    _DefaultProfilePhoto(iconSize: iconSize),
+              )
+            : _DefaultProfilePhoto(iconSize: iconSize),
       ),
     );
   }

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/network/api_config.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/api_transport.dart';
 import '../../user/models/user_profile.dart';
 
@@ -30,7 +31,18 @@ abstract final class AuthApiService {
         (response['access_token'] as String).isEmpty) {
       throw const ApiException('로그인 응답을 확인할 수 없습니다.');
     }
-    ApiTransport.setAccessToken(response['access_token'] as String);
+    final refreshToken = response['refresh_token'];
+    if (refreshToken is String && refreshToken.isNotEmpty) {
+      await ApiClient.establishSession(
+        accessToken: response['access_token'] as String,
+        refreshToken: refreshToken,
+        sessionIdentity: response['session_id'] as String?,
+      );
+    } else {
+      // Older servers still accept the historic access_token-only login response.
+      await ApiClient.clearPersistedRefreshToken();
+      ApiTransport.setAccessToken(response['access_token'] as String);
+    }
   }
 
   static Future<void> register({
@@ -76,24 +88,23 @@ abstract final class AuthApiService {
   }
 
   static Future<void> uploadProfilePhoto(XFile photo) async {
-    final token = _requireAccessToken();
     try {
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('${ApiConfig.baseUrl}/auth/me/photo'),
-      )..headers['Authorization'] = 'Bearer $token';
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'photo',
-          await photo.readAsBytes(),
-          filename: photo.name,
-        ),
-      );
-      final streamed = await request.send().timeout(
-        const Duration(seconds: 20),
-      );
-      final response = await http.Response.fromStream(streamed)
-          .timeout(const Duration(seconds: 20));
+      final bytes = await photo.readAsBytes();
+      final response = await ApiClient.sendAuthenticatedRequest(() async {
+        final token = _requireAccessToken();
+        final request = http.MultipartRequest(
+          'POST',
+          Uri.parse('${ApiConfig.baseUrl}/auth/me/photo'),
+        )..headers['Authorization'] = 'Bearer $token';
+        request.files.add(
+          http.MultipartFile.fromBytes('photo', bytes, filename: photo.name),
+        );
+        final streamed = await request.send().timeout(
+          const Duration(seconds: 20),
+        );
+        return http.Response.fromStream(streamed)
+            .timeout(const Duration(seconds: 20));
+      });
       _throwForPhotoResponse(response);
     } on ApiException {
       rethrow;
@@ -105,14 +116,15 @@ abstract final class AuthApiService {
   }
 
   static Future<void> deleteProfilePhoto() async {
-    final token = _requireAccessToken();
     try {
-      final response = await http
-          .delete(
-            Uri.parse('${ApiConfig.baseUrl}/auth/me/photo'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 15));
+      final response = await ApiClient.sendAuthenticatedRequest(
+        () => http
+            .delete(
+              Uri.parse('${ApiConfig.baseUrl}/auth/me/photo'),
+              headers: {'Authorization': 'Bearer ${_requireAccessToken()}'},
+            )
+            .timeout(const Duration(seconds: 15)),
+      );
       _throwForPhotoResponse(response);
     } on ApiException {
       rethrow;
@@ -176,13 +188,30 @@ abstract final class AuthApiService {
     }
   }
 
-  static Future<void> logout() async {
+  static Future<bool> logout() async {
+    var serverRevoked = false;
     try {
-      await ApiTransport.post('/auth/logout');
-    } on ApiException catch (error) {
-      if (error.statusCode != 401) rethrow;
+      final refreshToken = await ApiClient.readRefreshToken();
+      await ApiTransport.post(
+        '/auth/logout',
+        body: {'refresh_token': ?refreshToken},
+      );
+      serverRevoked = true;
+    } catch (_) {
+      // The device is still logged out locally below. The caller can explain
+      // that server-side revocation could not be confirmed while offline.
     } finally {
+      try {
+        await ApiClient.clearPersistedRefreshToken();
+      } catch (_) {
+        serverRevoked = false;
+      }
       ApiTransport.clearAccessToken();
     }
+    return serverRevoked;
+  }
+
+  static Future<bool> restoreSession() async {
+    return ApiClient.refreshSession();
   }
 }

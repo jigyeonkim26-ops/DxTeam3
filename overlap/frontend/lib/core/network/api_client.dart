@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
@@ -24,17 +25,185 @@ class ApiException implements Exception {
 
 class ApiClient {
   static String? _accessToken;
+  static String? _sessionIdentity;
+  static int _sessionIdentityCounter = 0;
   static bool _sessionExpired = false;
+  static Future<bool>? _refreshInFlight;
+  static const _storage = FlutterSecureStorage();
+  static const _refreshStorageKey = 'overlap.refresh_token.v1';
+  static Future<String?> Function() _readStoredRefreshToken = () =>
+      _storage.read(key: _refreshStorageKey);
+  static Future<void> Function(String) _writeStoredRefreshToken = (value) =>
+      _storage.write(key: _refreshStorageKey, value: value);
+  static Future<void> Function() _deleteStoredRefreshToken = () =>
+      _storage.delete(key: _refreshStorageKey);
+  static Future<http.Response> Function(Uri, String) _postRefresh =
+      (uri, value) => http.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': value}),
+      );
+  static Future<http.Response> Function(Uri)? _getAuthenticatedOverride;
   static final sessionRevision = ValueNotifier<int>(0);
 
   static String? get accessToken => _accessToken;
   static bool get sessionExpired => _sessionExpired;
+  static String? get sessionIdentity => _sessionIdentity;
+
+  static String _newSessionIdentity() =>
+      '${DateTime.now().microsecondsSinceEpoch}-${++_sessionIdentityCounter}';
 
   static void setAccessToken(String token) {
     if (_accessToken == token && !_sessionExpired) return;
     _accessToken = token;
+    _sessionIdentity = _newSessionIdentity();
     _sessionExpired = false;
     sessionRevision.value++;
+  }
+
+  static Future<void> establishSession({
+    required String accessToken,
+    required String refreshToken,
+    String? sessionIdentity,
+  }) async {
+    await _writeStoredRefreshToken(refreshToken);
+    _accessToken = accessToken;
+    _sessionExpired = false;
+    _sessionIdentity = sessionIdentity ?? _newSessionIdentity();
+    sessionRevision.value++;
+  }
+
+  /// Installs rotated credentials without changing the user's logical session.
+  static Future<void> replaceSessionTokens({
+    required String accessToken,
+    required String refreshToken,
+    String? sessionIdentity,
+  }) async {
+    await _writeStoredRefreshToken(refreshToken);
+    final restoring = _accessToken == null || _sessionExpired;
+    _accessToken = accessToken;
+    _sessionExpired = false;
+    _sessionIdentity ??= sessionIdentity ?? _newSessionIdentity();
+    if (restoring) sessionRevision.value++;
+  }
+
+  static Future<bool> refreshSession() {
+    final running = _refreshInFlight;
+    if (running != null) return running;
+    final operation = _refreshSessionOnce();
+    _refreshInFlight = operation;
+    return operation.whenComplete(() => _refreshInFlight = null);
+  }
+
+  static Future<bool> _refreshSessionOnce() async {
+    final String? refreshToken;
+    try {
+      refreshToken = await _readStoredRefreshToken();
+    } catch (_) {
+      throw const ApiException(
+        '보안 저장소에서 로그인 정보를 읽지 못했습니다. 다시 시도해 주세요.',
+        kind: ApiExceptionKind.network,
+      );
+    }
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+    final uri = Uri.parse('${ApiConfig.baseUrl}/auth/refresh');
+    try {
+      final response = await _postRefresh(
+        uri,
+        refreshToken,
+      ).timeout(const Duration(seconds: 15));
+      if (response.statusCode == 401) {
+        await clearPersistedRefreshToken();
+        expireSession();
+        return false;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(
+          '세션 복구를 일시적으로 완료하지 못했습니다. 다시 시도해 주세요.',
+          statusCode: response.statusCode,
+        );
+      }
+      final payload = _decodeObject(response);
+      final access = payload['access_token'];
+      final rotated = payload['refresh_token'];
+      if (access is! String ||
+          access.isEmpty ||
+          rotated is! String ||
+          rotated.isEmpty) {
+        throw const ApiException('세션 복구 응답을 확인할 수 없습니다.');
+      }
+      await replaceSessionTokens(
+        accessToken: access,
+        refreshToken: rotated,
+        sessionIdentity: payload['session_id'] as String?,
+      );
+      return true;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException(
+        '네트워크에 연결할 수 없습니다. 연결 상태를 확인하고 다시 시도해 주세요.',
+        kind: ApiExceptionKind.network,
+      );
+    }
+  }
+
+  static Future<void> clearPersistedRefreshToken() =>
+      _deleteStoredRefreshToken();
+
+  static Future<String?> readRefreshToken() => _readStoredRefreshToken();
+
+  @visibleForTesting
+  static void configureAuthForTesting({
+    required Future<String?> Function() readRefreshToken,
+    required Future<void> Function(String) writeRefreshToken,
+    required Future<void> Function() deleteRefreshToken,
+    required Future<http.Response> Function(Uri, String) postRefresh,
+    Future<http.Response> Function(Uri)? getAuthenticated,
+  }) {
+    _readStoredRefreshToken = readRefreshToken;
+    _writeStoredRefreshToken = writeRefreshToken;
+    _deleteStoredRefreshToken = deleteRefreshToken;
+    _postRefresh = postRefresh;
+    _getAuthenticatedOverride = getAuthenticated;
+  }
+
+  @visibleForTesting
+  static void resetAuthForTesting() {
+    _readStoredRefreshToken = () => _storage.read(key: _refreshStorageKey);
+    _writeStoredRefreshToken = (value) =>
+        _storage.write(key: _refreshStorageKey, value: value);
+    _deleteStoredRefreshToken = () => _storage.delete(key: _refreshStorageKey);
+    _postRefresh = (uri, value) => http.post(
+      uri,
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'refresh_token': value}),
+    );
+    _getAuthenticatedOverride = null;
+  }
+
+  static Future<http.Response> sendAuthenticatedRequest(
+    Future<http.Response> Function() send,
+  ) async {
+    var response = await send();
+    if (response.statusCode != 401 || _accessToken == null) return response;
+    final refreshed = await refreshSession();
+    if (refreshed) {
+      response = await send();
+      if (response.statusCode != 401) return response;
+    }
+    expireSession();
+    return response;
+  }
+
+  static Future<http.Response> authenticatedGet(Uri uri) {
+    final override = _getAuthenticatedOverride;
+    if (override != null) return override(uri);
+    return sendAuthenticatedRequest(
+      () => http
+          .get(uri, headers: {'Authorization': 'Bearer ${_accessToken ?? ''}'})
+          .timeout(const Duration(seconds: 20)),
+    );
   }
 
   /// Clears an authenticated token after the server rejects it. The return
@@ -42,6 +211,7 @@ class ApiClient {
   static bool expireSession() {
     if (_accessToken == null) return false;
     _accessToken = null;
+    _sessionIdentity = null;
     _sessionExpired = true;
     sessionRevision.value++;
     return true;
@@ -95,7 +265,17 @@ class ApiClient {
     if (token is! String || token.isEmpty) {
       throw const ApiException('로그인 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.');
     }
-    setAccessToken(token);
+    final refreshToken = payload['refresh_token'];
+    if (refreshToken is String && refreshToken.isNotEmpty) {
+      await establishSession(
+        accessToken: token,
+        refreshToken: refreshToken,
+        sessionIdentity: payload['session_id'] as String?,
+      );
+    } else {
+      await clearPersistedRefreshToken();
+      setAccessToken(token);
+    }
   }
 
   static Future<Map<String, dynamic>> me() async {
@@ -119,9 +299,14 @@ class ApiClient {
     final uri = Uri.parse('${ApiConfig.baseUrl}/places/search')
         .replace(queryParameters: {'query': query});
     try {
-      final response = await http
-          .get(uri, headers: {'Authorization': 'Bearer $token'})
-          .timeout(const Duration(seconds: 10));
+      final response = await sendAuthenticatedRequest(
+        () => http
+            .get(
+              uri,
+              headers: {'Authorization': 'Bearer ${_accessToken ?? token}'},
+            )
+            .timeout(const Duration(seconds: 10)),
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return response;
       }
@@ -140,6 +325,7 @@ class ApiClient {
   static void clearSession() {
     if (_accessToken == null && !_sessionExpired) return;
     _accessToken = null;
+    _sessionIdentity = null;
     _sessionExpired = false;
     sessionRevision.value++;
   }
@@ -149,6 +335,7 @@ class ApiClient {
     String path, {
     Map<String, String>? headers,
     Map<String, Object?>? body,
+    bool allowRefreshRetry = true,
   }) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}$path');
     try {
@@ -156,6 +343,9 @@ class ApiClient {
         'Content-Type': 'application/json',
         ...?headers,
       };
+      if (path == '/auth/me' && _accessToken != null) {
+        requestHeaders['Authorization'] = 'Bearer $_accessToken';
+      }
       final response = switch (method) {
         'GET' =>
           await http
@@ -167,10 +357,29 @@ class ApiClient {
               .timeout(const Duration(seconds: 10)),
         _ => throw const ApiException('지원하지 않는 요청입니다.'),
       };
+      if (response.statusCode == 401 &&
+          allowRefreshRetry &&
+          path == '/auth/me' &&
+          _accessToken != null) {
+        if (await refreshSession()) {
+          return await _send(
+            method,
+            path,
+            body: body,
+            allowRefreshRetry: false,
+          );
+        }
+      }
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return response;
       }
-      if (response.statusCode == 401) expireSession();
+      if (response.statusCode == 401 &&
+          path != '/auth/login' &&
+          path != '/auth/register' &&
+          path != '/auth/refresh' &&
+          path != '/auth/logout') {
+        expireSession();
+      }
       throw ApiException(
         _messageForStatus(response.statusCode, response.body),
         statusCode: response.statusCode,
