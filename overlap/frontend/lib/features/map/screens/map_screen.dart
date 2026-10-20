@@ -435,6 +435,7 @@ class _MapScreenState extends State<MapScreen> {
         },
       ),
     );
+    if (mounted) setState(() => _selectedSearchPlace = null);
   }
 
   Future<void> _showPlaceOnMap(Place place) async {
